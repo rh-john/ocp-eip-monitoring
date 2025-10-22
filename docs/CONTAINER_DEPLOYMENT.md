@@ -393,13 +393,13 @@ Use the automated deployment script:
 The `deploy-test-eips.sh` script automatically:
 
 1. **🔍 Discovers EgressIP ranges** from cluster node annotations
-2. **📋 Creates test namespaces** with diverse labels (up to 100 namespaces):
-   - `test-ns-1` through `test-ns-100` with various application and infrastructure labels
-   - Includes databases, monitoring, CI/CD, microservices, and protocol-specific namespaces
+2. **📋 Creates test namespaces** with diverse labels (up to 200 namespaces):
+   - `test-ns-1` through `test-ns-200` with various application and infrastructure labels
+   - Includes databases, monitoring, CI/CD, microservices, protocols, security, and testing infrastructure
 3. **🚀 Deploys dynamic EgressIPs**:
    - Creates one EgressIP per namespace with appropriate labels
-   - Distributes IPs evenly across namespaces (up to 200 IPs total)
-   - Supports enterprise-scale testing scenarios
+   - Supports 1:1 IP to namespace mapping (up to 200 IPs and 200 namespaces)
+   - Enables maximum granularity for namespace isolation testing
 
 #### **Script Usage Examples**
 
@@ -412,6 +412,9 @@ The `deploy-test-eips.sh` script automatically:
 
 # Deploy with custom IP and namespace counts (100 IPs, 25 namespaces)
 ./scripts/deploy-test-eips.sh deploy 100 25
+
+# Deploy with 1:1 mapping (200 IPs, 200 namespaces)
+./scripts/deploy-test-eips.sh deploy 200 200
 
 # Deploy with maximum scale (200 IPs, 100 namespaces)
 ./scripts/deploy-test-eips.sh deploy 200 100
@@ -435,32 +438,32 @@ The `deploy-test-eips.sh` script automatically:
 ✅ Prerequisites validated
 ℹ️  Current cluster: https://api.your-cluster.com:6443
 ℹ️  Current user: your-username  
-ℹ️  Requested IP count: 50
-ℹ️  Requested namespace count: 25
+ℹ️  Requested IP count: 200
+ℹ️  Requested namespace count: 200
 
 🔍 Discovering EgressIP configuration from cluster...
 ✅ Found EgressIP CIDR: 10.0.128.0/23
-🎯 Generating 50 test IP addresses...
-✅ Generated 50 test IP addresses
+🎯 Generating 200 test IP addresses...
+✅ Generated 200 test IP addresses
 
-📋 Creating 25 test namespaces...
+📋 Creating 200 test namespaces...
 ✅ Namespace 'test-ns-1' created/verified
 ✅ Namespace 'test-ns-2' created/verified
-... (continues for all 25 namespaces)
+... (continues for all 200 namespaces)
 
 🚀 Deploying EgressIP configurations with discovered IPs...
-ℹ️  IP distribution: 2 IPs per namespace (with 0 extra IPs)
+ℹ️  IP distribution: 1 IP per namespace (with 0 extra IPs)
 ✅ Test EgressIPs deployed successfully!
 
 📊 Deployment Summary
 ====================
 CIDR discovered: 10.0.128.0/23
-IPs requested: 50
-IPs allocated: 50
-Namespaces requested: 25
-Namespaces created: 25
-EgressIPs created: 25
-IPs per namespace: 2 (with 0 extra IPs)
+IPs requested: 200
+IPs allocated: 200
+Namespaces requested: 200
+Namespaces created: 200
+EgressIPs created: 200
+IPs per namespace: 1 (with 0 extra IPs)
 ```
 
 ### Verification Commands
@@ -493,31 +496,32 @@ curl http://eip-monitor-service:8080/metrics | grep eip
 
 ### Large-Scale Testing
 
-The script supports enterprise-scale testing scenarios with up to 200 egress IPs distributed across 100 namespaces:
+The script supports enterprise-scale testing scenarios with up to 200 egress IPs distributed across 200 namespaces:
 
 #### **Maximum Scale Deployment**
 
 ```bash
-# Deploy with maximum scale (200 IPs, 100 namespaces)
-./scripts/deploy-test-eips.sh deploy 200 100
+# Deploy with maximum scale (200 IPs, 200 namespaces - 1:1 mapping)
+./scripts/deploy-test-eips.sh deploy 200 200
 ```
 
 This creates:
-- **100 namespaces**: `test-ns-1` through `test-ns-100`
-- **100 EgressIPs**: One per namespace with diverse labels
-- **200 IPs total**: 2 IPs per namespace (even distribution)
-- **Diverse labels**: Databases, monitoring, CI/CD, microservices, protocols
+- **200 namespaces**: `test-ns-1` through `test-ns-200`
+- **200 EgressIPs**: One per namespace with diverse labels
+- **200 IPs total**: 1 IP per namespace (perfect 1:1 mapping)
+- **Diverse labels**: Databases, monitoring, CI/CD, microservices, protocols, security, testing infrastructure
 
 #### **Namespace Categories**
 
-The 100 namespaces include diverse application types:
+The 200 namespaces include diverse application types:
 
-- **Databases** (test-ns-23, 28-30): postgres, mysql, mongodb, redis
-- **Monitoring** (test-ns-36-50): prometheus, grafana, jaeger, datadog, newrelic
-- **CI/CD** (test-ns-51-60): jenkins, gitlab, github, azure-devops, circleci
-- **Infrastructure** (test-ns-61-75): terraform, ansible, docker, kubernetes, istio
-- **Microservices** (test-ns-75-100): spring-cloud, quarkus, vertx, akka, play
-- **Protocols** (test-ns-89-95): REST, GraphQL, gRPC, SOAP, Thrift, Avro
+- **Databases & Storage** (test-ns-1-30): postgres, mysql, mongodb, redis, elasticsearch
+- **Monitoring & Observability** (test-ns-31-50): prometheus, grafana, jaeger, datadog, newrelic
+- **CI/CD & DevOps** (test-ns-51-70): jenkins, gitlab, github, azure-devops, circleci
+- **Infrastructure** (test-ns-71-90): terraform, ansible, docker, kubernetes, istio
+- **Microservices & Protocols** (test-ns-91-110): spring-cloud, quarkus, REST, GraphQL, gRPC
+- **Security & Governance** (test-ns-111-130): compliance, audit, governance, policy, risk
+- **Testing Infrastructure** (test-ns-131-200): performance, load, stress, chaos, security testing
 
 #### **Performance Considerations**
 
@@ -531,13 +535,54 @@ For large-scale deployments:
 ./scripts/deploy-test-eips.sh deploy 100 50
 ./scripts/deploy-test-eips.sh deploy 150 75
 ./scripts/deploy-test-eips.sh deploy 200 100
+
+# Ultimate scale with 1:1 mapping (200 IPs, 200 namespaces)
+./scripts/deploy-test-eips.sh deploy 200 200
 ```
 
 #### **Cleanup for Large Deployments**
 
 ```bash
-# Clean up all test resources (handles up to 100 namespaces)
+# Clean up all test resources (handles up to 200 namespaces)
 ./scripts/deploy-test-eips.sh cleanup
+```
+
+### 1:1 IP to Namespace Mapping
+
+For maximum granularity and namespace isolation testing, you can deploy with a 1:1 mapping where each namespace gets exactly one egress IP:
+
+#### **Perfect Namespace Isolation**
+
+```bash
+# Deploy with 1:1 mapping (200 IPs, 200 namespaces)
+./scripts/deploy-test-eips.sh deploy 200 200
+```
+
+This configuration provides:
+- **Perfect Isolation**: Each namespace has its own dedicated egress IP
+- **Individual Testing**: Test egress behavior per namespace independently
+- **Maximum Granularity**: 200 unique egress endpoints for testing
+- **Real-world Scenarios**: Simulates production environments with dedicated egress per application
+
+#### **Use Cases for 1:1 Mapping**
+
+1. **Security Testing**: Test firewall rules per namespace
+2. **Compliance Testing**: Verify egress restrictions per application
+3. **Network Isolation**: Test namespace-level network policies
+4. **Load Testing**: Test egress capacity per namespace
+5. **Monitoring Validation**: Verify metrics collection per namespace
+
+#### **Verification Commands for 1:1 Mapping**
+
+```bash
+# Verify 1:1 mapping (should show 200 EgressIPs)
+oc get egressip | wc -l
+
+# Check IP distribution (should show 1 IP per EgressIP)
+oc get egressip -o jsonpath='{.items[*].spec.egressIPs}' | tr ' ' '\n' | wc -l
+
+# Verify namespace isolation
+oc get egressip -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.labels.namespace,IPS:.spec.egressIPs"
 ```
 
 ### Testing Different Scenarios
@@ -615,7 +660,7 @@ oc delete egressip test-dist-{1..5} 2>/dev/null
 echo "Removing test namespaces..."
 oc delete namespace -l test-suite=eip-monitoring
 # Or manually delete specific namespaces
-oc delete namespace test-ns-{1..100} 2>/dev/null
+oc delete namespace test-ns-{1..200} 2>/dev/null
 
 echo "Cleanup complete!"
 ```
