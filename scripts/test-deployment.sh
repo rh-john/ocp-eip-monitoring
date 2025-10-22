@@ -132,7 +132,7 @@ test_logs_present() {
         return 1
     fi
     
-    oc logs "$pod_name" -n "$NAMESPACE" --tail=10 | grep -q "Starting EIP Metrics Server"
+    oc logs "$pod_name" -n "$NAMESPACE" --tail=20 | grep -q "Starting comprehensive metrics collection"
 }
 
 test_openshift_permissions() {
