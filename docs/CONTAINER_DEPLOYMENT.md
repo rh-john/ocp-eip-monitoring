@@ -12,7 +12,7 @@ The containerized EIP monitor provides:
 - **Distribution fairness analysis** with Gini coefficient calculations
 - **API performance monitoring** with response time and success rate tracking
 - **Historical trend analysis** for proactive capacity management
-- **Secure, production-ready deployment** in OpenShift 4.18
+- **Secure deployment** designed for OpenShift 4.18
 - **Simplified deployment** with no external cloud dependencies
 
 ## Architecture
@@ -672,7 +672,7 @@ echo "Cleanup complete!"
 - If a node becomes unavailable, EgressIPs are automatically moved to other eligible nodes
 
 **Testing Recommendations**:
-- Test in a development cluster before using in production
+- Test thoroughly in a development cluster before deploying
 - Verify network connectivity from assigned nodes to target destinations
 - Monitor CPIC (CloudPrivateIPConfig) resources for assignment status
 - Use `oc get egressip -o wide` to see current node assignments
@@ -745,7 +745,7 @@ oc logs -f deployment/eip-monitor -n eip-monitoring
 oc get events -n eip-monitoring --sort-by='.lastTimestamp'
 ```
 
-## Production Considerations
+## Deployment Considerations
 
 ### Security
 - Uses non-root user (UID 1000)

@@ -5,9 +5,11 @@
 [![Container](https://img.shields.io/badge/Container-Ready-blue?logo=podman)](https://podman.io)
 [![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
 
-A comprehensive monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources that exposes **40+ advanced Prometheus metrics** and **25+ intelligent alerts** for production-grade observability.
+A comprehensive monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources that exposes **40+ advanced Prometheus metrics** and **25+ intelligent alerts** for cluster observability.
 
 ## 🚀 Quick Start
+
+**⚠️ First**: Ensure [User Workload Monitoring](#-user-workload-monitoring-setup) is enabled in your cluster
 
 ```bash
 # Build and deploy to OpenShift
@@ -23,6 +25,7 @@ oc apply -f k8s/servicemonitor.yaml
 - [Features](#-features)
 - [Architecture](#-architecture)
 - [Prerequisites](#-prerequisites)
+- [User Workload Monitoring Setup](#-user-workload-monitoring-setup)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Metrics](#-metrics)
@@ -30,6 +33,7 @@ oc apply -f k8s/servicemonitor.yaml
 - [Usage](#-usage)
 - [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
+- [Important Notice](#-important-notice)
 
 ## ✨ Features
 
@@ -46,7 +50,7 @@ oc apply -f k8s/servicemonitor.yaml
 - **Health Scoring**: Intelligent cluster health and stability scoring algorithms
 - **Historical Tracking**: Trend analysis for changes and recoveries
 
-### **Production Ready**
+### **Enterprise Features**
 - **OpenShift Security**: Full SCC compliance with non-root containers
 - **High Availability**: Stateless design with configurable scrape intervals
 - **Automated Deployment**: Complete CI/CD ready deployment automation
@@ -80,7 +84,8 @@ oc apply -f k8s/servicemonitor.yaml
 
 ### **OpenShift Environment**
 - OpenShift 4.18 or later
-- Prometheus Operator installed
+- **User Workload Monitoring enabled** (see [User Workload Monitoring Setup](#user-workload-monitoring-setup))
+- Prometheus Operator installed (included with OpenShift)
 - EIP and CPIC features enabled
 
 ### **Build Requirements** (for local build)
@@ -90,6 +95,110 @@ oc apply -f k8s/servicemonitor.yaml
 
 ### **RBAC Permissions**
 The monitoring tool requires cluster-level read access to EIP and CPIC resources. All necessary permissions are included in the deployment manifests.
+
+## 🔧 User Workload Monitoring Setup
+
+**⚠️ CRITICAL PREREQUISITE**: This EIP monitoring tool uses `ServiceMonitor` and `PrometheusRule` resources which require **User Workload Monitoring** to be enabled in OpenShift.
+
+### **What is User Workload Monitoring?**
+
+OpenShift has two separate monitoring stacks:
+1. **Cluster Monitoring Stack** - Monitors OpenShift platform components (nodes, operators, etc.)
+2. **User Workload Monitoring Stack** - Monitors user applications and custom metrics
+
+By default, only the cluster monitoring stack is enabled. User applications like this EIP monitor need the **User Workload Monitoring** stack to be enabled to:
+- Scrape custom metrics via `ServiceMonitor`
+- Process custom alerts via `PrometheusRule` 
+- Store and query custom metrics in user workload Prometheus
+
+### **Enable User Workload Monitoring**
+
+**Step 1: Enable the feature**
+```bash
+# Create or edit the cluster-monitoring-config ConfigMap
+oc -n openshift-monitoring edit configmap cluster-monitoring-config
+```
+
+Add or modify the ConfigMap data to include:
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+```
+
+**Step 2: Configure user workload monitoring (optional)**
+```bash
+# Create user workload monitoring config (optional - for custom settings)
+oc -n openshift-user-workload-monitoring create configmap user-workload-monitoring-config --from-literal=config.yaml="
+prometheus:
+  retention: 7d
+  resources:
+    requests:
+      cpu: 200m
+      memory: 2Gi
+"
+```
+
+**Step 3: Verify the setup**
+```bash
+# Check that user workload monitoring pods are running
+oc get pods -n openshift-user-workload-monitoring
+
+# Expected output should include pods like:
+# prometheus-operator-* 
+# prometheus-user-workload-*
+# thanos-ruler-user-workload-*
+```
+
+### **Verify ServiceMonitor Discovery**
+
+After deploying the EIP monitor, verify it's being discovered:
+
+```bash
+# Check if the ServiceMonitor is created
+oc get servicemonitor -n eip-monitoring
+
+# Check if Prometheus is scraping the target
+oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
+  curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="eip-monitor")'
+```
+
+### **Troubleshooting User Workload Monitoring**
+
+**Issue**: `ServiceMonitor` created but no metrics appear
+```bash
+# Check if user workload monitoring is enabled
+oc get configmap cluster-monitoring-config -n openshift-monitoring -o yaml
+
+# Verify the user workload Prometheus is running
+oc get prometheus -n openshift-user-workload-monitoring
+
+# Check ServiceMonitor labels match Prometheus selectors
+oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
+```
+
+**Issue**: Permission denied errors
+```bash
+# Verify RBAC for user workload monitoring
+oc adm policy who-can create servicemonitors -n eip-monitoring
+oc adm policy who-can create prometheusrules -n eip-monitoring
+```
+
+**Issue**: Metrics not being scraped
+```bash
+# Check if the EIP monitor service is accessible
+oc port-forward service/eip-monitor 8080:8080 -n eip-monitoring
+curl http://localhost:8080/metrics
+
+# Verify ServiceMonitor selector matches service labels
+oc get service eip-monitor -n eip-monitoring --show-labels
+oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
+```
 
 ## 🛠️ Installation
 
@@ -356,6 +465,15 @@ podman run -p 8080:8080 eip-monitor:dev
 oc apply --dry-run=client -f k8s-manifests.yaml
 ```
 
+## ⚠️ Important Notice
+
+This monitoring tool is provided as-is for OpenShift EIP monitoring and analysis. Please:
+
+- **Test thoroughly** in development environments before deploying to critical systems
+- **Validate metrics accuracy** against your specific OpenShift configuration
+- **Review and adapt alerts** to match your operational requirements
+- **Monitor resource usage** and adjust scrape intervals as needed
+
 ## 📜 License
 
 This project is provided as-is for OpenShift EIP monitoring and analysis.
@@ -377,7 +495,7 @@ For issues with:
 **John Johansson**  
 *Specialist Adoption Architect at Red Hat*
 
-I specialize in helping organizations successfully adopt and optimize OpenShift deployments. This EIP monitoring tool was developed to address real-world observability needs for OpenShift Egress IP management in production environments.
+I specialize in helping organizations successfully adopt and optimize OpenShift deployments. This EIP monitoring tool was developed to address real-world observability needs for OpenShift Egress IP management.
 
 Connect with me for OpenShift architecture guidance, best practices, and advanced monitoring solutions.
 
