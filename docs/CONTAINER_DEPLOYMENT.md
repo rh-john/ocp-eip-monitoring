@@ -290,14 +290,19 @@ To test the EIP monitoring functionality, you can create multiple EgressIP resou
 apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
-  name: test-eip-web
+  name: test-eip-test-ns-1
+  labels:
+    test-suite: eip-monitoring
+    environment: test
+    namespace: test-ns-1
 spec:
   egressIPs:
   - <discovered-from-node-annotation>.10
   - <discovered-from-node-annotation>.11
   namespaceSelector:
     matchLabels:
-      name: web-apps
+      environment: production
+      tier: database
 ```
 
 #### Example 2: Multi-Node EgressIP
@@ -353,239 +358,109 @@ spec:
 
 **Note**: The actual IP addresses will be automatically discovered from your cluster's node annotations and populated by the deployment script.
 
-### Test Namespace Creation
+### Automated EgressIP Testing
 
-Create matching namespaces for the EgressIP examples:
+The repository includes an automated script to create comprehensive test EgressIP configurations for monitoring validation.
+
+#### **Prerequisites**
+
+1. **Label nodes for EgressIP assignment:**
+   ```bash
+   # List available worker nodes
+   oc get nodes --no-headers -l node-role.kubernetes.io/worker | awk '{print $1}'
+   
+   # Label nodes for egress assignment (replace with your worker nodes)
+   oc label node <worker-node-1> k8s.ovn.org/egress-assignable=""
+   oc label node <worker-node-2> k8s.ovn.org/egress-assignable=""
+   ```
+
+2. **Ensure your cloud provider has configured egress IP ranges on the labeled nodes**
+
+#### **Deploy Test EgressIPs**
+
+Use the automated deployment script:
 
 ```bash
-# Create test namespaces with appropriate labels
-oc create namespace web-apps
-oc label namespace web-apps name=web-apps
+# Deploy test EgressIPs with automatic IP discovery
+./scripts/deploy-test-eips.sh
 
-oc create namespace prod-db  
-oc label namespace prod-db environment=production tier=database
-
-oc create namespace dev-env
-oc label namespace dev-env environment=development
-
-oc create namespace api-services
-oc label namespace api-services app=api-gateway
+# Or deploy with cleanup of existing test resources
+./scripts/deploy-test-eips.sh deploy
 ```
 
-### Node Preparation
+#### **What the Script Does**
 
-Ensure nodes are properly labeled for EgressIP assignment:
+The `deploy-test-eips.sh` script automatically:
+
+1. **🔍 Discovers EgressIP ranges** from cluster node annotations
+2. **📋 Creates test namespaces** with diverse labels (up to 100 namespaces):
+   - `test-ns-1` through `test-ns-100` with various application and infrastructure labels
+   - Includes databases, monitoring, CI/CD, microservices, and protocol-specific namespaces
+3. **🚀 Deploys dynamic EgressIPs**:
+   - Creates one EgressIP per namespace with appropriate labels
+   - Distributes IPs evenly across namespaces (up to 200 IPs total)
+   - Supports enterprise-scale testing scenarios
+
+#### **Script Usage Examples**
 
 ```bash
-# List available nodes
-oc get nodes
+# Deploy with default settings (15 IPs, 4 namespaces)
+./scripts/deploy-test-eips.sh deploy
 
-# Label nodes for egress IP assignment (required for EgressIP to work)
-oc label node <worker-node-1> k8s.ovn.org/egress-assignable=""
-oc label node <worker-node-2> k8s.ovn.org/egress-assignable=""
-oc label node <worker-node-3> k8s.ovn.org/egress-assignable=""
+# Deploy with custom IP count (50 IPs, 4 namespaces)
+./scripts/deploy-test-eips.sh deploy 50
 
-# Verify node labels
-oc get nodes -l k8s.ovn.org/egress-assignable
+# Deploy with custom IP and namespace counts (100 IPs, 25 namespaces)
+./scripts/deploy-test-eips.sh deploy 100 25
+
+# Deploy with maximum scale (200 IPs, 100 namespaces)
+./scripts/deploy-test-eips.sh deploy 200 100
+
+# Clean up test resources
+./scripts/deploy-test-eips.sh cleanup
+
+# Show available EgressIP ranges (discovery only)
+./scripts/discover-eip-ranges.sh
+
+# Show help and usage information
+./scripts/deploy-test-eips.sh help
 ```
 
-**Note**: EgressIP automatically selects from nodes labeled with `k8s.ovn.org/egress-assignable=""`. The node assignment is managed by OpenShift's network operator and cannot be directly controlled through the EgressIP specification.
+#### **Expected Output**
 
-### Dynamic EgressIP Discovery
-
-First, let's create a script to discover available EgressIP ranges from node annotations:
-
-```bash
-#!/bin/bash
-# discover-eip-ranges.sh - Dynamically discover EgressIP ranges from node annotations
-
-get_eip_ranges() {
-    echo "Discovering EgressIP ranges from node annotations..."
-    
-    # Get nodes with egress-assignable label and extract egress-ipconfig annotations
-    oc get nodes -l k8s.ovn.org/egress-assignable -o json | \
-    jq -r '.items[] | select(.metadata.annotations["cloud.network.openshift.io/egress-ipconfig"]) | 
-        .metadata.name + ": " + .metadata.annotations["cloud.network.openshift.io/egress-ipconfig"]' | \
-    while read -r line; do
-        node_name=$(echo "$line" | cut -d: -f1)
-        config=$(echo "$line" | cut -d: -f2- | tr -d "'")
-        
-        echo "Node: $node_name"
-        echo "$config" | jq -r '.[].ifaddr.ipv4' | while read -r cidr; do
-            echo "  Available CIDR: $cidr"
-        done
-        echo
-    done
-}
-
-generate_test_ips() {
-    local cidr="$1"
-    local count="$2"
-    
-    # Extract network and prefix
-    local network=$(echo "$cidr" | cut -d/ -f1)
-    local prefix=$(echo "$cidr" | cut -d/ -f2)
-    
-    # Calculate network base (this is a simplified approach for /23, /24 networks)
-    local base_ip=$(echo "$network" | cut -d. -f1-3)
-    local last_octet=$(echo "$network" | cut -d. -f4)
-    
-    # Generate IP addresses (starting from .10 to avoid common reserved IPs)
-    local start_ip=10
-    local generated=0
-    
-    for i in $(seq $start_ip $((start_ip + count - 1))); do
-        if [ "$prefix" -eq 24 ]; then
-            echo "${base_ip}.$i"
-        elif [ "$prefix" -eq 23 ]; then
-            # For /23 networks, we have two octets worth of space
-            if [ $i -lt 256 ]; then
-                echo "${base_ip}.$i"
-            else
-                local next_octet=$(($(echo "$base_ip" | cut -d. -f3) + 1))
-                local final_octet=$((i - 256))
-                echo "$(echo "$base_ip" | cut -d. -f1-2).${next_octet}.$final_octet"
-            fi
-        fi
-        generated=$((generated + 1))
-        [ $generated -eq $count ] && break
-    done
-}
-
-# Get the first available EgressIP CIDR
-get_first_eip_cidr() {
-    oc get nodes -l k8s.ovn.org/egress-assignable -o json | \
-    jq -r '.items[] | select(.metadata.annotations["cloud.network.openshift.io/egress-ipconfig"]) | 
-        .metadata.annotations["cloud.network.openshift.io/egress-ipconfig"]' | \
-    head -1 | tr -d "'" | jq -r '.[0].ifaddr.ipv4' 2>/dev/null || echo ""
-}
-
-# Export functions for use in other scripts
-export -f get_eip_ranges generate_test_ips get_first_eip_cidr
 ```
+🚀 EgressIP Test Deployment with Dynamic Discovery
+=================================================
 
-### Deploy All Test EgressIPs
+✅ Prerequisites validated
+ℹ️  Current cluster: https://api.your-cluster.com:6443
+ℹ️  Current user: your-username  
+ℹ️  Requested IP count: 50
+ℹ️  Requested namespace count: 25
 
-Create a comprehensive test script that uses dynamic IP discovery:
+🔍 Discovering EgressIP configuration from cluster...
+✅ Found EgressIP CIDR: 10.0.128.0/23
+🎯 Generating 50 test IP addresses...
+✅ Generated 50 test IP addresses
 
-```bash
-#!/bin/bash
-# deploy-test-eips.sh - Dynamic EgressIP deployment with auto-discovery
+📋 Creating 25 test namespaces...
+✅ Namespace 'test-ns-1' created/verified
+✅ Namespace 'test-ns-2' created/verified
+... (continues for all 25 namespaces)
 
-# Source the discovery functions
-source ./discover-eip-ranges.sh
+🚀 Deploying EgressIP configurations with discovered IPs...
+ℹ️  IP distribution: 2 IPs per namespace (with 0 extra IPs)
+✅ Test EgressIPs deployed successfully!
 
-echo "🔍 Discovering EgressIP configuration from cluster..."
-
-# Get the first available EgressIP CIDR
-CIDR=$(get_first_eip_cidr)
-
-if [ -z "$CIDR" ]; then
-    echo "❌ No EgressIP configuration found on nodes"
-    echo "Please ensure nodes are labeled with k8s.ovn.org/egress-assignable=\"\""
-    echo "And have the cloud.network.openshift.io/egress-ipconfig annotation"
-    exit 1
-fi
-
-echo "✅ Found EgressIP CIDR: $CIDR"
-
-# Generate test IP addresses
-echo "🎯 Generating test IP addresses..."
-
-# Use portable method instead of readarray (not available in all bash versions)
-TEST_IPS=()
-while IFS= read -r line; do
-    TEST_IPS+=("$line")
-done < <(generate_test_ips "$CIDR" 15)
-
-if [ ${#TEST_IPS[@]} -lt 10 ]; then
-    echo "❌ Could not generate enough IP addresses from CIDR $CIDR"
-    exit 1
-fi
-
-echo "✅ Generated ${#TEST_IPS[@]} test IP addresses:"
-printf '   %s\n' "${TEST_IPS[@]:0:5}" "   ..."
-
-echo ""
-echo "📋 Creating test namespaces..."
-oc create namespace web-apps --dry-run=client -o yaml | oc apply -f -
-oc label namespace web-apps name=web-apps --overwrite
-
-oc create namespace prod-db --dry-run=client -o yaml | oc apply -f -  
-oc label namespace prod-db environment=production tier=database --overwrite
-
-oc create namespace dev-env --dry-run=client -o yaml | oc apply -f -
-oc label namespace dev-env environment=development --overwrite
-
-oc create namespace api-services --dry-run=client -o yaml | oc apply -f -
-oc label namespace api-services app=api-gateway --overwrite
-
-echo ""
-echo "🚀 Deploying EgressIP configurations with discovered IPs..."
-cat <<EOF | oc apply -f -
-apiVersion: k8s.ovn.org/v1
-kind: EgressIP
-metadata:
-  name: test-eip-web
-spec:
-  egressIPs:
-  - ${TEST_IPS[0]}
-  - ${TEST_IPS[1]}
-  namespaceSelector:
-    matchLabels:
-      name: web-apps
----
-apiVersion: k8s.ovn.org/v1
-kind: EgressIP
-metadata:
-  name: test-eip-database
-spec:
-  egressIPs:
-  - ${TEST_IPS[2]}
-  - ${TEST_IPS[3]}
-  - ${TEST_IPS[4]}
-  namespaceSelector:
-    matchLabels:
-      environment: production
-      tier: database
----
-apiVersion: k8s.ovn.org/v1
-kind: EgressIP
-metadata:
-  name: test-eip-dev
-spec:
-  egressIPs:
-  - ${TEST_IPS[5]}
-  namespaceSelector:
-    matchLabels:
-      environment: development
----
-apiVersion: k8s.ovn.org/v1
-kind: EgressIP
-metadata:
-  name: test-eip-ha-api
-spec:
-  egressIPs:
-  - ${TEST_IPS[6]}
-  - ${TEST_IPS[7]}
-  - ${TEST_IPS[8]}
-  - ${TEST_IPS[9]}
-  namespaceSelector:
-    matchLabels:
-      app: api-gateway
-EOF
-
-echo ""
-echo "✅ Test EgressIPs created successfully!"
-echo "📊 Summary:"
-echo "   - CIDR discovered: $CIDR"
-echo "   - IPs allocated: ${#TEST_IPS[@]}"
-echo "   - EgressIPs created: 4"
-echo ""
-echo "🔍 Verification commands:"
-echo "   oc get egressip"
-echo "   oc get egressip -o wide"
-echo "   oc get cloudprivateipconfig"
+📊 Deployment Summary
+====================
+CIDR discovered: 10.0.128.0/23
+IPs requested: 50
+IPs allocated: 50
+Namespaces requested: 25
+Namespaces created: 25
+EgressIPs created: 25
+IPs per namespace: 2 (with 0 extra IPs)
 ```
 
 ### Verification Commands
@@ -600,8 +475,11 @@ oc get egressip
 oc get egressip -o wide
 
 # Check individual EgressIP status
-oc describe egressip test-eip-web
-oc describe egressip test-eip-database
+oc describe egressip test-eip-test-ns-1
+oc describe egressip test-eip-test-ns-2
+
+# List EgressIPs with labels
+oc get egressip -l test-suite=eip-monitoring
 
 # Verify CPIC resources are created
 oc get cloudprivateipconfig
@@ -611,6 +489,55 @@ oc get nodes -o custom-columns="NAME:.metadata.name,EGRESS-IPS:.metadata.annotat
 
 # Monitor the EIP monitoring metrics
 curl http://eip-monitor-service:8080/metrics | grep eip
+```
+
+### Large-Scale Testing
+
+The script supports enterprise-scale testing scenarios with up to 200 egress IPs distributed across 100 namespaces:
+
+#### **Maximum Scale Deployment**
+
+```bash
+# Deploy with maximum scale (200 IPs, 100 namespaces)
+./scripts/deploy-test-eips.sh deploy 200 100
+```
+
+This creates:
+- **100 namespaces**: `test-ns-1` through `test-ns-100`
+- **100 EgressIPs**: One per namespace with diverse labels
+- **200 IPs total**: 2 IPs per namespace (even distribution)
+- **Diverse labels**: Databases, monitoring, CI/CD, microservices, protocols
+
+#### **Namespace Categories**
+
+The 100 namespaces include diverse application types:
+
+- **Databases** (test-ns-23, 28-30): postgres, mysql, mongodb, redis
+- **Monitoring** (test-ns-36-50): prometheus, grafana, jaeger, datadog, newrelic
+- **CI/CD** (test-ns-51-60): jenkins, gitlab, github, azure-devops, circleci
+- **Infrastructure** (test-ns-61-75): terraform, ansible, docker, kubernetes, istio
+- **Microservices** (test-ns-75-100): spring-cloud, quarkus, vertx, akka, play
+- **Protocols** (test-ns-89-95): REST, GraphQL, gRPC, SOAP, Thrift, Avro
+
+#### **Performance Considerations**
+
+For large-scale deployments:
+
+```bash
+# Start with moderate scale (50 IPs, 25 namespaces)
+./scripts/deploy-test-eips.sh deploy 50 25
+
+# Gradually increase to maximum scale
+./scripts/deploy-test-eips.sh deploy 100 50
+./scripts/deploy-test-eips.sh deploy 150 75
+./scripts/deploy-test-eips.sh deploy 200 100
+```
+
+#### **Cleanup for Large Deployments**
+
+```bash
+# Clean up all test resources (handles up to 100 namespaces)
+./scripts/deploy-test-eips.sh cleanup
 ```
 
 ### Testing Different Scenarios
@@ -680,12 +607,15 @@ When testing is complete:
 # cleanup-test-eips.sh
 
 echo "Removing test EgressIPs..."
-oc delete egressip test-eip-web test-eip-database test-eip-dev test-eip-ha-api test-high-util
+oc delete egressip -l test-suite=eip-monitoring
+oc delete egressip test-high-util
 oc delete egressip -l test=high-utilization
 oc delete egressip test-dist-{1..5} 2>/dev/null
 
 echo "Removing test namespaces..."
-oc delete namespace web-apps prod-db dev-env api-services
+oc delete namespace -l test-suite=eip-monitoring
+# Or manually delete specific namespaces
+oc delete namespace test-ns-{1..100} 2>/dev/null
 
 echo "Cleanup complete!"
 ```
