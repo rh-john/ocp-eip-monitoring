@@ -27,11 +27,11 @@ oc apply -f k8s/servicemonitor.yaml
 - [Prerequisites](#-prerequisites)
 - [User Workload Monitoring and Alerting Setup](#-user-workload-monitoring-and-alerting-setup)
 - [Installation](#-installation)
+- [Troubleshooting](#-troubleshooting)
 - [Configuration](#-configuration)
 - [Metrics](#-metrics)
 - [Alerts](#-alerts)
 - [Usage](#-usage)
-- [Troubleshooting](#-troubleshooting)
 - [Contributing](#-contributing)
 - [Important Notice](#-important-notice)
 
@@ -49,12 +49,6 @@ oc apply -f k8s/servicemonitor.yaml
 - **25+ Alert Rules**: Proactive alerting for capacity, health, and performance issues
 - **Health Scoring**: Intelligent cluster health and stability scoring algorithms
 - **Historical Tracking**: Trend analysis for changes and recoveries
-
-### **Enterprise Features**
-- **OpenShift Security**: Full SCC compliance with non-root containers
-- **High Availability**: Stateless design with configurable scrape intervals
-- **Automated Deployment**: Complete CI/CD ready deployment automation
-- **Comprehensive Documentation**: Extensive guides and troubleshooting resources
 
 ## 🏗️ Architecture
 
@@ -132,7 +126,7 @@ data:
     enableUserWorkload: true
 ```
 
-**Step 2: Enable alerting for user workloads (REQUIRED)**
+**Step 2: Enable alerting for user workloads**
 ```bash
 # Create the user workload monitoring config to enable alerting
 oc apply -f - <<EOF
@@ -215,61 +209,6 @@ oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-work
   curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[].rules[] | select(.name=="StaleCPICDetected")'
 ```
 
-### **Troubleshooting User Workload Monitoring**
-
-**Issue**: `ServiceMonitor` created but no metrics appear
-```bash
-# Check if user workload monitoring is enabled
-oc get configmap cluster-monitoring-config -n openshift-monitoring -o yaml
-
-# Verify the user workload Prometheus is running
-oc get prometheus -n openshift-user-workload-monitoring
-
-# Check ServiceMonitor labels match Prometheus selectors
-oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
-```
-
-**Issue**: Permission denied errors
-```bash
-# Verify RBAC for user workload monitoring
-oc adm policy who-can create servicemonitors -n eip-monitoring
-oc adm policy who-can create prometheusrules -n eip-monitoring
-```
-
-**Issue**: Metrics not being scraped
-```bash
-# Check if the EIP monitor service is accessible
-oc port-forward service/eip-monitor 8080:8080 -n eip-monitoring
-curl http://localhost:8080/metrics
-
-# Verify ServiceMonitor selector matches service labels
-oc get service eip-monitor -n eip-monitoring --show-labels
-oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
-```
-
-**Issue**: Alerts not firing (PrometheusRule created but no alerts)
-```bash
-# Check if user workload monitoring is enabled
-oc get configmap cluster-monitoring-config -n openshift-monitoring -o yaml | grep enableUserWorkload
-
-# Check if user workload alerting is configured
-oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o yaml
-
-# Verify AlertManager for user workloads is running
-oc get pods -n openshift-user-workload-monitoring | grep alertmanager
-oc get alertmanager -n openshift-user-workload-monitoring
-
-# Verify PrometheusRule is valid and loaded
-oc get prometheusrule eip-monitor-alerts -n eip-monitoring -o yaml
-
-# Check alert rules are loaded into Prometheus
-oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
-  curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name=="eip-monitoring")'
-
-# Check current alert status
-oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
-  curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.rule.name | contains("CPIC"))'
-```
 
 ## 🛠️ Installation
 
@@ -332,6 +271,105 @@ podman build -t eip-monitor:latest .
 # Run locally (requires oc login)
 podman run -p 8080:8080 eip-monitor:latest
 ```
+
+## 🔧 Troubleshooting
+
+### **User Workload Monitoring Issues**
+
+**Issue**: `ServiceMonitor` created but no metrics appear
+```bash
+# Check if user workload monitoring is enabled
+oc get configmap cluster-monitoring-config -n openshift-monitoring -o yaml
+
+# Verify the user workload Prometheus is running
+oc get prometheus -n openshift-user-workload-monitoring
+
+# Check ServiceMonitor labels match Prometheus selectors
+oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
+```
+
+**Issue**: Permission denied errors
+```bash
+# Verify RBAC for user workload monitoring
+oc adm policy who-can create servicemonitors -n eip-monitoring
+oc adm policy who-can create prometheusrules -n eip-monitoring
+```
+
+**Issue**: Metrics not being scraped
+```bash
+# Check if the EIP monitor service is accessible
+oc port-forward service/eip-monitor 8080:8080 -n eip-monitoring
+curl http://localhost:8080/metrics
+
+# Verify ServiceMonitor selector matches service labels
+oc get service eip-monitor -n eip-monitoring --show-labels
+oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
+```
+
+**Issue**: Alerts not firing (PrometheusRule created but no alerts)
+```bash
+# Check if user workload monitoring is enabled
+oc get configmap cluster-monitoring-config -n openshift-monitoring -o yaml | grep enableUserWorkload
+
+# Check if user workload alerting is configured
+oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o yaml
+
+# Verify AlertManager for user workloads is running
+oc get pods -n openshift-user-workload-monitoring | grep alertmanager
+oc get alertmanager -n openshift-user-workload-monitoring
+
+# Verify PrometheusRule is valid and loaded
+oc get prometheusrule eip-monitor-alerts -n eip-monitoring -o yaml
+
+# Check alert rules are loaded into Prometheus
+oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
+  curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name=="eip-monitoring")'
+
+# Check current alert status
+oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
+  curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.rule.name | contains("CPIC"))'
+```
+
+### **Common Deployment Issues**
+
+**Pod not starting:**
+```bash
+# Check pod status and logs
+oc get pods -n eip-monitoring
+oc logs -f deployment/eip-monitor -n eip-monitoring
+
+# Verify RBAC permissions
+oc auth can-i get egressips --as=system:serviceaccount:eip-monitoring:eip-monitor
+```
+
+**No metrics appearing:**
+```bash
+# Test metrics endpoint
+oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:8080/metrics
+
+# Check OpenShift API connectivity
+oc exec deployment/eip-monitor -n eip-monitoring -- oc get eip
+```
+
+**High memory usage:**
+```bash
+# Check resource limits
+oc describe pod -l app=eip-monitor -n eip-monitoring
+
+# Adjust scrape interval
+oc patch configmap eip-monitor-config -n eip-monitoring -p '{"data":{"scrape-interval":"60"}}'
+```
+
+### **Log Analysis**
+```bash
+# View detailed logs
+oc logs deployment/eip-monitor -n eip-monitoring --tail=100 -f
+
+# Filter error logs
+oc logs deployment/eip-monitor -n eip-monitoring | grep ERROR
+```
+
+**📖 [Complete Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Detailed deployment and troubleshooting
 
 ## ⚙️ Configuration
 
@@ -461,48 +499,6 @@ oc run eip-debug --image=eip-monitor:latest --rm -it --restart=Never -- shell
 oc run eip-test --image=eip-monitor:latest --rm --restart=Never -- monitor
 ```
 
-## 🔧 Troubleshooting
-
-### **Common Issues**
-
-**Pod not starting:**
-```bash
-# Check pod status and logs
-oc get pods -n eip-monitoring
-oc logs -f deployment/eip-monitor -n eip-monitoring
-
-# Verify RBAC permissions
-oc auth can-i get egressips --as=system:serviceaccount:eip-monitoring:eip-monitor
-```
-
-**No metrics appearing:**
-```bash
-# Test metrics endpoint
-oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:8080/metrics
-
-# Check OpenShift API connectivity
-oc exec deployment/eip-monitor -n eip-monitoring -- oc get eip
-```
-
-**High memory usage:**
-```bash
-# Check resource limits
-oc describe pod -l app=eip-monitor -n eip-monitoring
-
-# Adjust scrape interval
-oc patch configmap eip-monitor-config -n eip-monitoring -p '{"data":{"scrape-interval":"60"}}'
-```
-
-### **Log Analysis**
-```bash
-# View detailed logs
-oc logs deployment/eip-monitor -n eip-monitoring --tail=100 -f
-
-# Filter error logs
-oc logs deployment/eip-monitor -n eip-monitoring | grep ERROR
-```
-
-**📖 [Complete Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Detailed deployment and troubleshooting
 
 ## 📁 Project Structure
 
@@ -594,4 +590,4 @@ Connect with me for OpenShift architecture guidance, best practices, and advance
 
 ---
 
-**Built for OpenShift 4.18+ | Zero External Dependencies**
+**Built for OpenShift 4.18+**
