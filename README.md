@@ -277,8 +277,8 @@ oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-work
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd eip-ocp-sh
+git clone https://github.com/rh-john/ocp-eip-monitoring.git
+cd ocp-eip-monitoring
 
 # Build and deploy (replace with your registry)
 ./scripts/build-and-deploy.sh all -r quay.io/your-registry
@@ -287,21 +287,43 @@ cd eip-ocp-sh
 ./scripts/test-deployment.sh
 ```
 
-### **Method 2: Manual Deployment**
+### **Method 2: Deploy with Pre-built Image**
+
+```bash
+# Clone the repository for manifests
+git clone https://github.com/rh-john/ocp-eip-monitoring.git
+cd ocp-eip-monitoring
+
+# Create namespace
+oc new-project eip-monitoring
+
+# Deploy using pre-built image from Quay.io
+oc apply -f k8s/k8s-manifests.yaml
+oc patch deployment eip-monitor -n eip-monitoring -p '{"spec":{"template":{"spec":{"containers":[{"name":"eip-monitor","image":"quay.io/rh_ee_jjohanss/eip-monitor:latest"}]}}}}'
+
+# Apply monitoring configuration
+oc apply -f k8s/servicemonitor.yaml
+
+# Verify deployment
+oc get pods -n eip-monitoring
+oc logs -f deployment/eip-monitor -n eip-monitoring
+```
+
+### **Method 3: Manual Deployment**
 
 ```bash
 # Apply Kubernetes manifests
 oc new-project eip-monitoring
-oc apply -f k8s-manifests.yaml
+oc apply -f k8s/k8s-manifests.yaml
 
 # Apply monitoring configuration
-oc apply -f servicemonitor.yaml
+oc apply -f k8s/servicemonitor.yaml
 
 # Check deployment status
 oc get pods -n eip-monitoring
 ```
 
-### **Method 3: Local Development**
+### **Method 4: Local Development**
 
 ```bash
 # Build container locally
@@ -485,7 +507,7 @@ oc logs deployment/eip-monitor -n eip-monitoring | grep ERROR
 ## 📁 Project Structure
 
 ```
-eip-ocp-sh/
+ocp-eip-monitoring/
 ├── README.md                           # Project overview and quick start
 ├── Dockerfile                          # Container build configuration  
 ├── .containerignore                    # Container build exclusions
@@ -510,8 +532,8 @@ eip-ocp-sh/
 ### **Development Setup**
 ```bash
 # Local development
-git clone <repository-url>
-cd eip-ocp-sh
+git clone https://github.com/rh-john/ocp-eip-monitoring.git
+cd ocp-eip-monitoring
 
 # Test Python syntax
 python3 -m py_compile metrics_server.py

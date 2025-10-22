@@ -43,7 +43,20 @@ The containerized EIP monitor provides:
 
 ## Quick Start
 
-### 1. Build the Container Image
+### Option 1: Use Pre-built Image (Recommended for Testing)
+
+If you want to skip the build process, you can use the pre-built image from Quay.io:
+
+```bash
+# Clone repository for manifests
+git clone https://github.com/rh-john/ocp-eip-monitoring.git
+cd ocp-eip-monitoring
+
+# Deploy with pre-built image (see step 3 for deployment)
+# Image: quay.io/rh_ee_jjohanss/eip-monitor:latest
+```
+
+### Option 2: Build Your Own Container Image
 
 ```bash
 # Build the image
@@ -57,7 +70,7 @@ podman tag eip-monitor:latest your-registry.com/eip-monitor:latest
 podman push your-registry.com/eip-monitor:latest
 ```
 
-### 2. Update Configuration
+### Step 2: Update Configuration
 
 Edit `k8s-manifests.yaml`:
 
@@ -66,7 +79,9 @@ Edit `k8s-manifests.yaml`:
 image: "your-registry.com/eip-monitor:latest"
 ```
 
-### 3. Deploy to OpenShift
+### Step 3: Deploy to OpenShift
+
+**Option A: Using Custom Registry Image**
 
 ```bash
 # Apply the manifests
@@ -79,7 +94,25 @@ oc rollout status deployment/eip-monitor -n eip-monitoring
 oc logs -f deployment/eip-monitor -n eip-monitoring
 ```
 
-### 4. Set up Prometheus Monitoring
+**Option B: Using Pre-built Image from Quay.io**
+
+```bash
+# Apply the manifests with pre-built image
+oc apply -f k8s-manifests.yaml
+
+# Update deployment to use pre-built image
+oc patch deployment eip-monitor -n eip-monitoring -p '{"spec":{"template":{"spec":{"containers":[{"name":"eip-monitor","image":"quay.io/rh_ee_jjohanss/eip-monitor:latest"}]}}}}'
+
+# Wait for deployment
+oc rollout status deployment/eip-monitor -n eip-monitoring
+
+# Check logs
+oc logs -f deployment/eip-monitor -n eip-monitoring
+```
+
+> **Note**: Option B uses a pre-built container image maintained by the project maintainer, eliminating the need to build and push your own image.
+
+### Step 4: Set up Prometheus Monitoring
 
 ```bash
 # Apply ServiceMonitor (if using Prometheus Operator)
