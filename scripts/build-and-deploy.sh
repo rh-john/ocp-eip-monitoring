@@ -152,7 +152,11 @@ update_manifests() {
     local temp_servicemonitor="/tmp/eip-servicemonitor-${RANDOM}.yaml"
     
     # Copy and update main manifests
-    cp k8s-manifests.yaml "$temp_manifest"
+    # Get script directory to make paths relative to script location
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    cp "$project_root/k8s/k8s-manifests.yaml" "$temp_manifest"
     
     # Update image name
     local full_image_name="${IMAGE_NAME}:${IMAGE_TAG}"
@@ -163,7 +167,7 @@ update_manifests() {
     sed -i "" "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$temp_manifest"
     
     # Copy servicemonitor
-    cp servicemonitor.yaml "$temp_servicemonitor"
+    cp "$project_root/k8s/servicemonitor.yaml" "$temp_servicemonitor"
     
     log_info "Updated manifests:" >&2
     log_info "  Image: $full_image_name" >&2

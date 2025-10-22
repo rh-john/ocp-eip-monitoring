@@ -11,11 +11,11 @@ A comprehensive monitoring solution for OpenShift Egress IP (EIP) and CloudPriva
 
 ```bash
 # Build and deploy to OpenShift
-./build-and-deploy.sh all -r quay.io/your-registry
+./scripts/build-and-deploy.sh all -r quay.io/your-registry
 
 # Or deploy with existing image
-oc apply -f k8s-manifests.yaml
-oc apply -f servicemonitor.yaml
+oc apply -f k8s/k8s-manifests.yaml
+oc apply -f k8s/servicemonitor.yaml
 ```
 
 ## 📋 Table of Contents
@@ -101,10 +101,10 @@ git clone <repository-url>
 cd eip-ocp-sh
 
 # Build and deploy (replace with your registry)
-./build-and-deploy.sh all -r quay.io/your-registry
+./scripts/build-and-deploy.sh all -r quay.io/your-registry
 
 # Verify deployment
-./test-deployment.sh
+./scripts/test-deployment.sh
 ```
 
 ### **Method 2: Manual Deployment**
@@ -191,7 +191,7 @@ data:
 | `api_success_rate_percent` | API success rates | `operation` |
 | `api_calls_total` | Total API calls | `operation`, `status` |
 
-**📈 [Complete Metrics Guide](ENHANCED_METRICS_GUIDE.md)** - Detailed documentation of all 40+ metrics
+**📈 [Complete Metrics Guide](docs/ENHANCED_METRICS_GUIDE.md)** - Detailed documentation of all 40+ metrics
 
 ## 🚨 Alerts
 
@@ -207,7 +207,7 @@ data:
 - **EIPDistributionUnfair**: Uneven EIP distribution
 - **APIResponseTimeSlow**: API responses > 10 seconds
 
-**🔔 [Complete Alerts Guide](ENHANCED_METRICS_GUIDE.md#-comprehensive-alert-rules-25-alerts)** - Full alert reference
+**🔔 [Complete Alerts Guide](docs/ENHANCED_METRICS_GUIDE.md#-comprehensive-alert-rules-25-alerts)** - Full alert reference
 
 ## 🎯 Usage
 
@@ -241,13 +241,13 @@ avg_over_time(cluster_eip_health_score[1h])
 ### **Testing with EgressIPs**
 ```bash
 # Automatically discover and deploy test EgressIPs
-./deploy-test-eips.sh deploy
+./scripts/deploy-test-eips.sh deploy
 
 # Discover available IP ranges in your cluster
-./discover-eip-ranges.sh
+./scripts/discover-eip-ranges.sh
 
 # Clean up test resources
-./deploy-test-eips.sh cleanup
+./scripts/deploy-test-eips.sh cleanup
 ```
 
 ### **Debug Mode**
@@ -300,24 +300,30 @@ oc logs deployment/eip-monitor -n eip-monitoring --tail=100 -f
 oc logs deployment/eip-monitor -n eip-monitoring | grep ERROR
 ```
 
-**📖 [Complete Deployment Guide](CONTAINER_DEPLOYMENT.md)** - Detailed deployment and troubleshooting
+**📖 [Complete Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Detailed deployment and troubleshooting
 
 ## 📁 Project Structure
 
-| File | Purpose |
-|------|---------|
-| `README.md` | Project overview and quick start |
-| `metrics_server.py` | Core monitoring application (Python Flask) |
-| `Dockerfile` | Container build configuration |
-| `entrypoint.sh` | Container startup script |
-| `k8s-manifests.yaml` | OpenShift deployment resources |
-| `servicemonitor.yaml` | Prometheus monitoring configuration |
-| `build-and-deploy.sh` | Automated build and deployment |
-| `test-deployment.sh` | Deployment validation and testing |
-| `discover-eip-ranges.sh` | Dynamic EgressIP range discovery |
-| `deploy-test-eips.sh` | Automated test EgressIP creation |
-| `CONTAINER_DEPLOYMENT.md` | Complete deployment and operations guide |
-| `ENHANCED_METRICS_GUIDE.md` | Comprehensive metrics and alerts reference |
+```
+eip-ocp-sh/
+├── README.md                           # Project overview and quick start
+├── Dockerfile                          # Container build configuration  
+├── .containerignore                    # Container build exclusions
+├── docs/                               # 📚 Documentation
+│   ├── CONTAINER_DEPLOYMENT.md         # Complete deployment and operations guide
+│   └── ENHANCED_METRICS_GUIDE.md       # Comprehensive metrics and alerts reference
+├── src/                                # 💻 Application source code
+│   ├── metrics_server.py               # Core monitoring application (Python Flask)
+│   └── entrypoint.sh                   # Container startup script
+├── k8s/                                # ☸️ Kubernetes manifests
+│   ├── k8s-manifests.yaml              # OpenShift deployment resources
+│   └── servicemonitor.yaml             # Prometheus monitoring configuration
+└── scripts/                            # 🔧 Operational scripts
+    ├── build-and-deploy.sh             # Automated build and deployment
+    ├── test-deployment.sh              # Deployment validation and testing
+    ├── discover-eip-ranges.sh          # Dynamic EgressIP range discovery
+    └── deploy-test-eips.sh             # Automated test EgressIP creation
+```
 
 ## 🤝 Contributing
 
@@ -357,8 +363,8 @@ This project is provided as-is for OpenShift EIP monitoring and analysis.
 ## 🆘 Support
 
 ### **Documentation**
-- **[Deployment Guide](CONTAINER_DEPLOYMENT.md)** - Complete deployment instructions
-- **[Metrics Reference](ENHANCED_METRICS_GUIDE.md)** - All metrics and alerts
+- **[Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Complete deployment instructions
+- **[Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md)** - All metrics and alerts
 
 ### **Getting Help**
 For issues with:

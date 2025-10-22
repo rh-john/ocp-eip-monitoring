@@ -38,8 +38,8 @@ RUN curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/ope
 WORKDIR /app
 
 # Copy application files
-COPY metrics_server.py /app/
-COPY entrypoint.sh /app/
+COPY src/metrics_server.py /app/
+COPY src/entrypoint.sh /app/
 
 # Make scripts executable
 RUN chmod +x /app/*.sh

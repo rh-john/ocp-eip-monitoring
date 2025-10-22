@@ -1,4 +1,8 @@
 #!/bin/bash
+
+# Get script directory for proper path resolution
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 #
 # EIP Monitor Deployment Testing Script
 # Comprehensive testing for the EIP monitoring deployment
