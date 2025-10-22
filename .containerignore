@@ -1,0 +1,35 @@
+# Container build ignore file
+# Similar to .gitignore but for container builds
+
+# Documentation
+README.md
+CONTAINER_DEPLOYMENT.md
+*.md
+
+# Version control
+.git/
+.gitignore
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Mac OS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Build artifacts
+*.log
+*.tmp
+runs/
+
+# Kubernetes manifests (not needed in container)
+k8s-manifests.yaml
+servicemonitor.yaml
+
+# Build script (not needed in container)
+build-and-deploy.sh

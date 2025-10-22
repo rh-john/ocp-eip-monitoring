@@ -1,0 +1,265 @@
+---
+# Namespace for EIP monitoring
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: eip-monitoring
+  labels:
+    name: eip-monitoring
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# ServiceAccount for EIP monitoring pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: eip-monitor
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+
+---
+# ClusterRole with permissions to read EIP and CPIC resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eip-monitor
+  labels:
+    app: eip-monitor
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["k8s.ovn.org"]
+  resources: ["egressips"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["cloud.network.openshift.io"]
+  resources: ["cloudprivateipconfigs"]
+  verbs: ["get", "list", "watch"]
+# Additional permissions for OpenShift 4.18 compatibility
+- apiGroups: ["config.openshift.io"]
+  resources: ["infrastructures", "networks"]
+  verbs: ["get", "list"]
+- apiGroups: ["operator.openshift.io"]
+  resources: ["networks"]
+  verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding to bind the ServiceAccount to the ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: eip-monitor
+  labels:
+    app: eip-monitor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: eip-monitor
+subjects:
+- kind: ServiceAccount
+  name: eip-monitor
+  namespace: eip-monitoring
+
+---
+# OpenShift EIP monitoring configuration
+
+---
+# ConfigMap for configuration values
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: eip-monitor-config
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+data:
+  scrape-interval: "30"
+  log-level: "INFO"
+
+---
+# Deployment for EIP monitoring
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eip-monitor
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    version: v1
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: eip-monitor
+  template:
+    metadata:
+      labels:
+        app: eip-monitor
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: eip-monitor
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: eip-monitor
+        image: "eip-monitor:latest"  # Replace with your actual image
+        imagePullPolicy: Always
+        ports:
+        - name: metrics
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: SCRAPE_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: eip-monitor-config
+              key: scrape-interval
+        - name: PORT
+          value: "8080"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: metrics
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: metrics
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/.cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+        effect: NoSchedule
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - eip-monitor
+              topologyKey: kubernetes.io/hostname
+
+---
+# Service to expose metrics endpoint
+apiVersion: v1
+kind: Service
+metadata:
+  name: eip-monitor
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    service: eip-monitor
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+  - name: metrics
+    port: 8080
+    targetPort: metrics
+    protocol: TCP
+  selector:
+    app: eip-monitor
+
+---
+# NetworkPolicy for security (optional, adjust based on your needs)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: eip-monitor
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  podSelector:
+    matchLabels:
+      app: eip-monitor
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: openshift-monitoring
+    - namespaceSelector:
+        matchLabels:
+          name: openshift-user-workload-monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Kubernetes API
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+  # Allow HTTPS API access
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
