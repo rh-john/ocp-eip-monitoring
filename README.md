@@ -9,7 +9,7 @@ A comprehensive monitoring solution for OpenShift Egress IP (EIP) and CloudPriva
 
 ## 🚀 Quick Start
 
-**⚠️ First**: Ensure [User Workload Monitoring](#-user-workload-monitoring-setup) is enabled in your cluster
+**⚠️ First**: Ensure [User Workload Monitoring and Alerting](#-user-workload-monitoring-setup) are enabled in your cluster
 
 ```bash
 # Build and deploy to OpenShift
@@ -25,7 +25,7 @@ oc apply -f k8s/servicemonitor.yaml
 - [Features](#-features)
 - [Architecture](#-architecture)
 - [Prerequisites](#-prerequisites)
-- [User Workload Monitoring Setup](#-user-workload-monitoring-setup)
+- [User Workload Monitoring and Alerting Setup](#-user-workload-monitoring-and-alerting-setup)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
 - [Metrics](#-metrics)
@@ -84,7 +84,7 @@ oc apply -f k8s/servicemonitor.yaml
 
 ### **OpenShift Environment**
 - OpenShift 4.18 or later
-- **User Workload Monitoring enabled** (see [User Workload Monitoring Setup](#user-workload-monitoring-setup))
+- **User Workload Monitoring and Alerting enabled** (see [User Workload Monitoring Setup](#user-workload-monitoring-setup))
 - Prometheus Operator installed (included with OpenShift)
 - EIP and CPIC features enabled
 
@@ -96,9 +96,9 @@ oc apply -f k8s/servicemonitor.yaml
 ### **RBAC Permissions**
 The monitoring tool requires cluster-level read access to EIP and CPIC resources. All necessary permissions are included in the deployment manifests.
 
-## 🔧 User Workload Monitoring Setup
+## 🔧 User Workload Monitoring and Alerting Setup
 
-**⚠️ CRITICAL PREREQUISITE**: This EIP monitoring tool uses `ServiceMonitor` and `PrometheusRule` resources which require **User Workload Monitoring** to be enabled in OpenShift.
+**⚠️ CRITICAL PREREQUISITE**: This EIP monitoring tool uses `ServiceMonitor` and `PrometheusRule` resources which require **User Workload Monitoring and Alerting** to be enabled in OpenShift.
 
 ### **What is User Workload Monitoring?**
 
@@ -110,10 +110,11 @@ By default, only the cluster monitoring stack is enabled. User applications like
 - Scrape custom metrics via `ServiceMonitor`
 - Process custom alerts via `PrometheusRule` 
 - Store and query custom metrics in user workload Prometheus
+- **Enable alerting** for custom PrometheusRule resources
 
-### **Enable User Workload Monitoring**
+### **Enable User Workload Monitoring and Alerting**
 
-**Step 1: Enable the feature**
+**Step 1: Enable user workload monitoring**
 ```bash
 # Create or edit the cluster-monitoring-config ConfigMap
 oc -n openshift-monitoring edit configmap cluster-monitoring-config
@@ -131,31 +132,70 @@ data:
     enableUserWorkload: true
 ```
 
-**Step 2: Configure user workload monitoring (optional)**
+**Step 2: Enable alerting for user workloads (REQUIRED)**
 ```bash
-# Create user workload monitoring config (optional - for custom settings)
-oc -n openshift-user-workload-monitoring create configmap user-workload-monitoring-config --from-literal=config.yaml="
-prometheus:
-  retention: 7d
-  resources:
-    requests:
-      cpu: 200m
-      memory: 2Gi
-"
+# Create the user workload monitoring config to enable alerting
+oc apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+data:
+  config.yaml: |
+    alertmanager:
+      enabled: true
+      enableAlertmanagerConfig: true
+EOF
 ```
 
-**Step 3: Verify the setup**
+**⚠️ Critical**: This ConfigMap is **REQUIRED** for:
+- PrometheusRule alerts (including the stale CPIC alert) to be processed and fired
+- Custom alerts to be sent to AlertManager for notification routing
+- Alert rules to appear in the Prometheus rules API
+
+**Step 3: Configure additional user workload settings (optional)**
+```bash
+# Optional: Configure additional settings like retention and resources
+oc apply -f - <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+data:
+  config.yaml: |
+    alertmanager:
+      enabled: true
+      enableAlertmanagerConfig: true
+    prometheus:
+      retention: 7d
+      resources:
+        requests:
+          cpu: 200m
+          memory: 2Gi
+EOF
+```
+
+**Step 4: Verify the setup**
 ```bash
 # Check that user workload monitoring pods are running
 oc get pods -n openshift-user-workload-monitoring
 
 # Expected output should include pods like:
+# alertmanager-user-workload-*  (these are key for alerting!)
 # prometheus-operator-* 
 # prometheus-user-workload-*
 # thanos-ruler-user-workload-*
+
+# Verify the user workload monitoring config was created
+oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o yaml
+
+# Check that AlertManager for user workloads is running
+oc get alertmanager -n openshift-user-workload-monitoring
 ```
 
-### **Verify ServiceMonitor Discovery**
+### **Verify ServiceMonitor and AlertRule Discovery**
 
 After deploying the EIP monitor, verify it's being discovered:
 
@@ -163,9 +203,16 @@ After deploying the EIP monitor, verify it's being discovered:
 # Check if the ServiceMonitor is created
 oc get servicemonitor -n eip-monitoring
 
+# Check if the PrometheusRule is created
+oc get prometheusrule -n eip-monitoring
+
 # Check if Prometheus is scraping the target
 oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
   curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="eip-monitor")'
+
+# Verify that alert rules (including StaleCPICDetected) are loaded
+oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
+  curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[].rules[] | select(.name=="StaleCPICDetected")'
 ```
 
 ### **Troubleshooting User Workload Monitoring**
@@ -198,6 +245,30 @@ curl http://localhost:8080/metrics
 # Verify ServiceMonitor selector matches service labels
 oc get service eip-monitor -n eip-monitoring --show-labels
 oc get servicemonitor eip-monitor -n eip-monitoring -o yaml
+```
+
+**Issue**: Alerts not firing (PrometheusRule created but no alerts)
+```bash
+# Check if user workload monitoring is enabled
+oc get configmap cluster-monitoring-config -n openshift-monitoring -o yaml | grep enableUserWorkload
+
+# Check if user workload alerting is configured
+oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o yaml
+
+# Verify AlertManager for user workloads is running
+oc get pods -n openshift-user-workload-monitoring | grep alertmanager
+oc get alertmanager -n openshift-user-workload-monitoring
+
+# Verify PrometheusRule is valid and loaded
+oc get prometheusrule eip-monitor-alerts -n eip-monitoring -o yaml
+
+# Check alert rules are loaded into Prometheus
+oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
+  curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name=="eip-monitoring")'
+
+# Check current alert status
+oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
+  curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.rule.name | contains("CPIC"))'
 ```
 
 ## 🛠️ Installation
