@@ -318,3 +318,14 @@ spec:
       annotations:
         summary: "EIP metrics collection is slow"
         description: "Metrics collection is taking {{ $value }}s. Check cluster API performance and resource limits."
+    
+    # Stale CPIC Detection Alert
+    - alert: StaleCPICDetected
+      expr: (cpic_success_total + cpic_pending_total + cpic_error_total) != eips_assigned_total
+      for: 5m
+      labels:
+        severity: warning
+        component: cpic
+      annotations:
+        summary: "Stale CPIC detected - CPIC count doesn't match assigned EIPs"
+        description: "The total number of CPIC resources does not match the number of assigned EIPs. This may indicate stale or orphaned CPIC resources that need cleanup."
