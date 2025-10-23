@@ -182,6 +182,7 @@ curl http://localhost:8080/metrics
 |----------|----------|-------------|---------|
 | `PORT` | No | Metrics server port | 8080 |
 | `SCRAPE_INTERVAL` | No | Metrics collection interval (seconds) | 30 |
+| `EIP_CAPACITY_PER_NODE` | No | Maximum EIPs per node for capacity calculations | 75 |
 
 ### Container Modes
 

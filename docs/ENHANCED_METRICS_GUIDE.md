@@ -212,12 +212,20 @@ All alert thresholds are configurable via the ServiceMonitor. Key parameters:
 - **Distribution Fairness**: Warning Gini > 0.4, Critical > 0.7
 
 ### **Capacity Estimation**
-Node EIP capacity is currently set to 50 EIPs per node. Adjust based on your environment:
+Node EIP capacity is configurable via environment variable. Default is 75 EIPs per node:
 
-```python
-# In metrics_server.py, line ~526
-estimated_capacity = 50  # Adjust this value
+```bash
+# Set via environment variable
+export EIP_CAPACITY_PER_NODE=75  # Default value
+export EIP_CAPACITY_PER_NODE=50  # For more conservative capacity
+export EIP_CAPACITY_PER_NODE=100 # For higher capacity nodes
 ```
+
+The capacity affects:
+- Node utilization calculations
+- Capacity warning/critical alerts
+- Health score calculations
+- Distribution fairness metrics
 
 ### **Historical Data Retention**
 - API performance history: Last 100 measurements
