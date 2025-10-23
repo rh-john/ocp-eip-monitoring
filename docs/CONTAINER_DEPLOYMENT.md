@@ -674,25 +674,18 @@ curl http://eip-monitor-service:8080/metrics | grep eip_utilization
 
 ### Cleanup Test Resources
 
-When testing is complete:
+When testing is complete, use the built-in cleanup functionality:
 
 ```bash
-#!/bin/bash
-# cleanup-test-eips.sh
-
-echo "Removing test EgressIPs..."
-oc delete egressip -l test-suite=eip-monitoring
-oc delete egressip test-high-util
-oc delete egressip -l test=high-utilization
-oc delete egressip test-dist-{1..5} 2>/dev/null
-
-echo "Removing test namespaces..."
-oc delete namespace -l test-suite=eip-monitoring
-# Or manually delete specific namespaces
-oc delete namespace test-ns-{1..200} 2>/dev/null
-
-echo "Cleanup complete!"
+# Clean up all test resources (handles up to 200 namespaces)
+./scripts/deploy-test-eips.sh cleanup
 ```
+
+The cleanup command automatically:
+- Removes all EgressIPs with `test-suite=eip-monitoring` labels
+- Deletes all test namespaces (`test-ns-1` through `test-ns-200`)
+- Handles both small and large-scale deployments
+- Provides feedback on cleanup progress
 
 ### Important Notes for EgressIP Configuration
 
