@@ -523,7 +523,10 @@ class EIPMetricsCollector:
             
             # Estimate capacity (this could be made configurable or dynamic)
             # For now, assume each node can handle up to 50 EIPs (adjust based on your environment)
-            estimated_capacity = 50
+            # This is tricky to determine for ARO cluster as their is an undocumented limit on the number of EIPs per node.
+            # The limit is dependent on security rules and is triggered because the eip is added to the loadbalancers backend pool.
+            # There is a fix being worked on to rmeove this limmitation, but for now I am using 75 eips per node.
+            estimated_capacity = 75
             node_eip_capacity.labels(node=node).set(estimated_capacity)
             
             # Calculate utilization percentage
