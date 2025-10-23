@@ -52,7 +52,7 @@ spec:
         description: "{{ $value }} EIPs are configured but not assigned. This may indicate network connectivity or API issues."
     
     - alert: EIPUtilizationHigh
-      expr: eip_utilization_percent > 90
+      expr: eip_utilization_percent > 90 and eip_utilization_percent < 100
       for: 5m
       labels:
         severity: warning
@@ -62,7 +62,7 @@ spec:
         description: "EIP utilization is at {{ $value }}%. Consider adding more EIP capacity."
     
     - alert: EIPUtilizationCritical
-      expr: eip_utilization_percent > 95
+      expr: eip_utilization_percent > 95 and eip_utilization_percent < 100
       for: 2m
       labels:
         severity: critical
@@ -70,6 +70,16 @@ spec:
       annotations:
         summary: "EIP utilization is critically high"
         description: "EIP utilization is at {{ $value }}%. Immediate capacity expansion required."
+    
+    - alert: EIPCapacityFullyUtilized
+      expr: eip_utilization_percent == 100
+      for: 10m
+      labels:
+        severity: info
+        component: eip
+      annotations:
+        summary: "EIP capacity is fully utilized"
+        description: "All configured EIPs are assigned. This is normal for fully deployed environments."
     
     # CPIC Health Alerts
     - alert: CPICErrors
