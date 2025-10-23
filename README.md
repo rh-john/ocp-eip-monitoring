@@ -45,8 +45,8 @@ oc apply -f k8s/servicemonitor.yaml
 - **Performance Tracking**: API response times and success rates
 
 ### **Advanced Observability**
-- **40+ Prometheus Metrics**: Covering all aspects of EIP operations
-- **25+ Alert Rules**: Proactive alerting for capacity, health, and performance issues
+- **40+ Prometheus Metrics**: Covering many aspects of EIP operations
+- **25+ Alert Rules**: Alerting for capacity, health, and performance issues
 - **Health Scoring**: Intelligent cluster health and stability scoring algorithms
 - **Historical Tracking**: Trend analysis for changes and recoveries
 
@@ -68,17 +68,11 @@ oc apply -f k8s/servicemonitor.yaml
                  /health
 ```
 
-### **Components**
-- **Metrics Server**: Python Flask application collecting and exposing metrics
-- **Entrypoint Script**: Container lifecycle management and health checks
-- **Deployment Manifests**: Complete Kubernetes/OpenShift resource definitions
-- **Monitoring Configuration**: ServiceMonitor and PrometheusRule for automated setup
-
 ## 📚 Prerequisites
 
 ### **OpenShift Environment**
 - OpenShift 4.18 or later
-- **User Workload Monitoring and Alerting enabled** (see [User Workload Monitoring Setup](#user-workload-monitoring-setup))
+- User Workload Monitoring and Alerting enabled
 - Prometheus Operator installed (included with OpenShift)
 - EgressIP feature enabled
 
@@ -546,12 +540,6 @@ podman build -t eip-monitor:dev .
 podman run -p 8080:8080 eip-monitor:dev
 ```
 
-### **Code Standards**
-- Python 3.12+ compatibility
-- Prometheus metrics best practices
-- OpenShift security compliance
-- Comprehensive error handling
-
 ### **Testing**
 ```bash
 # Run deployment tests
@@ -596,5 +584,3 @@ I specialize in helping organizations successfully adopt and optimize OpenShift 
 Connect with me for OpenShift architecture guidance, best practices, and advanced monitoring solutions.
 
 ---
-
-**Built for OpenShift 4.18+**
