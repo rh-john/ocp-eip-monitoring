@@ -419,20 +419,8 @@ main() {
             ips_for_this_namespace=$((ips_for_this_namespace + 1))
         fi
         
-        # Get namespace labels for selector
-        local namespace_labels=""
-        for template in "${namespace_templates[@]}"; do
-            local template_name=$(echo "$template" | cut -d: -f1)
-            if [[ "$namespace" == "$template_name"* ]]; then
-                namespace_labels=$(echo "$template" | cut -d: -f2-)
-                break
-            fi
-        done
-        
-        # If no specific labels found, use a default
-        if [ -z "$namespace_labels" ]; then
-            namespace_labels="app=test"
-        fi
+        # Use namespace name directly for simpler assignment
+        # No need to parse complex labels - just use the namespace name
         
         # Generate EgressIP for this namespace
         yaml_content+="apiVersion: k8s.ovn.org/v1\n"
@@ -456,14 +444,7 @@ main() {
         
         yaml_content+="  namespaceSelector:\n"
         yaml_content+="    matchLabels:\n"
-        
-        # Parse and add namespace labels
-        IFS=' ' read -ra LABELS <<< "$namespace_labels"
-        for label in "${LABELS[@]}"; do
-            local key=$(echo "$label" | cut -d= -f1)
-            local value=$(echo "$label" | cut -d= -f2)
-            yaml_content+="      $key: $value\n"
-        done
+        yaml_content+="      kubernetes.io/metadata.name: $namespace\n"
         
         yaml_content+="---\n"
     done

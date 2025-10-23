@@ -46,8 +46,8 @@ generate_test_ips() {
     local base_ip=$(echo "$network" | cut -d. -f1-3)
     local last_octet=$(echo "$network" | cut -d. -f4)
     
-    # Generate IP addresses (starting from .10 to avoid common reserved IPs)
-    local start_ip=10
+    # Generate IP addresses (starting from .15 to avoid common reserved IPs)
+    local start_ip=15
     local generated=0
     
     for i in $(seq $start_ip $((start_ip + count + 50))); do
