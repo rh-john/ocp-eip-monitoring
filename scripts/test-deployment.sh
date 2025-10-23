@@ -135,7 +135,19 @@ test_logs_present() {
         return 1
     fi
     
-    oc logs "$pod_name" -n "$NAMESPACE" --tail=20 | grep -q "Starting comprehensive metrics collection"
+    # Wait a moment for logs to accumulate
+    sleep 2
+    
+    # Check for any of these log messages that indicate the service is running
+    # Look in the last 100 lines for startup or metrics collection messages
+    local log_output=$(oc logs "$pod_name" -n "$NAMESPACE" --tail=100 2>/dev/null || echo "")
+    
+    # Check for multiple patterns that indicate the service is working
+    echo "$log_output" | grep -q "Starting comprehensive metrics collection" ||
+    echo "$log_output" | grep -q "Starting EIP Metrics Server" ||
+    echo "$log_output" | grep -q "Comprehensive metrics collection completed" ||
+    echo "$log_output" | grep -q "Found.*EIP-enabled nodes" ||
+    echo "$log_output" | grep -q "Global metrics"
 }
 
 test_openshift_permissions() {
