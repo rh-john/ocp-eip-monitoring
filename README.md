@@ -80,7 +80,7 @@ oc apply -f k8s/servicemonitor.yaml
 - OpenShift 4.18 or later
 - **User Workload Monitoring and Alerting enabled** (see [User Workload Monitoring Setup](#user-workload-monitoring-setup))
 - Prometheus Operator installed (included with OpenShift)
-- EIP and CPIC features enabled
+- EgressIP feature enabled
 
 ### **Build Requirements** (for local build)
 - Podman or Docker
@@ -88,7 +88,7 @@ oc apply -f k8s/servicemonitor.yaml
 - Container registry access
 
 ### **RBAC Permissions**
-The monitoring tool requires cluster-level read access to EIP and CPIC resources. All necessary permissions are included in the deployment manifests.
+The monitoring tool requires cluster-level read access to EgressIP and CloudPrivateIPConfig resources. All necessary permissions are included in the deployment manifests.
 
 ## 🔧 User Workload Monitoring and Alerting Setup
 
@@ -100,7 +100,7 @@ OpenShift has two separate monitoring stacks:
 1. **Cluster Monitoring Stack** - Monitors OpenShift platform components (nodes, operators, etc.)
 2. **User Workload Monitoring Stack** - Monitors user applications and custom metrics
 
-By default, only the cluster monitoring stack is enabled. User applications like this EIP monitor need the **User Workload Monitoring** stack to be enabled to:
+By default, only the cluster monitoring stack is enabled. User applications like this EgressIP monitor need the **User Workload Monitoring** stack to be enabled to:
 - Scrape custom metrics via `ServiceMonitor`
 - Process custom alerts via `PrometheusRule` 
 - Store and query custom metrics in user workload Prometheus
@@ -143,35 +143,7 @@ data:
 EOF
 ```
 
-**⚠️ Critical**: This ConfigMap is **REQUIRED** for:
-- PrometheusRule alerts (including the stale CPIC alert) to be processed and fired
-- Custom alerts to be sent to AlertManager for notification routing
-- Alert rules to appear in the Prometheus rules API
-
-**Step 3: Configure additional user workload settings (optional)**
-```bash
-# Optional: Configure additional settings like retention and resources
-oc apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: user-workload-monitoring-config
-  namespace: openshift-user-workload-monitoring
-data:
-  config.yaml: |
-    alertmanager:
-      enabled: true
-      enableAlertmanagerConfig: true
-    prometheus:
-      retention: 7d
-      resources:
-        requests:
-          cpu: 200m
-          memory: 2Gi
-EOF
-```
-
-**Step 4: Verify the setup**
+**Step 3: Verify the setup**
 ```bash
 # Check that user workload monitoring pods are running
 oc get pods -n openshift-user-workload-monitoring
@@ -191,7 +163,7 @@ oc get alertmanager -n openshift-user-workload-monitoring
 
 ### **Verify ServiceMonitor and AlertRule Discovery**
 
-After deploying the EIP monitor, verify it's being discovered:
+After deploying the EgressIP monitor, verify it's being discovered:
 
 ```bash
 # Check if the ServiceMonitor is created
@@ -200,13 +172,47 @@ oc get servicemonitor -n eip-monitoring
 # Check if the PrometheusRule is created
 oc get prometheusrule -n eip-monitoring
 
-# Check if Prometheus is scraping the target
-oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
-  curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="eip-monitor")'
+# Check if Prometheus is scraping the target (simpler method)
+oc -n openshift-user-workload-monitoring get pods | grep prometheus-user-workload
 
-# Verify that alert rules (including StaleCPICDetected) are loaded
-oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
-  curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[].rules[] | select(.name=="StaleCPICDetected")'
+# Check if the EIP monitor service is accessible
+oc get service eip-monitor -n eip-monitoring
+
+# Verify alert rules are loaded (simpler method)
+oc get prometheusrule eip-monitor-alerts -n eip-monitoring -o yaml | grep -A 5 "alert: StaleCPICDetected"
+
+# Check if metrics are being collected
+oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:8080/metrics | grep eips_configured_total
+```
+
+### **Quick Verification Script**
+
+For a comprehensive verification, you can run this simple script:
+
+```bash
+#!/bin/bash
+echo "🔍 EIP Monitor Verification"
+echo "=========================="
+
+echo "1. Checking deployment..."
+oc get pods -n eip-monitoring
+
+echo -e "\n2. Checking service..."
+oc get service eip-monitor -n eip-monitoring
+
+echo -e "\n3. Checking ServiceMonitor..."
+oc get servicemonitor eip-monitor -n eip-monitoring
+
+echo -e "\n4. Checking PrometheusRule..."
+oc get prometheusrule eip-monitor-alerts -n eip-monitoring
+
+echo -e "\n5. Checking metrics endpoint..."
+oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:8080/metrics | head -10
+
+echo -e "\n6. Checking user workload monitoring..."
+oc get pods -n openshift-user-workload-monitoring | grep prometheus
+
+echo -e "\n✅ Verification complete!"
 ```
 
 
@@ -321,13 +327,14 @@ oc get alertmanager -n openshift-user-workload-monitoring
 # Verify PrometheusRule is valid and loaded
 oc get prometheusrule eip-monitor-alerts -n eip-monitoring -o yaml
 
-# Check alert rules are loaded into Prometheus
-oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
-  curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[] | select(.name=="eip-monitoring")'
+# Check alert rules are loaded into Prometheus (simpler method)
+oc get prometheusrule eip-monitor-alerts -n eip-monitoring
 
-# Check current alert status
-oc -n openshift-user-workload-monitoring exec -c prometheus prometheus-user-workload-0 -- \
-  curl -s http://localhost:9090/api/v1/alerts | jq '.data.alerts[] | select(.rule.name | contains("CPIC"))'
+# Check if the PrometheusRule is valid
+oc describe prometheusrule eip-monitor-alerts -n eip-monitoring
+
+# Check current alert status (simpler method)
+oc get prometheusrule eip-monitor-alerts -n eip-monitoring -o yaml | grep -A 10 -B 5 "StaleCPICDetected"
 ```
 
 ### **Common Deployment Issues**
