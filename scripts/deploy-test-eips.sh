@@ -25,6 +25,10 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Default timeouts
+DEFAULT_EGRESSIP_TIMEOUT="30s"
+DEFAULT_NAMESPACE_TIMEOUT="60s"
+
 # Logging functions
 log_info() {
     echo -e "${BLUE}ℹ️  $1${NC}"
@@ -532,14 +536,25 @@ main() {
 
 # Cleanup function (can be called separately)
 cleanup_test_resources() {
+    local force_cleanup="${1:-false}"
+    local egressip_timeout="${2:-$DEFAULT_EGRESSIP_TIMEOUT}"
+    local namespace_timeout="${3:-$DEFAULT_NAMESPACE_TIMEOUT}"
+    
     echo ""
     log_info "Cleaning up test EgressIP resources..."
+    log_info "EgressIP timeout: $egressip_timeout"
+    log_info "Namespace timeout: $namespace_timeout"
+    [ "$force_cleanup" = "true" ] && log_info "Force cleanup: enabled"
     
     # Delete EgressIPs
-    if oc delete egressip -l test-suite=eip-monitoring --timeout=30s; then
+    if oc delete egressip -l test-suite=eip-monitoring --timeout="$egressip_timeout"; then
         log_success "Test EgressIPs deleted"
     else
-        log_warn "Some EgressIPs may not have been deleted"
+        if [ "$force_cleanup" = "true" ]; then
+            log_warn "Some EgressIPs failed to delete, continuing with force cleanup"
+        else
+            log_warn "Some EgressIPs may not have been deleted"
+        fi
     fi
     
     # Delete test namespaces (those with test-suite label)
@@ -547,23 +562,82 @@ cleanup_test_resources() {
     local test_namespaces=$(oc get namespaces -l test-suite=eip-monitoring -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
     if [ -n "$test_namespaces" ]; then
         for ns in $test_namespaces; do
-            if oc delete namespace "$ns" --timeout=60s &>/dev/null; then
+            if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
                 log_success "Namespace '$ns' deleted"
             else
-                log_warn "Namespace '$ns' may not have been deleted or didn't exist"
+                if [ "$force_cleanup" = "true" ]; then
+                    log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
+                    oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
+                    log_warn "Force deletion attempted for namespace '$ns'"
+                else
+                    log_warn "Namespace '$ns' may not have been deleted or didn't exist"
+                fi
             fi
         done
     else
-        # Fallback: delete generic test namespace names
-        for i in {1..200}; do
-            local ns="test-ns-$i"
-            if oc delete namespace "$ns" --timeout=60s &>/dev/null; then
-                log_success "Namespace '$ns' deleted"
-            fi
-        done
+        # Fallback: delete generic test namespace names (only if they exist)
+        log_info "Checking for test namespaces..."
+        # Get all existing test namespaces at once for efficiency
+        local existing_test_ns=$(oc get namespaces -o jsonpath='{.items[?(@.metadata.name=~"test-ns-[0-9]+")].metadata.name}' 2>/dev/null || echo "")
+        if [ -n "$existing_test_ns" ]; then
+            for ns in $existing_test_ns; do
+                if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
+                    log_success "Namespace '$ns' deleted"
+                else
+                    if [ "$force_cleanup" = "true" ]; then
+                        log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
+                        oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
+                        log_warn "Force deletion attempted for namespace '$ns'"
+                    fi
+                fi
+            done
+        else
+            log_info "No test namespaces found"
+        fi
     fi
     
     log_success "Cleanup completed"
+}
+
+# Parse cleanup arguments
+parse_cleanup_args() {
+    local force_cleanup="false"
+    local egressip_timeout="$DEFAULT_EGRESSIP_TIMEOUT"
+    local namespace_timeout="$DEFAULT_NAMESPACE_TIMEOUT"
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force|-f)
+                force_cleanup="true"
+                shift
+                ;;
+            --egressip-timeout)
+                egressip_timeout="$2"
+                shift 2
+                ;;
+            --namespace-timeout)
+                namespace_timeout="$2"
+                shift 2
+                ;;
+            --help|-h)
+                echo "Cleanup options:"
+                echo "  --force, -f                    Force deletion with --force --grace-period=0"
+                echo "  --egressip-timeout TIMEOUT     Timeout for EgressIP deletion (default: 30s)"
+                echo "  --namespace-timeout TIMEOUT    Timeout for namespace deletion (default: 60s)"
+                echo "  --help, -h                     Show this help"
+                exit 0
+                ;;
+            *)
+                log_error "Unknown cleanup option: $1"
+                echo "Use '--help' for cleanup options"
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Call cleanup function with parsed arguments
+    cleanup_test_resources "$force_cleanup" "$egressip_timeout" "$namespace_timeout"
 }
 
 # Handle command line arguments
@@ -582,7 +656,9 @@ case "${1:-deploy}" in
         fi
         ;;
     "cleanup")
-        cleanup_test_resources
+        # Parse cleanup arguments
+        shift  # Remove 'cleanup' from arguments
+        parse_cleanup_args "$@"
         ;;
     "discover")
         check_prerequisites
@@ -590,13 +666,16 @@ case "${1:-deploy}" in
         get_eip_ranges
         ;;
     "--help"|"-h"|"help")
-        echo "Usage: $0 [command] [ip_count] [namespace_count]"
+        echo "Usage: $0 [command] [options]"
         echo ""
         echo "Commands:"
         echo "  deploy [ip_count] [namespace_count]  Deploy test EgressIP resources"
         echo "                                      ip_count: Number of IPs to deploy (1-200, default: 15)"
         echo "                                      namespace_count: Number of namespaces to create (1-200, default: 4)"
-        echo "  cleanup                              Remove all test resources"
+        echo "  cleanup [options]                    Remove all test resources"
+        echo "                                      --force, -f: Force deletion with --force --grace-period=0"
+        echo "                                      --egressip-timeout TIMEOUT: Timeout for EgressIP deletion (default: 30s)"
+        echo "                                      --namespace-timeout TIMEOUT: Timeout for namespace deletion (default: 60s)"
         echo "  discover                             Show available EgressIP ranges"
         echo "  help                                 Show this help message"
         echo ""
@@ -605,6 +684,10 @@ case "${1:-deploy}" in
         echo "  $0 deploy 50                 # Deploy with 50 IPs and 4 namespaces"
         echo "  $0 deploy 50 8               # Deploy with 50 IPs and 8 namespaces"
         echo "  $0 deploy 200 200           # Deploy with maximum 200 IPs and 200 namespaces (1:1 mapping)"
+        echo "  $0 cleanup                   # Clean up test resources"
+        echo "  $0 cleanup --force          # Force clean up test resources"
+        echo "  $0 cleanup --egressip-timeout 60s --namespace-timeout 120s  # Custom timeouts"
+        echo "  $0 cleanup --force --namespace-timeout 30s  # Force cleanup with custom namespace timeout"
         ;;
     *)
         # Check if first argument is a number (IP count for deploy)
