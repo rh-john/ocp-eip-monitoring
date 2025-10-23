@@ -574,27 +574,28 @@ cleanup_test_resources() {
                 fi
             fi
         done
-    else
-        # Fallback: delete generic test namespace names (only if they exist)
-        log_info "Checking for test namespaces..."
-        # Get all existing test namespaces at once for efficiency
-        local existing_test_ns=$(oc get namespaces -o jsonpath='{.items[?(@.metadata.name=~"test-ns-[0-9]+")].metadata.name}' 2>/dev/null || echo "")
-        if [ -n "$existing_test_ns" ]; then
-            for ns in $existing_test_ns; do
-                if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
-                    log_success "Namespace '$ns' deleted"
-                else
-                    if [ "$force_cleanup" = "true" ]; then
-                        log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
-                        oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
-                        log_warn "Force deletion attempted for namespace '$ns'"
-                    fi
-                fi
-            done
         else
-            log_info "No test namespaces found"
+            # Fallback: delete generic test namespace names (only if they exist)
+            log_info "No namespaces found with test-suite label, checking for generic test namespaces..."
+            # Get all namespaces and filter for test-ns-* pattern
+            local existing_test_ns=$(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' || echo "")
+            if [ -n "$existing_test_ns" ]; then
+                log_info "Found generic test namespaces: $existing_test_ns"
+                for ns in $existing_test_ns; do
+                    if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
+                        log_success "Namespace '$ns' deleted"
+                    else
+                        if [ "$force_cleanup" = "true" ]; then
+                            log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
+                            oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
+                            log_warn "Force deletion attempted for namespace '$ns'"
+                        fi
+                    fi
+                done
+            else
+                log_info "No test namespaces found (neither labeled nor generic test-ns-* pattern)"
+            fi
         fi
-    fi
     
     log_success "Cleanup completed"
 }
