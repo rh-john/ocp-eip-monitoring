@@ -487,9 +487,6 @@ oc get egressip -l test-suite=eip-monitoring
 # Verify CPIC resources are created
 oc get cloudprivateipconfig
 
-# Check which nodes have EIP assignments
-oc get nodes -o custom-columns="NAME:.metadata.name,EGRESS-IPS:.metadata.annotations.k8s\.ovn\.org/node-gateway-router-lrp-ifaddr"
-
 # Monitor the EIP monitoring metrics
 curl http://eip-monitor-service:8080/metrics | grep eip
 ```
@@ -587,60 +584,92 @@ oc get egressip -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.label
 
 ### Testing Different Scenarios
 
-#### Scenario 1: Test EIP Utilization
+The `deploy-test-eips.sh` script supports various testing scenarios through different IP and namespace combinations:
+
+#### Scenario 1: Basic Testing (Default)
 ```bash
-# Create EgressIPs with different utilization levels
-# This will help test the utilization metrics and alerts
+# Deploy with default settings (15 IPs, 4 namespaces)
+./scripts/deploy-test-eips.sh deploy
 
-# High utilization (90%+ of IPs assigned)
-# First, discover available IPs
-CIDR=$(get_first_eip_cidr)
-UTIL_IPS=()
-while IFS= read -r line; do
-    UTIL_IPS+=("$line")
-done < <(generate_test_ips "$CIDR" 5)
-
-oc apply -f - <<EOF
-apiVersion: k8s.ovn.org/v1
-kind: EgressIP
-metadata:
-  name: test-high-util
-spec:
-  egressIPs:
-  - ${UTIL_IPS[0]}
-  - ${UTIL_IPS[1]}
-  namespaceSelector:
-    matchLabels:
-      test: high-utilization
-EOF
+# This creates:
+# - 4 namespaces with diverse labels
+# - 4 EgressIPs with 3-4 IPs each
+# - Good for basic monitoring validation
 ```
 
-#### Scenario 2: Test Distribution Fairness
+#### Scenario 2: High-Density Testing
 ```bash
-# Create EgressIPs that might create uneven distribution
-# This will test the Gini coefficient and distribution metrics
+# Deploy with many IPs but fewer namespaces (50 IPs, 10 namespaces)
+./scripts/deploy-test-eips.sh deploy 50 10
 
-# Discover available IPs for distribution testing
-CIDR=$(get_first_eip_cidr)
-DIST_IPS=()
-while IFS= read -r line; do
-    DIST_IPS+=("$line")
-done < <(generate_test_ips "$CIDR" 10)
+# This creates:
+# - 10 namespaces with diverse labels
+# - 10 EgressIPs with 5 IPs each
+# - Tests high IP utilization per namespace
+```
 
-for i in {1..5}; do
-cat <<EOF | oc apply -f -
-apiVersion: k8s.ovn.org/v1
-kind: EgressIP
-metadata:
-  name: test-dist-${i}
-spec:
-  egressIPs:
-  - ${DIST_IPS[$((i-1))]}
-  namespaceSelector:
-    matchLabels:
-      test-group: distribution-${i}
-EOF
-done
+#### Scenario 3: Maximum Granularity Testing
+```bash
+# Deploy with 1:1 mapping (200 IPs, 200 namespaces)
+./scripts/deploy-test-eips.sh deploy 200 200
+
+# This creates:
+# - 200 namespaces with diverse labels
+# - 200 EgressIPs with 1 IP each
+# - Perfect for testing namespace isolation
+```
+
+#### Scenario 4: Load Testing
+```bash
+# Deploy with moderate scale (100 IPs, 50 namespaces)
+./scripts/deploy-test-eips.sh deploy 100 50
+
+# This creates:
+# - 50 namespaces with diverse labels
+# - 50 EgressIPs with 2 IPs each
+# - Good for testing distribution and load
+```
+
+#### Scenario 5: Gradual Scale Testing
+```bash
+# Start small and scale up
+./scripts/deploy-test-eips.sh deploy 25 10
+./scripts/deploy-test-eips.sh deploy 50 20
+./scripts/deploy-test-eips.sh deploy 100 40
+./scripts/deploy-test-eips.sh deploy 200 100
+
+# This tests:
+# - Incremental scaling
+# - Performance at different scales
+# - Resource management
+```
+
+#### What Each Scenario Tests
+
+Each scenario tests different aspects of the EIP monitoring system:
+
+- **Basic Testing**: Validates core metrics collection and basic alerting
+- **High-Density Testing**: Tests IP utilization metrics and capacity alerts
+- **Maximum Granularity**: Tests namespace isolation and individual egress monitoring
+- **Load Testing**: Tests distribution fairness and Gini coefficient calculations
+- **Gradual Scale Testing**: Tests performance and resource management at different scales
+
+#### Monitoring Metrics to Watch
+
+After deploying test scenarios, monitor these key metrics:
+
+```bash
+# Check EIP configuration metrics
+curl http://eip-monitor-service:8080/metrics | grep eips_configured_total
+
+# Check IP assignment metrics
+curl http://eip-monitor-service:8080/metrics | grep eips_assigned_total
+
+# Check distribution fairness
+curl http://eip-monitor-service:8080/metrics | grep eip_distribution_gini
+
+# Check utilization metrics
+curl http://eip-monitor-service:8080/metrics | grep eip_utilization
 ```
 
 ### Cleanup Test Resources
