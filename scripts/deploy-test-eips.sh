@@ -533,8 +533,8 @@ cleanup_test_resources() {
     else
         if [ "$force_cleanup" = "true" ]; then
             log_warn "Some EgressIPs failed to delete, continuing with force cleanup"
-        else
-            log_warn "Some EgressIPs may not have been deleted"
+    else
+        log_warn "Some EgressIPs may not have been deleted"
         fi
     fi
     
@@ -544,7 +544,7 @@ cleanup_test_resources() {
     if [ -n "$test_namespaces" ]; then
         for ns in $test_namespaces; do
             if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
-                log_success "Namespace '$ns' deleted"
+            log_success "Namespace '$ns' deleted"
             else
                 if [ "$force_cleanup" = "true" ]; then
                     log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
@@ -682,9 +682,9 @@ case "${1:-deploy}" in
                 main "$ip_count"
             fi
         else
-            log_error "Unknown command: $1"
-            echo "Use '$0 help' for usage information"
-            exit 1
+        log_error "Unknown command: $1"
+        echo "Use '$0 help' for usage information"
+        exit 1
         fi
         ;;
 esac

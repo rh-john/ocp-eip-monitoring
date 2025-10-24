@@ -158,19 +158,27 @@ update_manifests() {
     
     cp "$project_root/k8s/k8s-manifests.yaml" "$temp_manifest"
     
-    # Update image name
-    local full_image_name="${IMAGE_NAME}:${IMAGE_TAG}"
+    # Update image name only if registry is specified
     if [[ -n "$REGISTRY" ]]; then
-        full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        local full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        sed -i "" "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$temp_manifest"
+        log_info "Updated image to: $full_image_name" >&2
+    else
+        # Use the current deployment's image to avoid image pull issues
+        local current_image=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "eip-monitor:latest")
+        sed -i "" "s|image: \"eip-monitor:latest\"|image: \"$current_image\"|g" "$temp_manifest"
+        log_info "No registry specified, using current deployment image: $current_image" >&2
     fi
-    
-    sed -i "" "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$temp_manifest"
     
     # Copy servicemonitor
     cp "$project_root/k8s/servicemonitor.yaml" "$temp_servicemonitor"
     
     log_info "Updated manifests:" >&2
-    log_info "  Image: $full_image_name" >&2
+    if [[ -n "$REGISTRY" ]]; then
+        log_info "  Image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" >&2
+    else
+        log_info "  Image: (unchanged - no registry specified)" >&2
+    fi
     log_info "  Namespace: $NAMESPACE" >&2
     
     # Only output the file paths to stdout for capture

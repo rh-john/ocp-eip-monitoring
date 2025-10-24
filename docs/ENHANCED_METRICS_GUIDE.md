@@ -265,11 +265,14 @@ The capacity affects:
 Deploy this comprehensive monitoring solution:
 
 ```bash
-# Automated deployment
-./build-and-deploy.sh all -r quay.io/your-registry
+# Automated deployment with registry
+./scripts/build-and-deploy.sh all -r quay.io/your-registry
+
+# Or for manifest updates only (keeps existing image)
+./scripts/build-and-deploy.sh deploy
 
 # Create test EgressIPs for monitoring validation  
-./deploy-test-eips.sh deploy
+./scripts/deploy-test-eips.sh deploy
 
 # Verify metrics collection
 curl http://eip-monitor:8080/metrics | grep eip_
