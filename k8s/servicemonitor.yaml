@@ -42,7 +42,7 @@ spec:
     rules:
     # Core EIP Alerts
     - alert: EIPNotAssigned
-      expr: (eips_configured_total - eips_assigned_total) > 0
+      expr: (eips_configured_total - eips_assigned_total) > 0 and eips_configured_total > 0
       for: 5m
       labels:
         severity: warning
@@ -51,8 +51,38 @@ spec:
         summary: "EIPs are not fully assigned"
         description: "{{ $value }} EIPs are configured but not assigned. This may indicate network connectivity or API issues."
     
+    - alert: EIPAssignmentStuckLongTerm
+      expr: (eips_configured_total - eips_assigned_total) > 0
+      for: 15m
+      labels:
+        severity: critical
+        component: eip
+      annotations:
+        summary: "EIP assignment is stuck for extended period"
+        description: "{{ $value }} EIPs have been unassigned for more than 15 minutes. Check for persistent assignment issues."
+    
+    - alert: EIPCountDecreased
+      expr: delta(eips_configured_total[5m]) < -1
+      for: 1m
+      labels:
+        severity: info
+        component: eip
+      annotations:
+        summary: "EIP count decreased"
+        description: "EIP count has decreased in the last 5 minutes. This may be intentional EIP removal."
+    
+    - alert: EIPCountIncreased
+      expr: delta(eips_configured_total[5m]) > 1
+      for: 1m
+      labels:
+        severity: info
+        component: eip
+      annotations:
+        summary: "EIP count increased"
+        description: "EIP count has increased in the last 5 minutes. This may be intentional EIP addition."
+    
     - alert: EIPUtilizationHigh
-      expr: eip_utilization_percent > 90 and eip_utilization_percent < 100
+      expr: eip_utilization_percent > 90 and eip_utilization_percent < 100 and eips_configured_total > 0
       for: 5m
       labels:
         severity: warning
@@ -62,7 +92,7 @@ spec:
         description: "EIP utilization is at {{ $value }}%. Consider adding more EIP capacity."
     
     - alert: EIPUtilizationCritical
-      expr: eip_utilization_percent > 95 and eip_utilization_percent < 100
+      expr: eip_utilization_percent > 95 and eip_utilization_percent < 100 and eips_configured_total > 0
       for: 2m
       labels:
         severity: critical

@@ -1,6 +1,6 @@
 # 🚀 Enhanced EIP Monitoring - Comprehensive Metrics & Alerting
 
-The EIP monitoring solution now includes **40+ advanced metrics** and **25+ intelligent alerts** for comprehensive OpenShift EIP and CPIC monitoring, capacity planning, and operational excellence.
+The EIP monitoring solution now includes **40+ advanced metrics** and **30+ intelligent alerts** for comprehensive OpenShift EIP and CPIC monitoring, capacity planning, and operational excellence.
 
 ## 📊 **Complete Metrics Catalog (40+ Metrics)**
 
@@ -71,14 +71,42 @@ The EIP monitoring solution now includes **40+ advanced metrics** and **25+ inte
 | `eip_scrape_duration_seconds` | Time to complete collection | Performance monitoring |
 | `eip_monitoring_info` | Static monitoring information | Metadata |
 
-## 🚨 **Comprehensive Alert Rules (25+ Alerts)**
+## 🚨 **Comprehensive Alert Rules (30+ Alerts)**
 
-### **Core EIP Alerts** (3 alerts)
+### **Core EIP Alerts** (6 alerts)
 | Alert | Condition | Severity | Description |
 |-------|-----------|----------|-------------|
 | `EIPNotAssigned` | Unassigned EIPs > 0 for 5m | Warning | EIPs not fully assigned |
-| `EIPUtilizationHigh` | Utilization > 90% for 5m | Warning | High EIP utilization |
-| `EIPUtilizationCritical` | Utilization > 95% for 2m | Critical | Critical EIP utilization |
+| `EIPAssignmentStuckLongTerm` | Unassigned EIPs > 0 for 15m | Critical | EIP assignment stuck for extended period |
+| `EIPCountDecreased` | EIP count decreased in 5m | Info | EIP count decreased (may be intentional removal) |
+| `EIPCountIncreased` | EIP count increased in 5m | Info | EIP count increased (may be intentional addition) |
+| `EIPUtilizationHigh` | Utilization 90-99% for 5m | Warning | High EIP utilization |
+| `EIPUtilizationCritical` | Utilization 95-99% for 2m | Critical | Critical EIP utilization |
+| `EIPCapacityFullyUtilized` | Utilization = 100% for 10m | Info | All EIPs assigned (normal for fully deployed) |
+
+#### **🎯 Intelligent Alert Behavior**
+
+The EIP alerts are designed to be **lifecycle-aware** and distinguish between intentional EIP changes and genuine problems:
+
+**✅ Intentional EIP Removal:**
+- `EIPCountDecreased` fires (Info level) - "EIP count decreased, may be intentional"
+- `EIPNotAssigned` does NOT fire - recognizes EIPs were removed, not stuck
+- No false warnings when cleaning up EIPs
+
+**✅ Intentional EIP Addition:**
+- `EIPCountIncreased` fires (Info level) - "EIP count increased, may be intentional"
+- `EIPNotAssigned` may fire if assignment is slow (Warning level)
+- `EIPAssignmentStuckLongTerm` fires if truly stuck (Critical level)
+
+**✅ 100% Utilization (Normal Operation):**
+- `EIPCapacityFullyUtilized` fires (Info level) - "All EIPs assigned, this is normal"
+- No critical alerts for expected 100% utilization
+- Critical alerts only fire for concerning 90-99% utilization
+
+**✅ Stuck EIP Assignment (Real Problem):**
+- `EIPNotAssigned` fires after 5 minutes (Warning)
+- `EIPAssignmentStuckLongTerm` fires after 15 minutes (Critical)
+- Escalating severity for persistent issues
 
 ### **CPIC Health Alerts** (3 alerts)
 | Alert | Condition | Severity | Description |

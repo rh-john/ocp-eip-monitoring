@@ -1,6 +1,6 @@
 # OpenShift EIP Monitoring - Deployment Guide
 
-This guide provides comprehensive instructions for deploying and operating the OpenShift EIP monitoring solution that exposes 40+ Prometheus metrics and 25+ alerts for monitoring Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources.
+This guide provides comprehensive instructions for deploying and operating the OpenShift EIP monitoring solution that exposes 40+ Prometheus metrics and 30+ intelligent alerts for monitoring Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources.
 
 ## Overview
 
@@ -818,18 +818,51 @@ sum by (node) (node_eip_assigned_total)
 (eips_assigned_total / eips_configured_total) * 100
 ```
 
-### Custom Alerts
+### Intelligent Alert Behavior
+
+The EIP monitoring solution includes **lifecycle-aware alerts** that distinguish between intentional EIP changes and genuine problems:
+
+#### **✅ No False Alarms for Intentional Changes**
+- **EIP Removal**: `EIPCountDecreased` (Info) - recognizes intentional cleanup
+- **EIP Addition**: `EIPCountIncreased` (Info) - recognizes intentional deployment
+- **100% Utilization**: `EIPCapacityFullyUtilized` (Info) - normal for fully deployed environments
+
+#### **✅ Smart Problem Detection**
+- **Stuck Assignments**: Escalating alerts (Warning → Critical) for persistent issues
+- **High Utilization**: Only alerts for concerning 90-99% utilization, not expected 100%
+- **Zero-EIP Safe**: Won't fire when all EIPs are intentionally removed
+
+#### **Custom Alert Examples**
 
 ```yaml
-# High EIP utilization alert
-- alert: HighEIPUtilization
-  expr: (eips_assigned_total / eips_configured_total) > 0.8
+# Lifecycle-aware EIP utilization alerts
+- alert: EIPUtilizationHigh
+  expr: eip_utilization_percent > 90 and eip_utilization_percent < 100 and eips_configured_total > 0
   for: 5m
   labels:
     severity: warning
   annotations:
-    summary: "High EIP utilization"
-    description: "EIP utilization is above 80%"
+    summary: "EIP utilization is very high"
+    description: "EIP utilization is at {{ $value }}%. Consider adding more EIP capacity."
+
+- alert: EIPCapacityFullyUtilized
+  expr: eip_utilization_percent == 100
+  for: 10m
+  labels:
+    severity: info
+  annotations:
+    summary: "EIP capacity is fully utilized"
+    description: "All configured EIPs are assigned. This is normal for fully deployed environments."
+
+# EIP lifecycle detection
+- alert: EIPCountDecreased
+  expr: delta(eips_configured_total[5m]) < -1
+  for: 1m
+  labels:
+    severity: info
+  annotations:
+    summary: "EIP count decreased"
+    description: "EIP count has decreased in the last 5 minutes. This may be intentional EIP removal."
 ```
 
 ## Support
