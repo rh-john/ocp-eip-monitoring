@@ -185,7 +185,7 @@ spec:
     
     # Cluster Health Alerts
     - alert: ClusterEIPHealthLow
-      expr: cluster_eip_health_score < 70
+      expr: cluster_eip_health_score < 70 and eips_configured_total > 0
       for: 10m
       labels:
         severity: warning
@@ -195,7 +195,7 @@ spec:
         description: "Overall EIP cluster health score is {{ $value }}/100. Check EIP assignments and distribution."
     
     - alert: ClusterEIPHealthCritical
-      expr: cluster_eip_health_score < 50
+      expr: cluster_eip_health_score < 50 and eips_configured_total > 0
       for: 5m
       labels:
         severity: critical
@@ -205,7 +205,7 @@ spec:
         description: "Overall EIP cluster health score is {{ $value }}/100. Immediate intervention required."
     
     - alert: ClusterEIPInstability
-      expr: cluster_eip_stability_score < 70
+      expr: cluster_eip_stability_score < 70 and eips_configured_total > 0
       for: 15m
       labels:
         severity: warning

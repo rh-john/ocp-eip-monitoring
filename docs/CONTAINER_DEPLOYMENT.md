@@ -339,9 +339,9 @@ The `servicemonitor.yaml` includes comprehensive Prometheus alerting rules:
 - **NodeEIPCapacityCritical** - Node utilization > 95%
 
 #### **Health & Performance Alerts** (7)
-- **ClusterEIPHealthLow** - Health score < 70
-- **ClusterEIPHealthCritical** - Health score < 50
-- **ClusterEIPInstability** - Stability score < 70
+- **ClusterEIPHealthLow** - Health score < 70 (only when EIPs configured)
+- **ClusterEIPHealthCritical** - Health score < 50 (only when EIPs configured)
+- **ClusterEIPInstability** - Stability score < 70 (only when EIPs configured)
 - **APIResponseTimeSlow** - API response > 10s
 - **APIResponseTimeCritical** - API response > 30s
 - **APISuccessRateLow** - Success rate < 95%

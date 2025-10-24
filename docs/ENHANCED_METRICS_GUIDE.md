@@ -126,9 +126,9 @@ The EIP alerts are designed to be **lifecycle-aware** and distinguish between in
 ### **Cluster Health Alerts** (3 alerts)
 | Alert | Condition | Severity | Description |
 |-------|-----------|----------|-------------|
-| `ClusterEIPHealthLow` | Health score < 70 for 10m | Warning | Low cluster health |
-| `ClusterEIPHealthCritical` | Health score < 50 for 5m | Critical | Critical cluster health |
-| `ClusterEIPInstability` | Stability < 70 for 15m | Warning | Cluster instability |
+| `ClusterEIPHealthLow` | Health score < 70 for 10m (only when EIPs configured) | Warning | Low cluster health |
+| `ClusterEIPHealthCritical` | Health score < 50 for 5m (only when EIPs configured) | Critical | Critical cluster health |
+| `ClusterEIPInstability` | Stability < 70 for 15m (only when EIPs configured) | Warning | Cluster instability |
 
 ### **API Performance Alerts** (4 alerts)
 | Alert | Condition | Severity | Description |
