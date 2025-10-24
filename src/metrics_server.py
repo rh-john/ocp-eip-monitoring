@@ -93,17 +93,23 @@ class EIPMetricsCollector:
         self.eip_nodes = []
         self.last_update = None
         
-        # Historical tracking for trend analysis
+        # Data caching for performance optimization
+        self.data_cache = {}
+        self.cache_ttl = 10  # 10 seconds cache TTL
+        self.last_cache_time = 0
+        
+        # Historical tracking for trend analysis (with size limits)
         self.previous_eip_counts = {}
         self.previous_cpic_states = {}
         self.eip_changes_history = []
         self.cpic_recoveries_history = []
         
-        # Performance tracking
+        # Performance tracking (limited to 50 items per operation)
         self.api_performance_history = {
             'eip_get': [],
             'cpic_get': [],
-            'nodes_get': []
+            'nodes_get': [],
+            'bulk_get': []  # New optimized operation
         }
     
     def run_oc_command(self, cmd: list, operation: str = 'unknown') -> Optional[str]:
@@ -125,10 +131,10 @@ class EIPMetricsCollector:
             api_response_time.labels(operation=operation).set(execution_time)
             api_calls_total.labels(operation=operation, status='success').inc()
             
-            # Update performance history (keep last 100 measurements)
+            # Update performance history (keep last 50 measurements for memory efficiency)
             if operation in self.api_performance_history:
                 self.api_performance_history[operation].append(execution_time)
-                if len(self.api_performance_history[operation]) > 100:
+                if len(self.api_performance_history[operation]) > 50:
                     self.api_performance_history[operation].pop(0)
             
             logger.debug(f"Command succeeded in {execution_time:.2f}s, output length: {len(output)} characters")
@@ -151,6 +157,75 @@ class EIPMetricsCollector:
             api_calls_total.labels(operation=operation, status='exception').inc()
             logger.error(f"Unexpected error running command {' '.join(cmd)}: {e}")
             return None
+    
+    def get_cached_data(self, data_type: str):
+        """Get cached data if still valid"""
+        current_time = time.time()
+        if current_time - self.last_cache_time < self.cache_ttl:
+            return self.data_cache.get(data_type)
+        return None
+    
+    def set_cached_data(self, data_type: str, data):
+        """Cache data with timestamp"""
+        self.data_cache[data_type] = data
+        self.last_cache_time = time.time()
+    
+    def cleanup_old_data(self):
+        """Clean up old historical data to prevent memory leaks"""
+        current_time = time.time()
+        
+        # Keep only last hour of EIP changes
+        self.eip_changes_history = [
+            change for change in self.eip_changes_history 
+            if current_time - change['timestamp'] < 3600
+        ]
+        
+        # Keep only last hour of CPIC recoveries
+        self.cpic_recoveries_history = [
+            recovery for recovery in self.cpic_recoveries_history 
+            if current_time - recovery['timestamp'] < 3600
+        ]
+        
+        # Limit performance history to 50 items per operation
+        for operation in self.api_performance_history:
+            if len(self.api_performance_history[operation]) > 50:
+                self.api_performance_history[operation] = \
+                    self.api_performance_history[operation][-50:]
+    
+    def collect_all_data_optimized(self) -> tuple:
+        """Optimized single-pass data collection - reduces API calls from 5+ to 2"""
+        try:
+            # Get EIP nodes (cached if recent)
+            cached_nodes = self.get_cached_data('eip_nodes')
+            if cached_nodes:
+                self.eip_nodes = cached_nodes
+                logger.debug("Using cached EIP nodes")
+            else:
+                if not self.get_eip_nodes():
+                    return None, None, None
+                self.set_cached_data('eip_nodes', self.eip_nodes)
+            
+            # Get all EIP and CPIC data in optimized calls
+            eip_output = self.run_oc_command(['oc', 'get', 'eip', '-o', 'json'], operation='eip_get')
+            if eip_output is None:
+                return None, None, None
+                
+            cpic_output = self.run_oc_command(['oc', 'get', 'cloudprivateipconfig', '-o', 'json'], operation='cpic_get')
+            if cpic_output is None:
+                return None, None, None
+            
+            # Parse JSON once
+            eip_data = json.loads(eip_output)
+            cpic_data = json.loads(cpic_output)
+            
+            return eip_data, cpic_data, self.eip_nodes
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON output: {e}")
+            return None, None, None
+        except Exception as e:
+            logger.error(f"Failed to collect optimized data: {e}")
+            return None, None, None
     
     # OpenShift EIP metrics collection
     
@@ -558,117 +633,225 @@ class EIPMetricsCollector:
         
         node_with_errors.set(len(nodes_with_errors))
     
+    def process_all_metrics_optimized(self, eip_data: dict, cpic_data: dict, eip_nodes: list):
+        """Single-pass optimized processing of all metrics"""
+        try:
+            # Global EIP metrics
+            configured_count = len(eip_data.get('items', []))
+            assigned_count = sum(1 for item in eip_data.get('items', []) 
+                               if len(item.get('status', {}).get('items', [])) > 0)
+            unassigned_count = configured_count - assigned_count
+            
+            # Set basic EIP metrics
+            eips_configured.set(configured_count)
+            eips_assigned.set(assigned_count)
+            eips_unassigned.set(unassigned_count)
+            
+            # Calculate utilization percentage
+            if configured_count > 0:
+                utilization = (assigned_count / configured_count) * 100
+                eip_utilization_percent.set(utilization)
+            else:
+                eip_utilization_percent.set(0)
+            
+            # Process CPIC data in single pass
+            success_count = 0
+            pending_count = 0
+            error_count = 0
+            recoveries_count = 0
+            current_time = time.time()
+            
+            # Node statistics for distribution analysis
+            node_eip_counts = {}
+            node_cpic_stats = {}
+            
+            # Initialize node stats
+            for node in eip_nodes:
+                node_eip_counts[node] = 0
+                node_cpic_stats[node] = {'success': 0, 'pending': 0, 'error': 0}
+            
+            # Process CPIC items
+            for item in cpic_data.get('items', []):
+                conditions = item.get('status', {}).get('conditions', [])
+                resource_name = item.get('metadata', {}).get('name', 'unknown')
+                node_name = item.get('spec', {}).get('node', '')
+                
+                if conditions:
+                    latest_condition = conditions[-1]
+                    reason = latest_condition.get('reason', '')
+                    condition_time = latest_condition.get('lastTransitionTime', '')
+                    
+                    if reason == 'CloudResponseSuccess':
+                        success_count += 1
+                        if node_name in node_cpic_stats:
+                            node_cpic_stats[node_name]['success'] += 1
+                        
+                        # Check for recovery
+                        if len(conditions) > 1:
+                            previous_condition = conditions[-2]
+                            if previous_condition.get('reason') == 'CloudResponseError':
+                                recoveries_count += 1
+                                self.cpic_recoveries_history.append({
+                                    'timestamp': current_time,
+                                    'resource': resource_name
+                                })
+                    elif reason == 'CloudResponsePending':
+                        pending_count += 1
+                        if node_name in node_cpic_stats:
+                            node_cpic_stats[node_name]['pending'] += 1
+                        
+                        # Track pending duration
+                        if condition_time:
+                            try:
+                                from datetime import datetime
+                                transition_time = datetime.fromisoformat(condition_time.replace('Z', '+00:00'))
+                                pending_duration = current_time - transition_time.timestamp()
+                                cpic_pending_duration.labels(resource_name=resource_name).set(pending_duration)
+                            except Exception as e:
+                                logger.debug(f"Failed to parse condition time for {resource_name}: {e}")
+                    elif reason == 'CloudResponseError':
+                        error_count += 1
+                        if node_name in node_cpic_stats:
+                            node_cpic_stats[node_name]['error'] += 1
+                        
+                        # Track error duration
+                        if condition_time:
+                            try:
+                                from datetime import datetime
+                                transition_time = datetime.fromisoformat(condition_time.replace('Z', '+00:00'))
+                                error_duration = current_time - transition_time.timestamp()
+                                cpic_error_duration.labels(resource_name=resource_name).set(error_duration)
+                            except Exception as e:
+                                logger.debug(f"Failed to parse condition time for {resource_name}: {e}")
+            
+            # Set CPIC metrics
+            cpic_success.set(success_count)
+            cpic_pending.set(pending_count)
+            cpic_error.set(error_count)
+            
+            # Process EIP data for node distribution
+            for item in eip_data.get('items', []):
+                status_items = item.get('status', {}).get('items', [])
+                for status_item in status_items:
+                    node = status_item.get('node')
+                    if node in node_eip_counts:
+                        node_eip_counts[node] += 1
+            
+            # Set per-node metrics
+            for node in eip_nodes:
+                node_eip_assigned.labels(node=node).set(node_eip_counts[node])
+                node_cpic_success.labels(node=node).set(node_cpic_stats[node]['success'])
+                node_cpic_pending.labels(node=node).set(node_cpic_stats[node]['pending'])
+                node_cpic_error.labels(node=node).set(node_cpic_stats[node]['error'])
+            
+            # Calculate distribution metrics
+            self.calculate_distribution_metrics(node_eip_counts)
+            
+            # Update node capacity metrics
+            self.update_node_capacity_metrics(node_eip_counts)
+            
+            # Update error node count
+            self.update_error_node_count(cpic_data)
+            
+            # Calculate health scores
+            self.calculate_health_scores(configured_count, assigned_count, 
+                                      success_count, error_count, pending_count)
+            
+            # Track EIP changes for rate calculation
+            if hasattr(self, 'previous_eip_assigned'):
+                eip_change = abs(assigned_count - self.previous_eip_assigned)
+                if eip_change > 0:
+                    self.eip_changes_history.append({
+                        'timestamp': current_time,
+                        'change': eip_change
+                    })
+            
+            self.previous_eip_assigned = assigned_count
+            
+            # Calculate assignment rate (changes per minute)
+            hour_ago = current_time - 3600
+            recent_changes = [change for change in self.eip_changes_history if change['timestamp'] > hour_ago]
+            self.eip_changes_history = recent_changes  # Clean up old entries
+            
+            changes_last_hour = sum(change['change'] for change in recent_changes)
+            eip_changes_last_hour.set(changes_last_hour)
+            
+            # Calculate rate per minute
+            if len(recent_changes) > 0:
+                time_span_minutes = (current_time - recent_changes[0]['timestamp']) / 60
+                if time_span_minutes > 0:
+                    rate_per_minute = changes_last_hour / time_span_minutes
+                    eip_assignment_rate.set(rate_per_minute)
+                else:
+                    eip_assignment_rate.set(0)
+            else:
+                eip_assignment_rate.set(0)
+            
+            # Clean up old recovery history
+            recent_recoveries = [r for r in self.cpic_recoveries_history if r['timestamp'] > hour_ago]
+            self.cpic_recoveries_history = recent_recoveries
+            cpic_recoveries_last_hour.set(len(recent_recoveries))
+            
+            # Update node availability metrics
+            node_available.set(len(eip_nodes))
+            
+            logger.info(f"Optimized processing - EIPs: {configured_count}C/{assigned_count}A/{unassigned_count}U, "
+                       f"CPIC: {success_count}S/{pending_count}P/{error_count}E")
+            
+        except Exception as e:
+            logger.error(f"Failed to process metrics in optimized mode: {e}")
+            raise
+    
     # OpenShift node metrics collection and processing
     
     def collect_metrics(self):
-        """Main metrics collection function with comprehensive monitoring"""
+        """Optimized metrics collection function - reduced from 5+ to 2 API calls"""
         start_time = time.time()
         try:
-            logger.info("Starting comprehensive metrics collection")
+            logger.info("Starting optimized metrics collection")
             
-            # Get EIP nodes first
-            if not self.get_eip_nodes():
-                logger.error("Failed to get EIP nodes")
+            # Clean up old data to prevent memory leaks
+            self.cleanup_old_data()
+            
+            # Get all data in optimized single pass (2 API calls instead of 5+)
+            eip_data, cpic_data, eip_nodes = self.collect_all_data_optimized()
+            if not all([eip_data, cpic_data, eip_nodes]):
+                logger.error("Failed to collect optimized data")
                 scrape_errors.inc()
                 return False
             
-            # Collect global metrics
-            if not self.collect_global_metrics():
-                logger.error("Failed to collect global metrics")
-                scrape_errors.inc()
-                return False
-            
-            # Collect node-specific metrics and get node EIP counts for distribution analysis
-            node_eip_counts = {}
-            try:
-                # Re-fetch data for distribution calculations
-                eip_output = self.run_oc_command(['oc', 'get', 'eip', '-o', 'json'], operation='eip_get')
-                cpic_output = self.run_oc_command(['oc', 'get', 'cloudprivateipconfig', '-o', 'json'], operation='cpic_get')
-                
-                if eip_output and cpic_output:
-                    eip_data = json.loads(eip_output)
-                    cpic_data = json.loads(cpic_output)
-                    
-                    # Count EIPs per node for distribution analysis
-                    for node in self.eip_nodes:
-                        node_eip_count = 0
-                        for item in eip_data.get('items', []):
-                            status_items = item.get('status', {}).get('items', [])
-                            node_eip_count += sum(1 for status_item in status_items 
-                                                if status_item.get('node') == node)
-                        node_eip_counts[node] = node_eip_count
-                    
-                    # Calculate advanced distribution metrics
-                    self.calculate_distribution_metrics(node_eip_counts)
-                    
-                    # Update node capacity metrics
-                    self.update_node_capacity_metrics(node_eip_counts)
-                    
-                    # Update error node count
-                    self.update_error_node_count(cpic_data)
-                    
-                    # Calculate health scores
-                    total_eips = len(eip_data.get('items', []))
-                    assigned_eips = sum(1 for item in eip_data.get('items', [])
-                                      if len(item.get('status', {}).get('items', [])) > 0)
-                    
-                    cpic_success_count = 0
-                    cpic_error_count = 0
-                    cpic_pending_count = 0
-                    
-                    for item in cpic_data.get('items', []):
-                        conditions = item.get('status', {}).get('conditions', [])
-                        if conditions:
-                            latest_condition = conditions[-1]
-                            reason = latest_condition.get('reason', '')
-                            if reason == 'CloudResponseSuccess':
-                                cpic_success_count += 1
-                            elif reason == 'CloudResponseError':
-                                cpic_error_count += 1
-                            elif reason == 'CloudResponsePending':
-                                cpic_pending_count += 1
-                    
-                    self.calculate_health_scores(total_eips, assigned_eips, 
-                                               cpic_success_count, cpic_error_count, cpic_pending_count)
-                    
-            except Exception as e:
-                logger.warning(f"Failed to calculate advanced metrics: {e}")
-            
-            # Collect standard node-specific metrics
-            if not self.collect_node_metrics():
-                logger.error("Failed to collect node metrics")
-                scrape_errors.inc()
-                return False
+            # Process all metrics in single pass
+            self.process_all_metrics_optimized(eip_data, cpic_data, eip_nodes)
             
             # Calculate API success rates
             self.calculate_api_success_rates()
             
-            # Update monitoring info with enhanced details
+            # Update monitoring info
+            scrape_duration = time.time() - start_time
             monitoring_info.info({
                 'version': '1.0.0',
                 'nodes': ','.join(self.eip_nodes),
                 'node_count': str(len(self.eip_nodes)),
-                'metrics_count': '40+',  # Approximately 40+ metrics now
+                'metrics_count': '40+',
                 'last_update': datetime.now().isoformat(),
-                'scrape_duration': f"{time.time() - start_time:.2f}s"
+                'scrape_duration': f"{scrape_duration:.2f}s",
+                'optimization': 'enabled'
             })
             
-            # Record scrape duration
-            scrape_duration = time.time() - start_time
+            # Record metrics
             scrape_duration_seconds.set(scrape_duration)
-            
             last_scrape_timestamp.set(time.time())
             self.last_update = datetime.now()
             
-            logger.info(f"Comprehensive metrics collection completed successfully in {scrape_duration:.2f}s")
-            logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes with {len(node_eip_counts)} EIP assignments")
+            logger.info(f"Optimized metrics collection completed in {scrape_duration:.2f}s")
+            logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
             
             return True
             
         except Exception as e:
             scrape_duration = time.time() - start_time
             scrape_duration_seconds.set(scrape_duration)
-            logger.error(f"Comprehensive metrics collection failed after {scrape_duration:.2f}s: {e}")
+            logger.error(f"Optimized metrics collection failed after {scrape_duration:.2f}s: {e}")
             scrape_errors.inc()
             return False
 

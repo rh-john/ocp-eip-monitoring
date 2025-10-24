@@ -1,5 +1,5 @@
-# Multi-stage build for EIP Monitoring container
-FROM registry.access.redhat.com/ubi9/python-312:latest AS base
+# Optimized EIP Monitoring container
+FROM registry.access.redhat.com/ubi9/python-312:latest
 
 # Switch to root to install packages
 USER root
@@ -8,13 +8,7 @@ USER root
 # Use --allowerasing to replace conflicting packages like curl-minimal with curl
 RUN dnf update -y && \
     dnf install -y --allowerasing \
-    jq \
-    bc \
     curl \
-    wget \
-    unzip \
-    tar \
-    gzip \
     ca-certificates \
     procps-ng \
     && dnf clean all
@@ -32,8 +26,6 @@ RUN curl -L https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/ope
     chmod +x /usr/local/bin/oc /usr/local/bin/kubectl && \
     rm -f /tmp/openshift-client-linux.tar.gz
 
-# OpenShift CLI and monitoring tools
-
 # Create app directory
 WORKDIR /app
 
@@ -45,22 +37,20 @@ COPY src/entrypoint.sh /app/
 RUN chmod +x /app/*.sh
 
 # Set up permissions for OpenShift compatibility
-# OpenShift runs with random user IDs, so we need group-writable permissions
 RUN chown -R 1001:0 /app && \
     chmod -R g=u /app && \
     mkdir -p /app/runs /app/metrics && \
     chown -R 1001:0 /app/runs /app/metrics && \
     chmod -R g=u /app/runs /app/metrics
 
-# Use a non-root user (OpenShift will override the UID but keep the principle)
+# Use a non-root user
 USER 1001
 
 # Expose metrics port
 EXPOSE 8080
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+# Health check handled by OpenShift/Kubernetes instead of container
+# (OCI format doesn't support HEALTHCHECK, so we rely on k8s health checks)
 
 # Set entrypoint
 ENTRYPOINT ["/app/entrypoint.sh"]
