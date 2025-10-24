@@ -831,11 +831,14 @@ The cleanup command automatically:
 
 ### Debug Mode
 
-Run the container in debug mode:
+For debugging, use the existing deployment and exec into the pod:
 
 ```bash
-# Deploy with shell mode for debugging
-oc run eip-debug --image=eip-monitor:latest --rm -it --restart=Never -- shell
+# Get the pod name
+POD_NAME=$(oc get pods -n eip-monitoring -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}')
+
+# Exec into the pod for debugging
+oc exec -it $POD_NAME -n eip-monitoring -- /bin/bash
 
 # Inside the pod, run commands manually:
 python3 /app/metrics_server.py
@@ -882,12 +885,9 @@ oc get events -n eip-monitoring --sort-by='.lastTimestamp'
 
 ## Integration Examples
 
-### Grafana Dashboard Query Examples
+### PromQL Query Examples
 
 ```promql
-# EIP Assignment Rate
-rate(eips_assigned_total[5m])
-
 # CPIC Error Percentage
 (cpic_error_total / (cpic_success_total + cpic_pending_total + cpic_error_total)) * 100
 
@@ -897,20 +897,6 @@ sum by (node) (node_eip_assigned_total)
 # EIP Utilization
 (eips_assigned_total / eips_configured_total) * 100
 ```
-
-### Intelligent Alert Behavior
-
-The EIP monitoring solution includes **lifecycle-aware alerts** that distinguish between intentional EIP changes and genuine problems:
-
-#### **✅ No False Alarms for Intentional Changes**
-- **EIP Removal**: `EIPCountDecreased` (Info) - recognizes intentional cleanup
-- **EIP Addition**: `EIPCountIncreased` (Info) - recognizes intentional deployment
-- **100% Utilization**: `EIPCapacityFullyUtilized` (Info) - normal for fully deployed environments
-
-#### **✅ Smart Problem Detection**
-- **Stuck Assignments**: Escalating alerts (Warning → Critical) for persistent issues
-- **High Utilization**: Only alerts for concerning 90-99% utilization, not expected 100%
-- **Zero-EIP Safe**: Won't fire when all EIPs are intentionally removed
 
 #### **Custom Alert Examples**
 

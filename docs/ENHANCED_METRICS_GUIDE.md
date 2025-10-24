@@ -281,25 +281,3 @@ curl http://eip-monitor:8080/metrics | grep eip_
 For detailed deployment instructions, see [CONTAINER_DEPLOYMENT.md](CONTAINER_DEPLOYMENT.md).
 
 All 40+ metrics and 25+ alerts are immediately available in Prometheus and AlertManager!
-
-## 📊 **Grafana Dashboard Ideas**
-
-### **Executive Dashboard**
-- EIP Health Score gauge
-- Utilization percentage over time
-- Distribution fairness trend
-- Critical alerts summary
-
-### **Operations Dashboard**
-- Per-node EIP assignments
-- API performance metrics
-- Error rates and recovery trends
-- Capacity planning projections
-
-### **Troubleshooting Dashboard**
-- CPIC state durations
-- Node error correlations
-- API call success rates
-- Historical change patterns
-
-The enhanced EIP monitoring solution now provides **comprehensive observability** with detailed metrics for capacity planning, performance monitoring, and operational insights! 🚀
