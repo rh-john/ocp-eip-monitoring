@@ -220,6 +220,18 @@ main() {
             # Skip to EgressIP deployment
             skip_to_eip_deployment=true
         fi
+    elif [ "$existing_namespaces" -eq "$namespace_count" ] && [ "$existing_ips_per_ns" -ne "$requested_ips_per_ns" ]; then
+        # Same namespace count but different distribution - allow distribution change
+        log_info "Changing distribution: Same namespace count ($namespace_count), different IP distribution"
+        log_info "Existing: $existing_namespaces namespaces, $existing_total_ips IPs ($existing_ips_per_ns IPs/ns)"
+        log_info "Requested: $namespace_count namespaces, $ip_count IPs ($requested_ips_per_ns IPs/ns)"
+        log_info "Updating all EgressIPs with new IP distribution..."
+        
+        # Use existing namespaces (same count, just updating IPs)
+        local created_namespaces=("${existing_ns_list[@]}")
+        
+        # Will update EgressIPs with new distribution
+        skip_to_eip_deployment=false
     elif [ "$existing_namespaces" -gt 0 ] && [ "$existing_ips_per_ns" -eq "$requested_ips_per_ns" ]; then
         # Distribution ratio matches - allow scaling operation
         log_info "Distribution ratio matches ($existing_ips_per_ns IPs per namespace)"
@@ -271,10 +283,55 @@ main() {
         
         # Will create additional namespaces if needed (handled below)
         skip_to_eip_deployment=false
+    elif [ "$existing_namespaces" -gt 0 ] && [ "$existing_namespaces" -ne "$namespace_count" ] && [ "$existing_ips_per_ns" -ne "$requested_ips_per_ns" ]; then
+        # Both namespace count and distribution differ - allow combined operation
+        log_info "Changing both namespace count and distribution"
+        log_info "Existing: $existing_namespaces namespaces, $existing_total_ips IPs ($existing_ips_per_ns IPs/ns)"
+        log_info "Requested: $namespace_count namespaces, $ip_count IPs ($requested_ips_per_ns IPs/ns)"
+        
+        if [ "$namespace_count" -gt "$existing_namespaces" ]; then
+            log_info "Step 1: Scaling UP namespaces from $existing_namespaces to $namespace_count"
+        elif [ "$namespace_count" -lt "$existing_namespaces" ]; then
+            log_info "Step 1: Scaling DOWN namespaces from $existing_namespaces to $namespace_count"
+        fi
+        log_info "Step 2: Updating IP distribution from $existing_ips_per_ns to $requested_ips_per_ns IPs per namespace"
+        
+        # Handle namespace scaling first
+        if [ "$namespace_count" -lt "$existing_namespaces" ]; then
+            # Scale down: Delete extra namespaces and their EgressIPs in parallel
+            log_info "Deleting extra namespaces and EgressIPs in parallel..."
+            local delete_pids=()
+            for ((i=$namespace_count; i<${#existing_ns_list[@]}; i++)); do
+                local ns_to_delete="${existing_ns_list[$i]}"
+                local eip_to_delete="test-eip-${ns_to_delete}"
+                
+                # Delete EgressIP and namespace in parallel
+                (
+                    oc delete egressip "$eip_to_delete" --ignore-not-found=true &>/dev/null || true
+                    oc delete namespace "$ns_to_delete" --ignore-not-found=true &>/dev/null || true
+                ) &
+                delete_pids+=($!)
+            done
+            
+            # Wait for all deletions to complete
+            for pid in "${delete_pids[@]}"; do
+                wait "$pid" 2>/dev/null || true
+            done
+            log_success "Removed $((existing_namespaces - namespace_count)) namespaces"
+        fi
+        
+        # Use existing namespaces up to the requested count (will create more if needed below)
+        local created_namespaces=()
+        for ((i=0; i<namespace_count && i<${#existing_ns_list[@]}; i++)); do
+            created_namespaces+=("${existing_ns_list[$i]}")
+        done
+        
+        # Will create additional namespaces and update distribution (handled below)
+        skip_to_eip_deployment=false
     else
         if [ "$existing_eips" -gt 0 ] || [ "$existing_namespaces" -gt 0 ]; then
             log_warn "Existing configuration found ($existing_namespaces namespaces, $existing_eips EIPs, $existing_total_ips IPs)"
-            log_warn "Distribution ratio differs (existing: $existing_ips_per_ns IPs/ns, requested: $requested_ips_per_ns IPs/ns)"
+            log_warn "Unexpected configuration mismatch"
             log_warn "Please run cleanup first or manually delete existing test resources"
             exit 1
         fi
