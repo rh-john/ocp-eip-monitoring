@@ -177,16 +177,18 @@ main() {
     log_info "Sample IPs: ${TEST_IPS[0]}, ${TEST_IPS[1]}, ${TEST_IPS[2]}, ..."
     echo ""
     
-    # Check existing configuration
+    # Check existing configuration - combined queries for better performance
     log_info "Checking existing test configuration..."
-    local existing_eips=$(oc get egressip -l test-suite=eip-monitoring --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    local existing_namespaces=$(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' | wc -l | tr -d ' ')
     
-    # Count total IPs in existing EgressIPs
-    local existing_total_ips=0
-    if [ "$existing_eips" -gt 0 ]; then
-        existing_total_ips=$(oc get egressip -l test-suite=eip-monitoring -o jsonpath='{.items[*].spec.egressIPs[*]}' 2>/dev/null | tr ' ' '\n' | grep -v '^$' | wc -l | tr -d ' ')
-    fi
+    # Get EgressIP data in one query
+    local eip_json=$(oc get egressip -l test-suite=eip-monitoring -o json 2>/dev/null || echo '{"items":[]}')
+    local existing_eips=$(echo "$eip_json" | jq -r '.items | length')
+    local existing_total_ips=$(echo "$eip_json" | jq -r '[.items[].spec.egressIPs[]?] | length')
+    
+    # Get namespace data in one query (cache for later use)
+    local ns_json=$(oc get namespaces -o json 2>/dev/null || echo '{"items":[]}')
+    local existing_ns_list=($(echo "$ns_json" | jq -r '.items[] | select(.metadata.name | test("^test-ns-[0-9]+$")) | .metadata.name' | sort -V))
+    local existing_namespaces=${#existing_ns_list[@]}
     
     # Calculate distribution ratios
     local existing_ips_per_ns=0
@@ -207,11 +209,8 @@ main() {
         log_success "Existing configuration matches requested ($namespace_count namespaces, $namespace_count EIPs, $ip_count IPs)"
         log_info "Skipping creation - using existing resources"
         
-        # Populate created_namespaces array from existing namespaces
-        local created_namespaces=()
-        while IFS= read -r ns; do
-            [ -n "$ns" ] && created_namespaces+=("$ns")
-        done < <(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' | sort -V)
+        # Use cached namespace list (already sorted)
+        local created_namespaces=("${existing_ns_list[@]}")
         
         # Verify we have the right count
         if [ ${#created_namespaces[@]} -ne $namespace_count ]; then
@@ -235,25 +234,28 @@ main() {
             log_info "IP count change only: Updating IPs from $existing_total_ips to $ip_count"
         fi
         
-        # Get existing namespaces sorted
-        local existing_ns_list=()
-        while IFS= read -r ns; do
-            [ -n "$ns" ] && existing_ns_list+=("$ns")
-        done < <(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' | sort -V)
+        # Use cached namespace list (already sorted from initial query)
         
         # Handle scaling operations
         if [ "$namespace_count" -lt "$existing_namespaces" ]; then
-            # Scale down: Delete extra namespaces and their EgressIPs
-            log_info "Deleting extra namespaces and EgressIPs..."
+            # Scale down: Delete extra namespaces and their EgressIPs in parallel
+            log_info "Deleting extra namespaces and EgressIPs in parallel..."
+            local delete_pids=()
             for ((i=$namespace_count; i<${#existing_ns_list[@]}; i++)); do
                 local ns_to_delete="${existing_ns_list[$i]}"
                 local eip_to_delete="test-eip-${ns_to_delete}"
                 
-                # Delete EgressIP first
-                oc delete egressip "$eip_to_delete" --ignore-not-found=true &>/dev/null || true
-                
-                # Delete namespace
-                oc delete namespace "$ns_to_delete" --ignore-not-found=true &>/dev/null || true
+                # Delete EgressIP and namespace in parallel
+                (
+                    oc delete egressip "$eip_to_delete" --ignore-not-found=true &>/dev/null || true
+                    oc delete namespace "$ns_to_delete" --ignore-not-found=true &>/dev/null || true
+                ) &
+                delete_pids+=($!)
+            done
+            
+            # Wait for all deletions to complete
+            for pid in "${delete_pids[@]}"; do
+                wait "$pid" 2>/dev/null || true
             done
             log_success "Removed $((existing_namespaces - namespace_count)) namespaces"
         elif [ "$namespace_count" -gt "$existing_namespaces" ]; then
