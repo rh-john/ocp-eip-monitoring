@@ -9,7 +9,17 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 # This script automatically discovers available EgressIP ranges from your OpenShift
 # cluster and creates comprehensive test EgressIP configurations for monitoring validation.
 #
-# Usage: ./deploy-test-eips.sh
+# Usage: ./deploy-test-eips.sh [ip_count] [namespace_count] [eips_per_namespace]
+#
+# Parameters:
+#   ip_count            - Total number of EIPs to create (default: 15)
+#   namespace_count     - Number of namespaces to create (default: 4)
+#   eips_per_namespace  - Fixed EIPs per namespace (default: 0 = auto-distribute)
+#
+# Examples:
+#   ./deploy-test-eips.sh                    # 15 IPs, 4 namespaces, auto-distribute
+#   ./deploy-test-eips.sh 20 5               # 20 IPs, 5 namespaces, auto-distribute
+#   ./deploy-test-eips.sh 20 5 3             # 20 IPs, 5 namespaces, 3 EIPs each
 #
 # Requirements:
 # - oc CLI logged into OpenShift cluster
@@ -85,6 +95,7 @@ source_discovery_functions() {
 main() {
     local ip_count="${1:-15}"      # Default to 15 IPs if not specified
     local namespace_count="${2:-4}" # Default to 4 namespaces if not specified
+    local eips_per_namespace="${3:-0}" # Default to 0 (auto-distribute) if not specified
     
     # Validate IP count
     if ! [[ "$ip_count" =~ ^[0-9]+$ ]] || [ "$ip_count" -lt 1 ] || [ "$ip_count" -gt 200 ]; then
@@ -95,6 +106,12 @@ main() {
     # Validate namespace count
     if ! [[ "$namespace_count" =~ ^[0-9]+$ ]] || [ "$namespace_count" -lt 1 ] || [ "$namespace_count" -gt 200 ]; then
         log_error "Namespace count must be a number between 1 and 200"
+        exit 1
+    fi
+    
+    # Validate EIPs per namespace
+    if ! [[ "$eips_per_namespace" =~ ^[0-9]+$ ]] || [ "$eips_per_namespace" -lt 0 ] || [ "$eips_per_namespace" -gt 50 ]; then
+        log_error "EIPs per namespace must be a number between 0 and 50 (0 = auto-distribute)"
         exit 1
     fi
     
@@ -110,6 +127,11 @@ main() {
     log_info "Current user: $(oc whoami 2>/dev/null)"
     log_info "Requested IP count: $ip_count"
     log_info "Requested namespace count: $namespace_count"
+    if [ "$eips_per_namespace" -gt 0 ]; then
+        log_info "EIPs per namespace: $eips_per_namespace (fixed)"
+    else
+        log_info "EIPs per namespace: auto-distribute"
+    fi
     echo ""
     
     log_info "Discovering EgressIP configuration from cluster..."
@@ -155,28 +177,128 @@ main() {
     log_info "Sample IPs: ${TEST_IPS[0]}, ${TEST_IPS[1]}, ${TEST_IPS[2]}, ..."
     echo ""
     
-    log_info "Creating $namespace_count test namespaces..."
+    # Check existing configuration
+    log_info "Checking existing test configuration..."
+    local existing_eips=$(oc get egressip -l test-suite=eip-monitoring --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    local existing_namespaces=$(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' | wc -l | tr -d ' ')
     
-    # Create namespaces with error handling
-    create_namespace() {
-        local name="$1"
-        local labels="$2"
+    # Count total IPs in existing EgressIPs
+    local existing_total_ips=0
+    if [ "$existing_eips" -gt 0 ]; then
+        existing_total_ips=$(oc get egressip -l test-suite=eip-monitoring -o jsonpath='{.items[*].spec.egressIPs[*]}' 2>/dev/null | tr ' ' '\n' | grep -v '^$' | wc -l | tr -d ' ')
+    fi
+    
+    # Calculate distribution ratios
+    local existing_ips_per_ns=0
+    local requested_ips_per_ns=0
+    
+    if [ "$existing_namespaces" -gt 0 ] && [ "$existing_total_ips" -gt 0 ]; then
+        # Calculate existing ratio (using integer division)
+        existing_ips_per_ns=$((existing_total_ips / existing_namespaces))
+    fi
+    
+    if [ "$namespace_count" -gt 0 ] && [ "$ip_count" -gt 0 ]; then
+        # Calculate requested ratio
+        requested_ips_per_ns=$((ip_count / namespace_count))
+    fi
+    
+    # Check if configuration matches exactly
+    if [ "$existing_eips" -eq "$namespace_count" ] && [ "$existing_namespaces" -eq "$namespace_count" ] && [ "$existing_total_ips" -eq "$ip_count" ]; then
+        log_success "Existing configuration matches requested ($namespace_count namespaces, $namespace_count EIPs, $ip_count IPs)"
+        log_info "Skipping creation - using existing resources"
         
-        if oc create namespace "$name" --dry-run=client -o yaml | oc apply -f - &>/dev/null; then
-            log_success "Namespace '$name' created/verified"
+        # Populate created_namespaces array from existing namespaces
+        local created_namespaces=()
+        while IFS= read -r ns; do
+            [ -n "$ns" ] && created_namespaces+=("$ns")
+        done < <(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' | sort -V)
+        
+        # Verify we have the right count
+        if [ ${#created_namespaces[@]} -ne $namespace_count ]; then
+            log_warn "Namespace count mismatch, recreating..."
+            skip_to_eip_deployment=false
         else
-            log_warn "Namespace '$name' already exists"
+            # Skip to EgressIP deployment
+            skip_to_eip_deployment=true
+        fi
+    elif [ "$existing_namespaces" -gt 0 ] && [ "$existing_ips_per_ns" -eq "$requested_ips_per_ns" ]; then
+        # Distribution ratio matches - allow scaling operation
+        log_info "Distribution ratio matches ($existing_ips_per_ns IPs per namespace)"
+        log_info "Existing: $existing_namespaces namespaces, $existing_total_ips IPs"
+        log_info "Requested: $namespace_count namespaces, $ip_count IPs"
+        
+        if [ "$namespace_count" -gt "$existing_namespaces" ]; then
+            log_info "Scaling UP: Adding $((namespace_count - existing_namespaces)) namespaces and $((ip_count - existing_total_ips)) IPs"
+        elif [ "$namespace_count" -lt "$existing_namespaces" ]; then
+            log_info "Scaling DOWN: Removing $((existing_namespaces - namespace_count)) namespaces and $((existing_total_ips - ip_count)) IPs"
+        else
+            log_info "IP count change only: Updating IPs from $existing_total_ips to $ip_count"
         fi
         
-        if [ -n "$labels" ]; then
-            oc label namespace "$name" $labels --overwrite &>/dev/null
+        # Get existing namespaces sorted
+        local existing_ns_list=()
+        while IFS= read -r ns; do
+            [ -n "$ns" ] && existing_ns_list+=("$ns")
+        done < <(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' | sort -V)
+        
+        # Handle scaling operations
+        if [ "$namespace_count" -lt "$existing_namespaces" ]; then
+            # Scale down: Delete extra namespaces and their EgressIPs
+            log_info "Deleting extra namespaces and EgressIPs..."
+            for ((i=$namespace_count; i<${#existing_ns_list[@]}; i++)); do
+                local ns_to_delete="${existing_ns_list[$i]}"
+                local eip_to_delete="test-eip-${ns_to_delete}"
+                
+                # Delete EgressIP first
+                oc delete egressip "$eip_to_delete" --ignore-not-found=true &>/dev/null || true
+                
+                # Delete namespace
+                oc delete namespace "$ns_to_delete" --ignore-not-found=true &>/dev/null || true
+            done
+            log_success "Removed $((existing_namespaces - namespace_count)) namespaces"
+        elif [ "$namespace_count" -gt "$existing_namespaces" ]; then
+            # Scale up: Will create additional namespaces below
+            log_info "Will create $((namespace_count - existing_namespaces)) additional namespaces"
         fi
-    }
+        
+        # Use existing namespaces up to the requested count
+        local created_namespaces=()
+        for ((i=0; i<namespace_count && i<${#existing_ns_list[@]}; i++)); do
+            created_namespaces+=("${existing_ns_list[$i]}")
+        done
+        
+        # Will create additional namespaces if needed (handled below)
+        skip_to_eip_deployment=false
+    else
+        if [ "$existing_eips" -gt 0 ] || [ "$existing_namespaces" -gt 0 ]; then
+            log_warn "Existing configuration found ($existing_namespaces namespaces, $existing_eips EIPs, $existing_total_ips IPs)"
+            log_warn "Distribution ratio differs (existing: $existing_ips_per_ns IPs/ns, requested: $requested_ips_per_ns IPs/ns)"
+            log_warn "Please run cleanup first or manually delete existing test resources"
+            exit 1
+        fi
+        skip_to_eip_deployment=false
+    fi
     
-    # Define namespace templates with different characteristics
-    # This array provides diverse labels for up to 100 namespaces
-    local namespace_templates=(
-        "test-ns-1:environment=production tier=database"
+    if [ "$skip_to_eip_deployment" != "true" ]; then
+        # Initialize created_namespaces if not already set (from scaling detection)
+        if [ -z "${created_namespaces[*]:-}" ]; then
+            created_namespaces=()
+        fi
+        
+        # Calculate how many namespaces we need to create
+        local existing_count=${#created_namespaces[@]}
+        local namespaces_to_create=$((namespace_count - existing_count))
+        
+        if [ "$namespaces_to_create" -gt 0 ]; then
+            log_info "Creating $namespaces_to_create additional namespaces (existing: $existing_count, requested: $namespace_count)..."
+            
+            # Batch create namespaces for speed
+            local namespace_yaml=""
+            
+            # Define namespace templates with different characteristics
+            # This array provides diverse labels for up to 200 namespaces
+            local namespace_templates=(
+                "test-ns-1:environment=production tier=database"
         "test-ns-2:environment=development"
         "test-ns-3:app=api-gateway"
         "test-ns-4:app=monitoring tier=observability"
@@ -375,85 +497,164 @@ main() {
         "test-ns-197:app=test-signoff tier=testing"
         "test-ns-198:app=test-release tier=testing"
         "test-ns-199:app=test-deployment tier=testing"
-        "test-ns-200:app=test-production tier=testing"
-    )
-    
-    # Create namespaces based on requested count
-    local created_namespaces=()
-    for ((i=0; i<namespace_count; i++)); do
-        local template_index=$((i % ${#namespace_templates[@]}))
-        local template="${namespace_templates[$template_index]}"
-        local labels=$(echo "$template" | cut -d: -f2-)
+            "test-ns-200:app=test-production tier=testing"
+        )
         
-        # Create generic namespace name with number
-        local name="test-ns-$((i + 1))"
-        
-        create_namespace "$name" "$labels"
-        created_namespaces+=("$name")
-    done
-    
-    echo ""
-    log_info "Deploying EgressIP configurations with discovered IPs..."
-    
-    # Calculate distribution of IPs across EgressIP resources
-    local total_ips=${#TEST_IPS[@]}
-    local ips_per_namespace=$((total_ips / namespace_count))
-    local remaining_ips=$((total_ips % namespace_count))
-    
-    # Ensure we have at least 1 IP per namespace
-    [ $ips_per_namespace -lt 1 ] && ips_per_namespace=1
-    
-    log_info "IP distribution: $ips_per_namespace IPs per namespace (with $remaining_ips extra IPs)"
-    
-    # Generate EgressIP YAML dynamically for each namespace
-    local yaml_content=""
-    local ip_index=0
-    
-    for ((ns_index=0; ns_index<namespace_count; ns_index++)); do
-        local namespace="${created_namespaces[$ns_index]}"
-        local egressip_name="test-eip-${namespace}"
-        
-        # Calculate IPs for this namespace
-        local ips_for_this_namespace=$ips_per_namespace
-        if [ $ns_index -lt $remaining_ips ]; then
-            ips_for_this_namespace=$((ips_for_this_namespace + 1))
+            # Build batch YAML for new namespaces only (starting from existing_count)
+            for ((i=$existing_count; i<$namespace_count; i++)); do
+                local template_index=$((i % ${#namespace_templates[@]}))
+                local template="${namespace_templates[$template_index]}"
+                local labels=$(echo "$template" | cut -d: -f2-)
+                
+                # Create generic namespace name with number
+                local name="test-ns-$((i + 1))"
+                created_namespaces+=("$name")
+                
+                # Build namespace YAML
+                namespace_yaml+="apiVersion: v1\n"
+                namespace_yaml+="kind: Namespace\n"
+                namespace_yaml+="metadata:\n"
+                namespace_yaml+="  name: $name\n"
+                namespace_yaml+="  labels:\n"
+                namespace_yaml+="    test-suite: eip-monitoring\n"
+                namespace_yaml+="    environment: test\n"
+                
+                # Add template labels
+                if [ -n "$labels" ]; then
+                    IFS=' ' read -ra LABEL_ARRAY <<< "$labels"
+                    for label in "${LABEL_ARRAY[@]}"; do
+                        if [[ "$label" == *"="* ]]; then
+                            local key=$(echo "$label" | cut -d'=' -f1)
+                            local value=$(echo "$label" | cut -d'=' -f2-)
+                            namespace_yaml+="    $key: $value\n"
+                        fi
+                    done
+                fi
+                
+                namespace_yaml+="---\n"
+            done
+            
+            # Apply all new namespaces in one batch operation
+            if [ -n "$namespace_yaml" ]; then
+                echo -e "$namespace_yaml" | oc apply -f - &>/dev/null
+                log_success "Created $namespaces_to_create additional namespaces in batch"
+            fi
+            
+            # Apply labels in parallel (faster than sequential)
+            local label_pids=()
+            for ((i=$existing_count; i<$namespace_count; i++)); do
+                local template_index=$((i % ${#namespace_templates[@]}))
+                local template="${namespace_templates[$template_index]}"
+                local labels=$(echo "$template" | cut -d: -f2-)
+                local name="test-ns-$((i + 1))"
+                
+                if [ -n "$labels" ]; then
+                    oc label namespace "$name" $labels --overwrite &>/dev/null || true &
+                    label_pids+=($!)
+                fi
+            done
+            
+            # Wait for all label operations to complete
+            for pid in "${label_pids[@]}"; do
+                wait "$pid" 2>/dev/null || true
+            done
+        else
+            log_info "All $namespace_count namespaces already exist - skipping creation"
         fi
         
-        # Use namespace name directly for simpler assignment
-        # No need to parse complex labels - just use the namespace name
+        echo ""
+    fi
+    
+    # Only deploy EgressIPs if we didn't skip (or if we need to update)
+    if [ "$skip_to_eip_deployment" != "true" ]; then
+        log_info "Deploying EgressIP configurations with discovered IPs..."
         
-        # Generate EgressIP for this namespace
-        yaml_content+="apiVersion: k8s.ovn.org/v1\n"
-        yaml_content+="kind: EgressIP\n"
-        yaml_content+="metadata:\n"
-        yaml_content+="  name: $egressip_name\n"
-        yaml_content+="  labels:\n"
-        yaml_content+="    test-suite: eip-monitoring\n"
-        yaml_content+="    environment: test\n"
-        yaml_content+="    namespace: $namespace\n"
-        yaml_content+="spec:\n"
-        yaml_content+="  egressIPs:\n"
+        # Calculate distribution of IPs across EgressIP resources
+        local total_ips=${#TEST_IPS[@]}
+        local ips_per_namespace
+        local remaining_ips=0
         
-        # Add IPs for this namespace
-        for ((i=0; i<ips_for_this_namespace; i++)); do
-            if [ $ip_index -lt ${#TEST_IPS[@]} ]; then
-                yaml_content+="  - ${TEST_IPS[$ip_index]}\n"
-                ip_index=$((ip_index + 1))
+        if [ "$eips_per_namespace" -gt 0 ]; then
+            # Fixed EIPs per namespace
+            ips_per_namespace=$eips_per_namespace
+            local total_required_ips=$((namespace_count * eips_per_namespace))
+            
+            if [ $total_ips -lt $total_required_ips ]; then
+                log_warn "Not enough IPs available for fixed distribution"
+                log_warn "Available: $total_ips IPs, Required: $total_required_ips IPs"
+                log_warn "Reducing EIPs per namespace to fit available IPs"
+                ips_per_namespace=$((total_ips / namespace_count))
+                [ $ips_per_namespace -lt 1 ] && ips_per_namespace=1
             fi
+            
+            log_info "Fixed distribution: $ips_per_namespace IPs per namespace"
+        else
+            # Auto-distribute (original logic)
+            ips_per_namespace=$((total_ips / namespace_count))
+            remaining_ips=$((total_ips % namespace_count))
+            
+            # Ensure we have at least 1 IP per namespace
+            [ $ips_per_namespace -lt 1 ] && ips_per_namespace=1
+            
+            log_info "Auto distribution: $ips_per_namespace IPs per namespace (with $remaining_ips extra IPs)"
+        fi
+        
+        # Generate EgressIP YAML dynamically for each namespace
+        local yaml_content=""
+        local ip_index=0
+        
+        for ((ns_index=0; ns_index<namespace_count; ns_index++)); do
+            local namespace="${created_namespaces[$ns_index]}"
+            local egressip_name="test-eip-${namespace}"
+            
+            # Calculate IPs for this namespace
+            local ips_for_this_namespace=$ips_per_namespace
+            if [ "$eips_per_namespace" -eq 0 ] && [ $ns_index -lt $remaining_ips ]; then
+                # Only add extra IPs for auto-distribution mode
+                ips_for_this_namespace=$((ips_for_this_namespace + 1))
+            fi
+            
+            # Use namespace name directly for simpler assignment
+            # No need to parse complex labels - just use the namespace name
+            
+            # Generate EgressIP for this namespace
+            yaml_content+="apiVersion: k8s.ovn.org/v1\n"
+            yaml_content+="kind: EgressIP\n"
+            yaml_content+="metadata:\n"
+            yaml_content+="  name: $egressip_name\n"
+            yaml_content+="  labels:\n"
+            yaml_content+="    test-suite: eip-monitoring\n"
+            yaml_content+="    environment: test\n"
+            yaml_content+="    namespace: $namespace\n"
+            yaml_content+="spec:\n"
+            yaml_content+="  egressIPs:\n"
+            
+            # Add IPs for this namespace
+            for ((i=0; i<ips_for_this_namespace; i++)); do
+                if [ $ip_index -lt ${#TEST_IPS[@]} ]; then
+                    yaml_content+="  - ${TEST_IPS[$ip_index]}\n"
+                    ip_index=$((ip_index + 1))
+                fi
+            done
+            
+            yaml_content+="  namespaceSelector:\n"
+            yaml_content+="    matchLabels:\n"
+            yaml_content+="      kubernetes.io/metadata.name: $namespace\n"
+            
+            yaml_content+="---\n"
         done
         
-        yaml_content+="  namespaceSelector:\n"
-        yaml_content+="    matchLabels:\n"
-        yaml_content+="      kubernetes.io/metadata.name: $namespace\n"
-        
-        yaml_content+="---\n"
-    done
-    
-    # Deploy the EgressIP resources
-    echo -e "$yaml_content" | oc apply -f -
+        # Deploy the EgressIP resources
+        # Suppress warnings about missing last-applied-configuration annotation
+        # (OpenShift will automatically patch it)
+        echo -e "$yaml_content" | oc apply -f - 2>&1 | \
+            grep -v "missing the kubectl.kubernetes.io/last-applied-configuration annotation" || true
+        log_success "Test EgressIPs deployed successfully!"
+    else
+        log_info "EgressIP configuration already matches - skipping deployment"
+    fi
 
     echo ""
-    log_success "Test EgressIPs deployed successfully!"
     
     # Summary
     echo ""
@@ -464,8 +665,12 @@ main() {
     echo "IPs allocated: ${#TEST_IPS[@]}"
     echo "Namespaces requested: $namespace_count"
     echo "Namespaces created: ${#created_namespaces[@]}"
+    if [ "$eips_per_namespace" -gt 0 ]; then
+        echo "Distribution: Fixed ($ips_per_namespace EIPs per namespace)"
+    else
+        echo "Distribution: Auto-distributed"
+    fi
     echo "EgressIPs created: $namespace_count"
-    echo "IPs per namespace: $ips_per_namespace (with $remaining_ips extra IPs)"
     echo ""
     
     # Wait a moment for resources to be processed
@@ -527,56 +732,91 @@ cleanup_test_resources() {
     log_info "Namespace timeout: $namespace_timeout"
     [ "$force_cleanup" = "true" ] && log_info "Force cleanup: enabled"
     
-    # Delete EgressIPs
-    if oc delete egressip -l test-suite=eip-monitoring --timeout="$egressip_timeout"; then
+    # Delete EgressIPs (already efficient as batch operation)
+    log_info "Deleting EgressIPs..."
+    if oc delete egressip -l test-suite=eip-monitoring --timeout="$egressip_timeout" &>/dev/null; then
         log_success "Test EgressIPs deleted"
     else
         if [ "$force_cleanup" = "true" ]; then
             log_warn "Some EgressIPs failed to delete, continuing with force cleanup"
-    else
-        log_warn "Some EgressIPs may not have been deleted"
+        else
+            log_warn "Some EgressIPs may not have been deleted"
         fi
     fi
     
-    # Delete test namespaces (those with test-suite label)
-    log_info "Deleting test namespaces..."
+    # Delete test namespaces in parallel for better performance
+    log_info "Deleting test namespaces in parallel..."
     local test_namespaces=$(oc get namespaces -l test-suite=eip-monitoring -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    
+    if [ -z "$test_namespaces" ]; then
+        # Fallback: delete generic test namespace names (only if they exist)
+        log_info "No namespaces found with test-suite label, checking for generic test namespaces..."
+        test_namespaces=$(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' || echo "")
+    fi
+    
     if [ -n "$test_namespaces" ]; then
+        # Convert space-separated string to array for parallel processing
+        local ns_array=()
         for ns in $test_namespaces; do
-            if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
-            log_success "Namespace '$ns' deleted"
-            else
-                if [ "$force_cleanup" = "true" ]; then
-                    log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
-                    oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
-                    log_warn "Force deletion attempted for namespace '$ns'"
-                else
-                    log_warn "Namespace '$ns' may not have been deleted or didn't exist"
-                fi
-            fi
+            [ -n "$ns" ] && ns_array+=("$ns")
         done
-        else
-            # Fallback: delete generic test namespace names (only if they exist)
-            log_info "No namespaces found with test-suite label, checking for generic test namespaces..."
-            # Get all namespaces and filter for test-ns-* pattern
-            local existing_test_ns=$(oc get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^test-ns-[0-9]+$' || echo "")
-            if [ -n "$existing_test_ns" ]; then
-                log_info "Found generic test namespaces: $existing_test_ns"
-                for ns in $existing_test_ns; do
-                    if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
-                        log_success "Namespace '$ns' deleted"
+        
+        local total_ns=${#ns_array[@]}
+        log_info "Found $total_ns namespaces to delete"
+        
+        # Delete namespaces in parallel
+        local delete_pids=()
+        local success_count=0
+        local failed_count=0
+        local force_count=0
+        
+        for ns in "${ns_array[@]}"; do
+            # Start deletion in background
+            (
+                if oc delete namespace "$ns" --timeout="$namespace_timeout" &>/dev/null; then
+                    exit 0
+                else
+                    if [ "$force_cleanup" = "true" ]; then
+                        oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
+                        exit 2  # Force deletion attempted
                     else
-                        if [ "$force_cleanup" = "true" ]; then
-                            log_warn "Namespace '$ns' failed to delete, attempting force deletion..."
-                            oc delete namespace "$ns" --force --grace-period=0 &>/dev/null || true
-                            log_warn "Force deletion attempted for namespace '$ns'"
-                        fi
+                        exit 1  # Failed
                     fi
-                done
-            else
-                log_info "No test namespaces found (neither labeled nor generic test-ns-* pattern)"
-            fi
+                fi
+            ) &
+            delete_pids+=($!)
+        done
+        
+        # Wait for all deletions and count results
+        for pid in "${delete_pids[@]}"; do
+            wait "$pid" 2>/dev/null
+            local exit_code=$?
+            case $exit_code in
+                0)
+                    success_count=$((success_count + 1))
+                    ;;
+                2)
+                    force_count=$((force_count + 1))
+                    ;;
+                *)
+                    failed_count=$((failed_count + 1))
+                    ;;
+            esac
+        done
+        
+        # Report results
+        if [ $success_count -gt 0 ]; then
+            log_success "Deleted $success_count namespaces successfully"
         fi
+        if [ $force_count -gt 0 ]; then
+            log_warn "Force deleted $force_count namespaces"
+        fi
+        if [ $failed_count -gt 0 ]; then
+            log_warn "$failed_count namespaces may not have been deleted"
+        fi
+    else
+        log_info "No test namespaces found"
+    fi
     
     log_success "Cleanup completed"
 }
@@ -625,14 +865,17 @@ parse_cleanup_args() {
 # Handle command line arguments
 case "${1:-deploy}" in
     "deploy")
-        # Check if second and third arguments are numbers (IP count and namespace count)
+        # Check if second, third, and fourth arguments are numbers (IP count, namespace count, EIPs per namespace)
         ip_count="${2:-15}"
         namespace_count="${3:-4}"
+        eips_per_namespace="${4:-0}"
         
-        if [[ "$ip_count" =~ ^[0-9]+$ ]] && [[ "$namespace_count" =~ ^[0-9]+$ ]]; then
-            main "$ip_count" "$namespace_count"
+        if [[ "$ip_count" =~ ^[0-9]+$ ]] && [[ "$namespace_count" =~ ^[0-9]+$ ]] && [[ "$eips_per_namespace" =~ ^[0-9]+$ ]]; then
+            main "$ip_count" "$namespace_count" "$eips_per_namespace"
+        elif [[ "$ip_count" =~ ^[0-9]+$ ]] && [[ "$namespace_count" =~ ^[0-9]+$ ]]; then
+            main "$ip_count" "$namespace_count" "0"
         elif [[ "$ip_count" =~ ^[0-9]+$ ]]; then
-            main "$ip_count"
+            main "$ip_count" "4" "0"
         else
             main
         fi
@@ -651,9 +894,10 @@ case "${1:-deploy}" in
         echo "Usage: $0 [command] [options]"
         echo ""
         echo "Commands:"
-        echo "  deploy [ip_count] [namespace_count]  Deploy test EgressIP resources"
+        echo "  deploy [ip_count] [namespace_count] [eips_per_namespace]  Deploy test EgressIP resources"
         echo "                                      ip_count: Number of IPs to deploy (1-200, default: 15)"
         echo "                                      namespace_count: Number of namespaces to create (1-200, default: 4)"
+        echo "                                      eips_per_namespace: Fixed EIPs per namespace (0-50, default: 0 = auto-distribute)"
         echo "  cleanup [options]                    Remove all test resources"
         echo "                                      --force, -f: Force deletion with --force --grace-period=0"
         echo "                                      --egressip-timeout TIMEOUT: Timeout for EgressIP deletion (default: 30s)"
@@ -662,10 +906,11 @@ case "${1:-deploy}" in
         echo "  help                                 Show this help message"
         echo ""
         echo "Examples:"
-        echo "  $0 deploy                    # Deploy with default 15 IPs and 4 namespaces"
-        echo "  $0 deploy 50                 # Deploy with 50 IPs and 4 namespaces"
-        echo "  $0 deploy 50 8               # Deploy with 50 IPs and 8 namespaces"
-        echo "  $0 deploy 200 200           # Deploy with maximum 200 IPs and 200 namespaces (1:1 mapping)"
+        echo "  $0 deploy                    # Deploy with default 15 IPs and 4 namespaces (auto-distribute)"
+        echo "  $0 deploy 50                 # Deploy with 50 IPs and 4 namespaces (auto-distribute)"
+        echo "  $0 deploy 50 8               # Deploy with 50 IPs and 8 namespaces (auto-distribute)"
+        echo "  $0 deploy 20 5 3             # Deploy with 20 IPs, 5 namespaces, 3 EIPs each (fixed)"
+        echo "  $0 deploy 30 6 5             # Deploy with 30 IPs, 6 namespaces, 5 EIPs each (fixed)"
         echo "  $0 cleanup                   # Clean up test resources"
         echo "  $0 cleanup --force          # Force clean up test resources"
         echo "  $0 cleanup --egressip-timeout 60s --namespace-timeout 120s  # Custom timeouts"
@@ -676,8 +921,9 @@ case "${1:-deploy}" in
         if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
             ip_count="$1"
             namespace_count="${2:-4}"
+            eips_per_namespace="${3:-0}"
             if [[ "$namespace_count" =~ ^[0-9]+$ ]]; then
-                main "$ip_count" "$namespace_count"
+                main "$ip_count" "$namespace_count" "$eips_per_namespace"
             else
                 main "$ip_count"
             fi

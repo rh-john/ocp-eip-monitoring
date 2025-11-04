@@ -274,6 +274,9 @@ Deploy this comprehensive monitoring solution:
 # Create test EgressIPs for monitoring validation  
 ./scripts/deploy-test-eips.sh deploy
 
+# Create test EgressIPs with fixed distribution (3 EIPs per namespace)
+./scripts/deploy-test-eips.sh deploy 20 5 3
+
 # Verify metrics collection
 curl http://eip-monitor:8080/metrics | grep eip_
 ```

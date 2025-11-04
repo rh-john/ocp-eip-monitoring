@@ -103,8 +103,14 @@ curl http://localhost:8080/metrics
 
 ### Testing
 ```bash
-# Deploy test EgressIPs
+# Deploy test EgressIPs with default settings (15 IPs, 4 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy
+
+# Deploy with custom IP and namespace counts (auto-distribute)
+./scripts/deploy-test-eips.sh deploy 20 5
+
+# Deploy with fixed EIPs per namespace (3 EIPs each)
+./scripts/deploy-test-eips.sh deploy 20 5 3
 
 # Clean up test resources  
 ./scripts/deploy-test-eips.sh cleanup

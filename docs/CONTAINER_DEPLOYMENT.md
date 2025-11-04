@@ -479,26 +479,32 @@ The `deploy-test-eips.sh` script automatically:
    - Includes databases, monitoring, CI/CD, microservices, protocols, security, and testing infrastructure
 3. **🚀 Deploys dynamic EgressIPs**:
    - Creates one EgressIP per namespace with appropriate labels
+   - Supports flexible IP distribution modes:
+     - **Auto-distribute**: Evenly distributes IPs across namespaces with extras handled
+     - **Fixed per namespace**: Each namespace gets exactly the specified number of EIPs
    - Supports 1:1 IP to namespace mapping (up to 200 IPs and 200 namespaces)
    - Enables maximum granularity for namespace isolation testing
 
 #### **Script Usage Examples**
 
 ```bash
-# Deploy with default settings (15 IPs, 4 namespaces)
+# Deploy with default settings (15 IPs, 4 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy
 
-# Deploy with custom IP count (50 IPs, 4 namespaces)
+# Deploy with custom IP count (50 IPs, 4 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy 50
 
-# Deploy with custom IP and namespace counts (100 IPs, 25 namespaces)
+# Deploy with custom IP and namespace counts (100 IPs, 25 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy 100 25
 
-# Deploy with 1:1 mapping (200 IPs, 200 namespaces)
-./scripts/deploy-test-eips.sh deploy 200 200
+# Deploy with fixed EIPs per namespace (20 IPs, 5 namespaces, 3 EIPs each)
+./scripts/deploy-test-eips.sh deploy 20 5 3
 
-# Deploy with maximum scale (200 IPs, 100 namespaces)
-./scripts/deploy-test-eips.sh deploy 200 100
+# Deploy with 1:1 mapping (200 IPs, 200 namespaces, 1 EIP each)
+./scripts/deploy-test-eips.sh deploy 200 200 1
+
+# Deploy with maximum scale (200 IPs, 100 namespaces, 2 EIPs each)
+./scripts/deploy-test-eips.sh deploy 200 100 2
 
 # Clean up test resources
 ./scripts/deploy-test-eips.sh cleanup
@@ -509,6 +515,21 @@ The `deploy-test-eips.sh` script automatically:
 # Show help and usage information
 ./scripts/deploy-test-eips.sh help
 ```
+
+#### **Distribution Modes**
+
+The script supports two IP distribution modes:
+
+**Auto-Distribute Mode (Default)**
+- Evenly distributes IPs across namespaces
+- Handles remaining IPs by giving extras to first few namespaces
+- Example: 10 IPs, 3 namespaces → 3, 3, 4 IPs respectively
+
+**Fixed Per Namespace Mode**
+- Each namespace gets exactly the specified number of EIPs
+- Validates sufficient IP capacity before deployment
+- Falls back to auto-distribute if insufficient IPs available
+- Example: 20 IPs, 5 namespaces, 3 EIPs each → Each namespace gets exactly 3 EIPs
 
 #### **Expected Output**
 
@@ -521,6 +542,7 @@ The `deploy-test-eips.sh` script automatically:
 ℹ️  Current user: your-username  
 ℹ️  Requested IP count: 200
 ℹ️  Requested namespace count: 200
+ℹ️  EIPs per namespace: auto-distribute
 
 🔍 Discovering EgressIP configuration from cluster...
 ✅ Found EgressIP CIDR: 10.0.128.0/23
@@ -533,7 +555,7 @@ The `deploy-test-eips.sh` script automatically:
 ... (continues for all 200 namespaces)
 
 🚀 Deploying EgressIP configurations with discovered IPs...
-ℹ️  IP distribution: 1 IP per namespace (with 0 extra IPs)
+ℹ️  Auto distribution: 1 IP per namespace (with 0 extra IPs)
 ✅ Test EgressIPs deployed successfully!
 
 📊 Deployment Summary
@@ -543,8 +565,8 @@ IPs requested: 200
 IPs allocated: 200
 Namespaces requested: 200
 Namespaces created: 200
+Distribution: Auto-distributed
 EgressIPs created: 200
-IPs per namespace: 1 (with 0 extra IPs)
 ```
 
 ### Verification Commands
@@ -580,7 +602,7 @@ The script supports enterprise-scale testing scenarios with up to 200 egress IPs
 
 ```bash
 # Deploy with maximum scale (200 IPs, 200 namespaces - 1:1 mapping)
-./scripts/deploy-test-eips.sh deploy 200 200
+./scripts/deploy-test-eips.sh deploy 200 200 1
 ```
 
 This creates:
@@ -606,7 +628,7 @@ The 200 namespaces include diverse application types:
 For large-scale deployments:
 
 ```bash
-# Start with moderate scale (50 IPs, 25 namespaces)
+# Start with moderate scale (50 IPs, 25 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy 50 25
 
 # Gradually increase to maximum scale
@@ -614,8 +636,8 @@ For large-scale deployments:
 ./scripts/deploy-test-eips.sh deploy 150 75
 ./scripts/deploy-test-eips.sh deploy 200 100
 
-# Ultimate scale with 1:1 mapping (200 IPs, 200 namespaces)
-./scripts/deploy-test-eips.sh deploy 200 200
+# Ultimate scale with 1:1 mapping (200 IPs, 200 namespaces, 1 EIP each)
+./scripts/deploy-test-eips.sh deploy 200 200 1
 ```
 
 #### **Cleanup for Large Deployments**
@@ -632,8 +654,8 @@ For maximum granularity and namespace isolation testing, you can deploy with a 1
 #### **Perfect Namespace Isolation**
 
 ```bash
-# Deploy with 1:1 mapping (200 IPs, 200 namespaces)
-./scripts/deploy-test-eips.sh deploy 200 200
+# Deploy with 1:1 mapping (200 IPs, 200 namespaces, 1 EIP each)
+./scripts/deploy-test-eips.sh deploy 200 200 1
 ```
 
 This configuration provides:
@@ -669,7 +691,7 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 
 #### Scenario 1: Basic Testing (Default)
 ```bash
-# Deploy with default settings (15 IPs, 4 namespaces)
+# Deploy with default settings (15 IPs, 4 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy
 
 # This creates:
@@ -680,7 +702,7 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 
 #### Scenario 2: High-Density Testing
 ```bash
-# Deploy with many IPs but fewer namespaces (50 IPs, 10 namespaces)
+# Deploy with many IPs but fewer namespaces (50 IPs, 10 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy 50 10
 
 # This creates:
@@ -689,10 +711,21 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 # - Tests high IP utilization per namespace
 ```
 
-#### Scenario 3: Maximum Granularity Testing
+#### Scenario 3: Fixed Distribution Testing
 ```bash
-# Deploy with 1:1 mapping (200 IPs, 200 namespaces)
-./scripts/deploy-test-eips.sh deploy 200 200
+# Deploy with fixed EIPs per namespace (20 IPs, 5 namespaces, 3 EIPs each)
+./scripts/deploy-test-eips.sh deploy 20 5 3
+
+# This creates:
+# - 5 namespaces with diverse labels
+# - 5 EgressIPs with exactly 3 IPs each
+# - Perfect for testing capacity limits per namespace
+```
+
+#### Scenario 4: Maximum Granularity Testing
+```bash
+# Deploy with 1:1 mapping (200 IPs, 200 namespaces, 1 EIP each)
+./scripts/deploy-test-eips.sh deploy 200 200 1
 
 # This creates:
 # - 200 namespaces with diverse labels
@@ -700,9 +733,9 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 # - Perfect for testing namespace isolation
 ```
 
-#### Scenario 4: Load Testing
+#### Scenario 5: Load Testing
 ```bash
-# Deploy with moderate scale (100 IPs, 50 namespaces)
+# Deploy with moderate scale (100 IPs, 50 namespaces, auto-distribute)
 ./scripts/deploy-test-eips.sh deploy 100 50
 
 # This creates:
