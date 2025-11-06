@@ -26,10 +26,10 @@ spec:
           "id": 1,
           "title": "EIP Assignment Flow",
           "type": "jdbranham-diagram-panel",
-          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
+          "gridPos": {"h": 16, "w": 12, "x": 0, "y": 0},
           "pluginVersion": "1.0.0",
           "options": {
-            "content": "graph TD\n    A[EIP Configured] --> B{Node Available?}\n    B -->|Yes| C[Assign to Node]\n    B -->|No| D[Pending State]\n    C --> E[CPIC Created]\n    E --> F{CPIC Success?}\n    F -->|Yes| G[EIP Active ✓]\n    F -->|No| H[CPIC Error ✗]\n    H --> I[Redistribute to Healthy Node]\n    I --> C\n    D --> B\n    G --> J[Monitor Status]\n    J --> K{Health Check}\n    K -->|Healthy| J\n    K -->|Unhealthy| I\n    \n    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px\n    style G fill:#52c41a,stroke:#389e0d,stroke-width:2px\n    style H fill:#ff4d4f,stroke:#cf1322,stroke-width:2px\n    style D fill:#faad14,stroke:#d48806,stroke-width:2px"
+            "content": "graph TD\n    A[EIP Configured]\n    A --> B{Node Available?}\n    B -->|No| C[Pending State]\n    C --> B\n    B -->|Yes| D[Assign to Node]\n    D --> E[CPIC Created]\n    E --> F{CPIC Success?}\n    F -->|Yes| G[EIP Active ✓]\n    G --> H[Monitor Status]\n    H --> I{Health Check}\n    I -->|Healthy| H\n    F -->|No| J[CPIC Error ✗]\n    J --> K[Redistribute]\n    K --> D\n    I -->|Unhealthy| K\n    \n    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px\n    style G fill:#52c41a,stroke:#389e0d,stroke-width:2px\n    style J fill:#ff4d4f,stroke:#cf1322,stroke-width:2px\n    style C fill:#faad14,stroke:#d48806,stroke-width:2px"
           }
         },
         {

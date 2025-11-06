@@ -1,0 +1,467 @@
+---
+# EIP Capacity Planning & Forecasting Dashboard
+# Focuses on capacity trends, headroom analysis, and exhaustion predictions
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-capacity-planning
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "EIP Capacity Planning & Forecasting",
+      "tags": ["eip", "capacity", "planning", "forecasting", "mosaic"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "title": "Capacity Overview (Polystat)",
+          "type": "grafana-polystat-panel",
+          "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "eips_configured_total",
+              "legendFormat": "Configured",
+              "refId": "A",
+              "instant": true
+            },
+            {
+              "expr": "eips_assigned_total",
+              "legendFormat": "Assigned",
+              "refId": "B",
+              "instant": true
+            },
+            {
+              "expr": "eips_unassigned_total",
+              "legendFormat": "Unassigned",
+              "refId": "C",
+              "instant": true
+            },
+            {
+              "expr": "eip_utilization_percent",
+              "legendFormat": "Utilization %",
+              "refId": "D",
+              "instant": true
+            },
+            {
+              "expr": "eip_max_per_node",
+              "legendFormat": "Max per Node",
+              "refId": "E",
+              "instant": true
+            },
+            {
+              "expr": "eip_min_per_node",
+              "legendFormat": "Min per Node",
+              "refId": "F",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"},
+                  {"value": 50, "color": "yellow"},
+                  {"value": 80, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "globalShape": "hexagon",
+            "displayMode": "all",
+            "valueName": "last"
+          }
+        },
+        {
+          "id": 2,
+          "title": "Node Capacity Headroom Over Time (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 6},
+          "targets": [
+            {
+              "expr": "100 - node_eip_utilization_percent",
+              "legendFormat": "{{node}} - Headroom %",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "min": 0,
+              "max": 100,
+              "unit": "percent"
+            }
+          },
+          "options": {
+            "colorScheme": "RdYlGn",
+            "cellSize": 12,
+            "showLegend": true,
+            "showValues": false,
+            "xAxis": {
+              "show": true,
+              "label": "Time"
+            },
+            "yAxis": {
+              "show": true,
+              "label": "Node"
+            }
+          }
+        },
+        {
+          "id": 3,
+          "title": "EIP Exhaustion Prediction",
+          "type": "timeseries",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 6},
+          "targets": [
+            {
+              "expr": "predict_linear(eips_assigned_total[1h], 24*3600)",
+              "legendFormat": "Predicted in 24h",
+              "refId": "A"
+            },
+            {
+              "expr": "eips_configured_total",
+              "legendFormat": "Configured Capacity",
+              "refId": "B"
+            },
+            {
+              "expr": "eips_assigned_total",
+              "legendFormat": "Current Assigned",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 20,
+                "pointSize": 5
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 0.9, "color": "yellow"},
+                  {"value": 1.0, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "Distribution Fairness Trends (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 16},
+          "targets": [
+            {
+              "expr": "eip_distribution_gini_coefficient",
+              "legendFormat": "Gini Coefficient",
+              "refId": "A",
+              "format": "time_series"
+            },
+            {
+              "expr": "eip_distribution_stddev",
+              "legendFormat": "Std Deviation",
+              "refId": "B",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "colorScheme": "Spectral",
+            "cellSize": 15,
+            "showLegend": true,
+            "showValues": false,
+            "xAxis": {
+              "show": true
+            },
+            "yAxis": {
+              "show": true
+            }
+          }
+        },
+        {
+          "id": 5,
+          "title": "Node Capacity vs Utilization (Bubble Chart)",
+          "type": "digrich-bubblechart-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 16},
+          "targets": [
+            {
+              "expr": "node_eip_assigned_total",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            },
+            {
+              "expr": "node_eip_utilization_percent",
+              "legendFormat": "{{node}} - Utilization",
+              "refId": "B"
+            },
+            {
+              "expr": "100 - node_eip_utilization_percent",
+              "legendFormat": "{{node}} - Headroom",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "xAxisField": "Value",
+            "yAxisField": "Value",
+            "sizeField": "Value",
+            "colorField": "Value",
+            "groupBy": "node",
+            "showLegend": true,
+            "minBubbleSize": 20,
+            "maxBubbleSize": 80
+          }
+        },
+        {
+          "id": 6,
+          "title": "Max/Min Distribution Over Time",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+          "targets": [
+            {
+              "expr": "eip_max_per_node",
+              "legendFormat": "Max per Node",
+              "refId": "A"
+            },
+            {
+              "expr": "eip_min_per_node",
+              "legendFormat": "Min per Node",
+              "refId": "B"
+            },
+            {
+              "expr": "eip_max_per_node - eip_min_per_node",
+              "legendFormat": "Spread",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 30
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Capacity Utilization Forecast",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
+          "targets": [
+            {
+              "expr": "predict_linear(eip_utilization_percent[2h], 7*24*3600)",
+              "legendFormat": "7-day Forecast",
+              "refId": "A"
+            },
+            {
+              "expr": "eip_utilization_percent",
+              "legendFormat": "Current Utilization",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 40
+              },
+              "min": 0,
+              "max": 100,
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 80, "color": "yellow"},
+                  {"value": 90, "color": "orange"},
+                  {"value": 95, "color": "red"}
+                ]
+              }
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 8,
+          "title": "Assignment Rate Trends (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+          "targets": [
+            {
+              "expr": "eip_assignment_rate_per_minute",
+              "legendFormat": "Assignment Rate",
+              "refId": "A",
+              "format": "time_series"
+            },
+            {
+              "expr": "eip_unassignment_rate_per_minute",
+              "legendFormat": "Unassignment Rate",
+              "refId": "B",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "ops"
+            }
+          },
+          "options": {
+            "colorScheme": "Blues",
+            "cellSize": 10,
+            "showLegend": true,
+            "showValues": false,
+            "xAxis": {
+              "show": true
+            },
+            "yAxis": {
+              "show": true
+            }
+          }
+        },
+        {
+          "id": 9,
+          "title": "Node Capacity Status (Funnel)",
+          "type": "mckn-funnel-panel",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+          "targets": [
+            {
+              "expr": "count(count by (node) (node_eip_assigned_total))",
+              "legendFormat": "Total Nodes",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "count(count by (node) (node_eip_utilization_percent < 50))",
+              "legendFormat": "Nodes < 50% Util",
+              "refId": "B",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "count(count by (node) (node_eip_utilization_percent >= 50 and node_eip_utilization_percent < 80))",
+              "legendFormat": "Nodes 50-80% Util",
+              "refId": "C",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "count(count by (node) (node_eip_utilization_percent >= 80))",
+              "legendFormat": "Nodes >= 80% Util",
+              "refId": "D",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 2, "color": "orange"},
+                  {"value": 3, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "orientation": "vertical",
+            "showValues": true,
+            "showPercentages": true,
+            "colorMode": "threshold"
+          }
+        }
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {
+        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+      }
+    }
+
