@@ -524,7 +524,41 @@ For even more advanced visualizations, you can install these community plugins:
 
 ### Installing Plugins
 
-To install plugins in your Grafana instance:
+Plugins are automatically installed via the `GF_INSTALL_PLUGINS` environment variable configured in `grafana-instance.yaml`. The format is: `plugin1:version1,plugin2:version2,...`
+
+**Current plugins installed:**
+- jdbranham-diagram-panel:1.0.0
+- natel-discrete-panel:0.0.9
+- yesoreyeram-boomtable-panel:1.0.0
+- vonage-status-panel:1.0.7
+- agenty-flowcharting-panel:1.0.0
+- grafana-clock-panel:2.1.0
+- grafana-worldmap-panel:0.3.5
+
+**To add more plugins:**
+
+1. **Edit `grafana-instance.yaml`:**
+   ```yaml
+   spec:
+     deployment:
+       spec:
+         template:
+           spec:
+             containers:
+               - name: grafana
+                 env:
+                   - name: GF_INSTALL_PLUGINS
+                     value: "existing-plugins,new-plugin-id:x.x.x"
+   ```
+
+2. **Apply the changes:**
+   ```bash
+   oc apply -f k8s/grafana/grafana-instance.yaml
+   ```
+
+3. **Grafana will restart and install the plugins automatically**
+
+**Alternative: Manual installation (not persistent):**
 
 1. **Via Grafana UI:**
    - Go to Configuration → Plugins
@@ -534,22 +568,10 @@ To install plugins in your Grafana instance:
 2. **Via Grafana CLI (in Grafana pod):**
    ```bash
    oc exec -it <grafana-pod> -n eip-monitoring -- grafana-cli plugins install <plugin-id>
-   oc rollout restart deployment/<grafana-deployment> -n eip-monitoring
+   oc delete pod <grafana-pod> -n eip-monitoring  # Restart to load plugin
    ```
 
-3. **Via ConfigMap (for persistent installation):**
-   ```yaml
-   apiVersion: v1
-   kind: ConfigMap
-   metadata:
-     name: grafana-plugins
-     namespace: eip-monitoring
-   data:
-     plugins.txt: |
-       natel-discrete-panel
-       yesoreyeram-boomtable-panel
-       agenty-flowcharting-panel
-   ```
+**Note:** Manual installations are not persistent across pod restarts. Use the environment variable method for persistent plugin installation.
 
 ---
 

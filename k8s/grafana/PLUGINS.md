@@ -144,15 +144,22 @@ Displays metrics on a world map, useful if nodes are geographically distributed.
 
 ## Plugin Installation
 
-All plugins are automatically installed by the Grafana Operator when deploying the Grafana instance. They are configured in `grafana-instance.yaml`:
+All plugins are automatically installed by Grafana using the `GF_INSTALL_PLUGINS` environment variable. They are configured in `grafana-instance.yaml`:
 
 ```yaml
 spec:
-  plugins:
-    - name: jdbranham-diagram-panel
-      version: "1.0.0"
-    # ... more plugins
+  deployment:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: grafana
+              env:
+                - name: GF_INSTALL_PLUGINS
+                  value: "jdbranham-diagram-panel:1.0.0,natel-discrete-panel:0.0.9,..."
 ```
+
+**Note:** The Grafana Operator CRD (v1beta1) does not support a `spec.plugins` field. Plugins must be installed via the `GF_INSTALL_PLUGINS` environment variable in the deployment spec.
 
 ## Adding More Plugins
 
@@ -163,11 +170,18 @@ To add additional plugins:
    - Search for the plugin
    - Note the plugin ID and latest version
 
-2. **Add to `grafana-instance.yaml`:**
+2. **Add to `grafana-instance.yaml` in the `GF_INSTALL_PLUGINS` environment variable:**
    ```yaml
-   plugins:
-     - name: plugin-id
-       version: "x.x.x"
+   spec:
+     deployment:
+       spec:
+         template:
+           spec:
+             containers:
+               - name: grafana
+                 env:
+                   - name: GF_INSTALL_PLUGINS
+                     value: "existing-plugins,new-plugin-id:x.x.x"
    ```
 
 3. **Redeploy:**

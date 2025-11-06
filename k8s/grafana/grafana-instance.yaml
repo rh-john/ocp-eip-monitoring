@@ -25,6 +25,16 @@ spec:
       requests:
         cpu: 100m
         memory: 128Mi
+    spec:
+      template:
+        spec:
+          containers:
+            - name: grafana
+              env:
+                # Install plugins via GF_INSTALL_PLUGINS environment variable
+                # Format: plugin1:version1,plugin2:version2,...
+                - name: GF_INSTALL_PLUGINS
+                  value: "jdbranham-diagram-panel:1.0.0,natel-discrete-panel:0.0.9,yesoreyeram-boomtable-panel:1.0.0,vonage-status-panel:1.0.7,agenty-flowcharting-panel:1.0.0,grafana-clock-panel:2.1.0,grafana-worldmap-panel:0.3.5"
   service:
     type: ClusterIP
   client:
@@ -33,32 +43,4 @@ spec:
     spec:
       tls:
         termination: edge
-  plugins:
-    # Diagram Panel - For Mermaid.js diagrams and flowcharts
-    - name: jdbranham-diagram-panel
-      version: "1.0.0"
-    
-    # Discrete Panel - For state visualization (used in state-visualization dashboard)
-    - name: natel-discrete-panel
-      version: "0.0.9"
-    
-    # Boom Table - Enhanced tables with multi-level thresholds (used in enhanced-tables dashboard)
-    - name: yesoreyeram-boomtable-panel
-      version: "1.0.0"
-    
-    # Status Panel - For node health status grid (used in node-health-grid dashboard)
-    - name: vonage-status-panel
-      version: "1.0.7"
-    
-    # FlowCharting - Advanced diagramming with draw.io (alternative to diagram panel)
-    - name: agenty-flowcharting-panel
-      version: "1.0.0"
-    
-    # Clock Panel - For showing timestamps and sync status
-    - name: grafana-clock-panel
-      version: "2.1.0"
-    
-    # Worldmap Panel - If nodes are geo-distributed
-    - name: grafana-worldmap-panel
-      version: "0.3.5"
 
