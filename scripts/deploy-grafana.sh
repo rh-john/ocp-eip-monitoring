@@ -198,6 +198,9 @@ deploy_grafana() {
         return 1
     fi
     
+    # Plugins are configured in grafana-instance.yaml via spec.plugins
+    # The Grafana Operator will automatically install them during deployment
+    log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
     # Deploy Grafana Dashboards
     log_info "Deploying Grafana Dashboards..."
     local dashboard_files=(

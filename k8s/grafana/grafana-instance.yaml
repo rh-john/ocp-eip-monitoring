@@ -33,4 +33,32 @@ spec:
     spec:
       tls:
         termination: edge
+  plugins:
+    # Diagram Panel - For Mermaid.js diagrams and flowcharts
+    - name: jdbranham-diagram-panel
+      version: "1.0.0"
+    
+    # Discrete Panel - For state visualization (used in state-visualization dashboard)
+    - name: natel-discrete-panel
+      version: "0.0.9"
+    
+    # Boom Table - Enhanced tables with multi-level thresholds (used in enhanced-tables dashboard)
+    - name: yesoreyeram-boomtable-panel
+      version: "1.0.0"
+    
+    # Status Panel - For node health status grid (used in node-health-grid dashboard)
+    - name: vonage-status-panel
+      version: "1.0.7"
+    
+    # FlowCharting - Advanced diagramming with draw.io (alternative to diagram panel)
+    - name: agenty-flowcharting-panel
+      version: "1.0.0"
+    
+    # Clock Panel - For showing timestamps and sync status
+    - name: grafana-clock-panel
+      version: "2.1.0"
+    
+    # Worldmap Panel - If nodes are geo-distributed
+    - name: grafana-worldmap-panel
+      version: "0.3.5"
 
