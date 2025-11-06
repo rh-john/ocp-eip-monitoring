@@ -1,0 +1,187 @@
+---
+# EIP Architecture Diagram Dashboard (FlowCharting/Diagram)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-architecture-diagram
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "EIP Architecture Diagram",
+      "tags": ["eip", "architecture", "diagram", "flowchart"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "title": "EIP Assignment Flow",
+          "type": "diagram",
+          "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "eips_configured_total",
+              "refId": "A"
+            }
+          ],
+          "options": {
+            "diagram": {
+              "showLegend": true,
+              "legendWidth": 200
+            }
+          },
+          "pluginVersion": "1.0.0"
+        },
+        {
+          "id": 2,
+          "title": "Node Topology Overview",
+          "type": "nodeGraph",
+          "gridPos": {"h": 12, "w": 12, "x": 0, "y": 12},
+          "targets": [
+            {
+              "expr": "sum by (node) (node_eip_assigned_total)",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"}
+            }
+          },
+          "options": {
+            "node": {
+              "mainStatUnit": "short",
+              "secondaryStatUnit": "short"
+            },
+            "edges": {
+              "mainStatUnit": "short",
+              "secondaryStatUnit": "short"
+            }
+          }
+        },
+        {
+          "id": 3,
+          "title": "EIP Status Summary",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 12},
+          "targets": [
+            {
+              "expr": "eips_configured_total",
+              "legendFormat": "Configured",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "blue"}
+                ]
+              },
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "Assigned EIPs",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 12},
+          "targets": [
+            {
+              "expr": "eips_assigned_total",
+              "legendFormat": "Assigned",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": 5,
+          "title": "Unassigned EIPs",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
+          "targets": [
+            {
+              "expr": "eips_unassigned_total",
+              "legendFormat": "Unassigned",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": 6,
+          "title": "CPIC Success Rate",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16},
+          "targets": [
+            {
+              "expr": "(cpic_success_total / (cpic_success_total + cpic_error_total + cpic_pending_total)) * 100",
+              "legendFormat": "Success Rate",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"},
+                  {"value": 80, "color": "yellow"},
+                  {"value": 95, "color": "green"}
+                ]
+              },
+              "unit": "percent",
+              "decimals": 1
+            }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Mermaid Diagram - EIP Lifecycle",
+          "type": "text",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "options": {
+            "content": "# EIP Assignment Lifecycle\n\n```mermaid\ngraph TD\n    A[EIP Configured] --> B{Node Available?}\n    B -->|Yes| C[Assign to Node]\n    B -->|No| D[Pending]\n    C --> E[CPIC Created]\n    E --> F{CPIC Success?}\n    F -->|Yes| G[EIP Active]\n    F -->|No| H[CPIC Error]\n    H --> I[Redistribute]\n    I --> C\n    D --> B\n    G --> J[Monitor Status]\n    J --> K{Health Check}\n    K -->|Healthy| J\n    K -->|Unhealthy| I\n```\n",
+            "mode": "markdown"
+          }
+        }
+      ]
+    }
+

@@ -11,6 +11,7 @@ IMAGE_TAG="latest"
 NAMESPACE="eip-monitoring"
 REGISTRY=""  # Set this to your container registry
 
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -66,6 +67,9 @@ Examples:
   $0 all -r quay.io/myorg
   $0 test
   $0 clean
+
+Note: To deploy Grafana dashboards, use the separate script:
+  ./scripts/deploy-grafana.sh
 
 EOF
 }
@@ -421,15 +425,12 @@ enable_user_workload_alertmanager() {
     log_info "AlertManager pods will start shortly (may take a few minutes)"
 }
 
+
 # Deploy to OpenShift
 deploy() {
     # Disable colors for deployment to avoid any command parsing issues
     local old_colors=("$RED" "$GREEN" "$YELLOW" "$BLUE" "$NC")
     RED="" GREEN="" YELLOW="" BLUE="" NC=""
-    
-    log_info "Deploying EIP Monitor to OpenShift..."
-    
-    check_env_vars
     
     # Check OpenShift connectivity
     if ! oc whoami &>/dev/null; then
@@ -438,6 +439,11 @@ deploy() {
     fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
+    
+    # Normal EIP Monitor deployment
+    log_info "Deploying EIP Monitor to OpenShift..."
+    
+    check_env_vars
     
     # Check and enable User Workload Monitoring if needed
     enable_user_workload_monitoring

@@ -1,0 +1,28 @@
+---
+# Service Account for Grafana to access Thanos Querier
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-prometheus
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+
+---
+# ClusterRoleBinding to grant cluster-monitoring-view permissions
+# This allows Grafana to query Thanos Querier for cluster-scoped metrics
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-prometheus-eip-monitoring
+  labels:
+    app: eip-monitor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+  - kind: ServiceAccount
+    name: grafana-prometheus
+    namespace: eip-monitoring
+

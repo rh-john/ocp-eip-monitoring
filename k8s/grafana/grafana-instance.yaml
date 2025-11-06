@@ -1,0 +1,36 @@
+---
+# Grafana Instance for EIP Monitoring
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: eip-monitoring-grafana
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  config:
+    auth:
+      disable_login_form: "false"
+    security:
+      admin_user: "admin"
+      admin_password: "admin"
+    server:
+      root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+  deployment:
+    replicas: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  service:
+    type: ClusterIP
+  client:
+    preferService: true
+  route:
+    spec:
+      tls:
+        termination: edge
+
