@@ -188,10 +188,55 @@ spec:
           }
         },
         {
+          "id": 9,
+          "title": "Primary vs Secondary EIP Distribution",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+          "targets": [
+            {
+              "expr": "sum by (node) (node_eip_primary_total)",
+              "legendFormat": "Primary - {{node}}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (node) (node_eip_secondary_total)",
+              "legendFormat": "Secondary - {{node}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 50,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "pointSize": 5
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
           "id": 5,
           "title": "EIP Distribution Variance",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 18},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 26},
           "targets": [
             {
               "expr": "eip_distribution_stddev",
@@ -231,7 +276,7 @@ spec:
           "id": 6,
           "title": "Top 10 Nodes by EIP Count",
           "type": "bargauge",
-          "gridPos": {"h": 6, "w": 6, "x": 18, "y": 18},
+          "gridPos": {"h": 6, "w": 6, "x": 6, "y": 26},
           "targets": [
             {
               "expr": "topk(10, node_eip_assigned_total)",

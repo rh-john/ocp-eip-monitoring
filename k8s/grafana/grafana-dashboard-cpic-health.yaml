@@ -201,10 +201,64 @@ spec:
           }
         },
         {
+          "id": 9,
+          "title": "EIP-CPIC Mismatch Analysis",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+          "targets": [
+            {
+              "expr": "eip_cpic_mismatches_total",
+              "legendFormat": "Total Mismatches",
+              "refId": "A"
+            },
+            {
+              "expr": "eip_cpic_mismatches_node_mismatch",
+              "legendFormat": "Node Mismatches",
+              "refId": "B"
+            },
+            {
+              "expr": "eip_cpic_mismatches_missing_in_eip",
+              "legendFormat": "Missing in EIP",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 30,
+                "pointSize": 5
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 5, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
           "id": 6,
           "title": "CPIC Status by Node (Stacked)",
           "type": "timeseries",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 26},
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 26},
           "targets": [
             {
               "expr": "sum by (node) (node_cpic_success_total)",
@@ -290,10 +344,49 @@ spec:
           }
         },
         {
+          "id": 10,
+          "title": "Mismatch Rate Gauge",
+          "type": "gauge",
+          "gridPos": {"h": 6, "w": 6, "x": 6, "y": 36},
+          "targets": [
+            {
+              "expr": "(eip_cpic_mismatches_total / eips_configured_total) * 100",
+              "legendFormat": "Mismatch Rate %",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "min": 0,
+              "max": 100,
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 5, "color": "orange"},
+                  {"value": 10, "color": "red"}
+                ]
+              }
+            }
+          },
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
+          }
+        },
+        {
           "id": 8,
           "title": "CPIC Status Summary Table",
           "type": "table",
-          "gridPos": {"h": 6, "w": 18, "x": 6, "y": 36},
+          "gridPos": {"h": 6, "w": 12, "x": 12, "y": 36},
           "targets": [
             {
               "expr": "cpic_success_total",

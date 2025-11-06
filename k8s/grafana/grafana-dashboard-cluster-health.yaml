@@ -363,10 +363,108 @@ spec:
           }
         },
         {
+          "id": 13,
+          "title": "Health Status Metrics",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 20},
+          "targets": [
+            {
+              "expr": "malfunctioning_eip_objects_count",
+              "legendFormat": "Malfunctioning Resources",
+              "refId": "A"
+            },
+            {
+              "expr": "critical_eip_objects_count",
+              "legendFormat": "Critical Resources",
+              "refId": "B"
+            },
+            {
+              "expr": "overcommitted_eip_objects_count",
+              "legendFormat": "Overcommitted IPs",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 5, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "graphMode": "area",
+            "colorMode": "value"
+          }
+        },
+        {
+          "id": 14,
+          "title": "EIP-CPIC Mismatches",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 6, "y": 20},
+          "targets": [
+            {
+              "expr": "eip_cpic_mismatches_total",
+              "legendFormat": "Total Mismatches",
+              "refId": "A"
+            },
+            {
+              "expr": "eip_cpic_mismatches_node_mismatch",
+              "legendFormat": "Node Mismatches",
+              "refId": "B"
+            },
+            {
+              "expr": "eip_cpic_mismatches_missing_in_eip",
+              "legendFormat": "Missing in EIP",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 30,
+                "pointSize": 5
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 5, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
           "id": 12,
           "title": "Multi-Stat Health Overview (Polystat)",
           "type": "grafana-polystat-panel",
-          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 20},
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 28},
           "targets": [
             {
               "expr": "cluster_eip_health_score",
@@ -423,7 +521,7 @@ spec:
           "id": 10,
           "title": "Cluster Health Heatmap",
           "type": "heatmap",
-          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 20},
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 28},
           "targets": [
             {
               "expr": "cluster_eip_health_score",
@@ -454,7 +552,7 @@ spec:
           "id": 11,
           "title": "Health Metrics Table",
           "type": "table",
-          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 30},
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 38},
           "targets": [
             {
               "expr": "cluster_eip_health_score",
@@ -485,6 +583,24 @@ spec:
               "format": "table",
               "instant": true,
               "refId": "E"
+            },
+            {
+              "expr": "malfunctioning_eip_objects_count",
+              "format": "table",
+              "instant": true,
+              "refId": "F"
+            },
+            {
+              "expr": "critical_eip_objects_count",
+              "format": "table",
+              "instant": true,
+              "refId": "G"
+            },
+            {
+              "expr": "eip_cpic_mismatches_total",
+              "format": "table",
+              "instant": true,
+              "refId": "H"
             }
           ],
           "fieldConfig": {

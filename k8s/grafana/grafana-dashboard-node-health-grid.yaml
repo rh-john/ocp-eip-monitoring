@@ -36,25 +36,39 @@ spec:
               "refId": "A"
             },
             {
-              "expr": "sum by (node) (cpic_success_total)",
+              "expr": "node_eip_primary_total",
               "format": "table",
               "instant": true,
-              "legendFormat": "Success - {{node}}",
+              "legendFormat": "Primary - {{node}}",
               "refId": "B"
             },
             {
-              "expr": "sum by (node) (cpic_error_total)",
+              "expr": "node_eip_secondary_total",
               "format": "table",
               "instant": true,
-              "legendFormat": "Error - {{node}}",
+              "legendFormat": "Secondary - {{node}}",
               "refId": "C"
             },
             {
-              "expr": "sum by (node) (cpic_pending_total)",
+              "expr": "sum by (node) (node_cpic_success_total)",
               "format": "table",
               "instant": true,
-              "legendFormat": "Pending - {{node}}",
+              "legendFormat": "CPIC Success - {{node}}",
               "refId": "D"
+            },
+            {
+              "expr": "sum by (node) (node_cpic_error_total)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "CPIC Error - {{node}}",
+              "refId": "E"
+            },
+            {
+              "expr": "sum by (node) (node_cpic_pending_total)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "CPIC Pending - {{node}}",
+              "refId": "F"
             }
           ],
           "fieldConfig": {
@@ -147,9 +161,11 @@ spec:
                 "indexByName": {},
                 "renameByName": {
                   "Value #A": "EIPs Assigned",
-                  "Value #B": "CPIC Success",
-                  "Value #C": "CPIC Errors",
-                  "Value #D": "CPIC Pending"
+                  "Value #B": "Primary EIPs",
+                  "Value #C": "Secondary EIPs",
+                  "Value #D": "CPIC Success",
+                  "Value #E": "CPIC Errors",
+                  "Value #F": "CPIC Pending"
                 }
               }
             }
