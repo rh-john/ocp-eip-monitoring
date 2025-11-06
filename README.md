@@ -253,8 +253,7 @@ ocp-eip-monitoring/
 │   └── servicemonitor.yaml        # Prometheus configuration
 ├── scripts/                       # Operational scripts
 │   ├── build-and-deploy.sh        # Build and deployment
-│   ├── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
-│   └── discover-eip-ranges.sh     # IP range discovery
+│   └── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
 └── docs/                          # Documentation
     ├── CONTAINER_DEPLOYMENT.md    # Deployment guide
     └── ENHANCED_METRICS_GUIDE.md  # Metrics reference

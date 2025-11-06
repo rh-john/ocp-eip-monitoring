@@ -39,7 +39,6 @@ The containerized EIP monitor provides:
 | `build-and-deploy.sh` | Build, push, and deployment script |
 | `test-deployment.sh` | Deployment validation and health check script |
 | `deploy-test-eips.sh` | Automated test EgressIP creation for monitoring validation |
-| `discover-eip-ranges.sh` | Dynamic EgressIP range discovery from cluster configuration |
 
 ## Quick Start
 
@@ -510,7 +509,7 @@ The `deploy-test-eips.sh` script automatically:
 ./scripts/deploy-test-eips.sh cleanup
 
 # Show available EgressIP ranges (discovery only)
-./scripts/discover-eip-ranges.sh
+./scripts/deploy-test-eips.sh discover
 
 # Show help and usage information
 ./scripts/deploy-test-eips.sh help
