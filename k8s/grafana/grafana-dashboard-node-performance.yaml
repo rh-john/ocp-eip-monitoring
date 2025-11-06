@@ -225,12 +225,12 @@ spec:
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 26},
           "targets": [
             {
-              "expr": "rate(node_eip_assigned_total[5m])",
+              "expr": "node_eip_assigned_total",
               "legendFormat": "{{node}} - Assignment Rate",
               "refId": "A"
             },
             {
-              "expr": "rate(node_cpic_error_total[5m])",
+              "expr": "node_cpic_error_total",
               "legendFormat": "{{node}} - Error Rate",
               "refId": "B"
             }

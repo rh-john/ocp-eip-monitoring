@@ -14,7 +14,7 @@ spec:
   json: |
     {
       "id": null,
-      "title": "EIP State Visualization (Discrete Panel)",
+      "title": "EIP State Visualization",
       "tags": ["eip", "state", "discrete", "status"],
       "style": "dark",
       "timezone": "browser",
@@ -25,7 +25,7 @@ spec:
         {
           "id": 1,
           "title": "EIP Assignment States Over Time",
-          "type": "discrete",
+          "type": "state-timeline",
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
           "targets": [
             {
@@ -39,8 +39,8 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "eips_pending_total",
-              "legendFormat": "Pending",
+              "expr": "cpic_pending_total",
+              "legendFormat": "CPIC Pending",
               "refId": "C"
             }
           ],
@@ -60,14 +60,19 @@ spec:
             }
           },
           "options": {
+            "mergeValues": true,
             "rowHeight": 0.9,
-            "showValues": "never"
+            "showValues": "never",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
           }
         },
         {
           "id": 2,
           "title": "CPIC Status States by Node",
-          "type": "discrete",
+          "type": "state-timeline",
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
           "targets": [
             {
@@ -98,6 +103,15 @@ spec:
                 ]
               }
             }
+          },
+          "options": {
+            "mergeValues": true,
+            "rowHeight": 0.9,
+            "showValues": "never",
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            }
           }
         },
         {
@@ -117,8 +131,8 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "eips_pending_total",
-              "legendFormat": "Pending",
+              "expr": "cpic_pending_total",
+              "legendFormat": "CPIC Pending",
               "refId": "C"
             }
           ],

@@ -59,17 +59,17 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
           "targets": [
             {
-              "expr": "rate(cpic_success_total[5m])",
+              "expr": "cpic_success_total",
               "legendFormat": "Success Rate",
               "refId": "A"
             },
             {
-              "expr": "rate(cpic_error_total[5m])",
+              "expr": "cpic_error_total",
               "legendFormat": "Error Rate",
               "refId": "B"
             },
             {
-              "expr": "rate(cpic_pending_total[5m])",
+              "expr": "cpic_pending_total",
               "legendFormat": "Pending Rate",
               "refId": "C"
             }
@@ -152,7 +152,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
           "targets": [
             {
-              "expr": "rate(node_cpic_error_total[5m])",
+              "expr": "node_cpic_error_total",
               "format": "heatmap",
               "legendFormat": "{{node}}",
               "refId": "A"
@@ -181,7 +181,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
           "targets": [
             {
-              "expr": "rate(cpic_recoveries_last_hour[5m])",
+              "expr": "cpic_recoveries_last_hour",
               "legendFormat": "Recoveries/min",
               "refId": "A"
             }

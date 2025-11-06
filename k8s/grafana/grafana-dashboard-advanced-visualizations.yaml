@@ -1,0 +1,314 @@
+---
+# Advanced Visualizations Dashboard (New Plugins)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-advanced-visualizations
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "EIP Advanced Visualizations",
+      "tags": ["eip", "advanced", "visualizations", "plugins"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "title": "EIP Assignment Flow (Funnel)",
+          "type": "mckn-funnel-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "eips_configured_total",
+              "legendFormat": "Configured",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "eips_assigned_total",
+              "legendFormat": "Assigned",
+              "refId": "B",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "cpic_success_total",
+              "legendFormat": "CPIC Success",
+              "refId": "C",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "cpic_success_total",
+              "legendFormat": "Active (CPIC Success)",
+              "refId": "D",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "orientation": "vertical",
+            "showValues": true,
+            "showPercentages": true,
+            "colorMode": "value"
+          }
+        },
+        {
+          "id": 2,
+          "title": "Node Health Multi-Stat (Polystat)",
+          "type": "grafana-polystat-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 0},
+          "targets": [
+            {
+              "expr": "sum by (node) (node_eip_assigned_total)",
+              "legendFormat": "{{node}} - Assigned",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (node) (node_cpic_success_total)",
+              "legendFormat": "{{node}} - CPIC Success",
+              "refId": "B"
+            },
+            {
+              "expr": "sum by (node) (node_cpic_error_total)",
+              "legendFormat": "{{node}} - CPIC Errors",
+              "refId": "C"
+            },
+            {
+              "expr": "node_eip_utilization_percent",
+              "legendFormat": "{{node}} - Utilization %",
+              "refId": "D"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 10, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "globalShape": "hexagon",
+            "displayMode": "all",
+            "valueName": "last",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "red"},
+                {"value": 1, "color": "yellow"},
+                {"value": 10, "color": "green"}
+              ]
+            }
+          }
+        },
+        {
+          "id": 3,
+          "title": "EIP Distribution Mosaic Heatmap",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 10},
+          "targets": [
+            {
+              "expr": "sum by (node) (node_eip_assigned_total)",
+              "legendFormat": "{{node}}",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "colorScheme": "Spectral",
+            "cellSize": 15,
+            "showLegend": true,
+            "showValues": true,
+            "xAxis": {
+              "show": true
+            },
+            "yAxis": {
+              "show": true
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "EIP Distribution Bubble Chart",
+          "type": "digrich-bubblechart-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 10},
+          "targets": [
+            {
+              "expr": "node_eip_assigned_total",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            },
+            {
+              "expr": "node_eip_utilization_percent",
+              "legendFormat": "{{node}} - Utilization",
+              "refId": "B"
+            },
+            {
+              "expr": "node_cpic_success_total",
+              "legendFormat": "{{node}} - Success",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "xAxisField": "Value",
+            "yAxisField": "Value",
+            "sizeField": "Value",
+            "colorField": "Value",
+            "groupBy": "node",
+            "showLegend": true,
+            "minBubbleSize": 10,
+            "maxBubbleSize": 50
+          }
+        },
+        {
+          "id": 5,
+          "title": "CPIC Status Funnel",
+          "type": "mckn-funnel-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {
+              "expr": "cpic_success_total + cpic_pending_total + cpic_error_total",
+              "legendFormat": "Total CPICs",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "cpic_success_total",
+              "legendFormat": "Success",
+              "refId": "B",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "cpic_pending_total",
+              "legendFormat": "Pending",
+              "refId": "C",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "cpic_error_total",
+              "legendFormat": "Errors",
+              "refId": "D",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 10, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "orientation": "vertical",
+            "showValues": true,
+            "showPercentages": true,
+            "colorMode": "threshold"
+          }
+        },
+        {
+          "id": 6,
+          "title": "Node Performance Mosaic",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 20},
+          "targets": [
+            {
+              "expr": "node_eip_utilization_percent",
+              "legendFormat": "{{node}}",
+              "refId": "A",
+              "format": "time_series"
+            },
+            {
+              "expr": "(node_cpic_success_total / (node_cpic_success_total + node_cpic_pending_total + node_cpic_error_total)) * 100",
+              "legendFormat": "{{node}} - Success Rate %",
+              "refId": "B",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "percent"
+            }
+          },
+          "options": {
+            "colorScheme": "RdYlGn",
+            "cellSize": 12,
+            "showLegend": true,
+            "showValues": false,
+            "xAxis": {
+              "show": true
+            },
+            "yAxis": {
+              "show": true
+            }
+          }
+        }
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {
+        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+      }
+    }
+

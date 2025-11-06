@@ -29,7 +29,7 @@ spec:
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "rate(eip_assignment_rate_per_minute[5m])",
+              "expr": "eip_assignment_rate_per_minute",
               "format": "heatmap",
               "refId": "A"
             }
@@ -57,12 +57,12 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
           "targets": [
             {
-              "expr": "rate(eip_assignment_rate_per_minute[5m])",
+              "expr": "eip_assignment_rate_per_minute",
               "legendFormat": "Assignment Rate",
               "refId": "A"
             },
             {
-              "expr": "rate(eip_unassignment_rate_per_minute[5m])",
+              "expr": "eip_unassignment_rate_per_minute",
               "legendFormat": "Unassignment Rate",
               "refId": "B"
             }
@@ -224,7 +224,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 28},
           "targets": [
             {
-              "expr": "rate(eip_assignment_rate_per_minute[5m])",
+              "expr": "eip_assignment_rate_per_minute",
               "legendFormat": "Assignments/min",
               "refId": "A"
             }

@@ -31,10 +31,12 @@ spec:
           containers:
             - name: grafana
               env:
-                # Install plugins via GF_INSTALL_PLUGINS environment variable
-                # Format: plugin1:version1,plugin2:version2,...
-                - name: GF_INSTALL_PLUGINS
-                  value: "jdbranham-diagram-panel:1.0.0,natel-discrete-panel:0.0.9,yesoreyeram-boomtable-panel:1.0.0,vonage-status-panel:1.0.7,agenty-flowcharting-panel:1.0.0,grafana-clock-panel:2.1.0,grafana-worldmap-panel:0.3.5"
+                # Install plugins via GF_PLUGINS_PREINSTALL_SYNC environment variable
+                # GF_INSTALL_PLUGINS is deprecated in Grafana 12+
+                # Format: plugin1,plugin2,... (without versions to get latest)
+                # Use GF_PLUGINS_PREINSTALL_SYNC to wait for installation (recommended)
+                - name: GF_PLUGINS_PREINSTALL_SYNC
+                  value: "jdbranham-diagram-panel,vonage-status-panel,grafana-clock-panel,boazreicher-mosaicplot-panel,grafana-polystat-panel,mckn-funnel-panel,digrich-bubblechart-panel"
   service:
     type: ClusterIP
   client:

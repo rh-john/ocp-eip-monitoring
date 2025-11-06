@@ -318,7 +318,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
           "targets": [
             {
-              "expr": "rate(cpic_error_total[5m])",
+              "expr": "cpic_error_total",
               "legendFormat": "CPIC Errors/min",
               "refId": "A"
             }
@@ -344,7 +344,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16},
           "targets": [
             {
-              "expr": "rate(cpic_recoveries_last_hour[5m])",
+              "expr": "cpic_recoveries_last_hour",
               "legendFormat": "Recoveries/min",
               "refId": "A"
             }
@@ -363,10 +363,67 @@ spec:
           }
         },
         {
+          "id": 12,
+          "title": "Multi-Stat Health Overview (Polystat)",
+          "type": "grafana-polystat-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {
+              "expr": "cluster_eip_health_score",
+              "legendFormat": "Health Score",
+              "refId": "A"
+            },
+            {
+              "expr": "cluster_eip_stability_score",
+              "legendFormat": "Stability Score",
+              "refId": "B"
+            },
+            {
+              "expr": "eip_utilization_percent",
+              "legendFormat": "Utilization %",
+              "refId": "C"
+            },
+            {
+              "expr": "(cpic_success_total / (cpic_success_total + cpic_pending_total + cpic_error_total)) * 100",
+              "legendFormat": "CPIC Success Rate %",
+              "refId": "D"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"},
+                  {"value": 50, "color": "yellow"},
+                  {"value": 70, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "globalShape": "hexagon",
+            "displayMode": "all",
+            "valueName": "last",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "red"},
+                {"value": 50, "color": "yellow"},
+                {"value": 70, "color": "green"}
+              ]
+            }
+          }
+        },
+        {
           "id": 10,
           "title": "Cluster Health Heatmap",
           "type": "heatmap",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 20},
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 20},
           "targets": [
             {
               "expr": "cluster_eip_health_score",

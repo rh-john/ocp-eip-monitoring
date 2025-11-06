@@ -254,13 +254,12 @@ spec:
         },
         {
           "id": 7,
-          "title": "EIP Assignment Rate Heatmap",
-          "type": "heatmap",
+          "title": "EIP Assignment Rate Heatmap (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
           "gridPos": {"h": 10, "w": 12, "x": 0, "y": 26},
           "targets": [
             {
-              "expr": "rate(eip_assignment_rate_per_minute[5m])",
-              "format": "heatmap",
+              "expr": "eip_assignment_rate_per_minute",
               "refId": "A"
             }
           ],
@@ -273,18 +272,50 @@ spec:
             }
           },
           "options": {
-            "calculate": true,
-            "color": {
-              "scheme": "Oranges",
-              "steps": 64
+            "colorScheme": "Oranges",
+            "cellSize": 10,
+            "showLegend": true
+          }
+        },
+        {
+          "id": 10,
+          "title": "EIP Distribution by Node (Bubble Chart)",
+          "type": "digrich-bubblechart-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 36},
+          "targets": [
+            {
+              "expr": "node_eip_assigned_total",
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            },
+            {
+              "expr": "node_eip_utilization_percent",
+              "legendFormat": "{{node}} - Utilization",
+              "refId": "B"
             }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "xAxisField": "Value",
+            "yAxisField": "Value",
+            "sizeField": "Value",
+            "colorField": "Value",
+            "groupBy": "node",
+            "showLegend": true
           }
         },
         {
           "id": 8,
           "title": "Node EIP Distribution Table",
           "type": "table",
-          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 26},
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 36},
           "targets": [
             {
               "expr": "node_eip_assigned_total",

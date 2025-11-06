@@ -39,7 +39,7 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "eips_pending_total",
+              "expr": "cpic_pending_total",
               "legendFormat": "Pending",
               "refId": "C"
             }
@@ -156,12 +156,12 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
           "targets": [
             {
-              "expr": "rate(eips_assigned_total[5m])",
+              "expr": "eips_assigned_total",
               "legendFormat": "Assignment Rate",
               "refId": "A"
             },
             {
-              "expr": "rate(eips_unassigned_total[5m])",
+              "expr": "eips_unassigned_total",
               "legendFormat": "Unassignment Rate",
               "refId": "B"
             }
@@ -189,7 +189,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
           "targets": [
             {
-              "expr": "rate(eips_assigned_total[1m])",
+              "expr": "eips_assigned_total",
               "legendFormat": "Assignments",
               "refId": "A"
             }
