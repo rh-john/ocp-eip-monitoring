@@ -22,14 +22,9 @@ spec:
   - Egress
   ingress:
   # Allow COO Prometheus in same namespace (Cluster Observability Operator)
-  # Uses podSelector + namespaceSelector together per OpenShift best practices
+  # Empty podSelector matches all pods in the same namespace (required for COO)
   - from:
-    - podSelector:
-        matchLabels:
-          app.kubernetes.io/name: prometheus
-      namespaceSelector:
-        matchLabels:
-          name: eip-monitoring
+    - podSelector: {}  # Allow all pods in same namespace (eip-monitoring)
     ports:
     - protocol: TCP
       port: 8080
