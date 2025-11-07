@@ -2,6 +2,3 @@ __pycache__/
 
 # Build hash files (used for change detection)
 .build-hash*
-
-# Build and deploy script (not used in coo branch)
-scripts/build-and-deploy.sh
