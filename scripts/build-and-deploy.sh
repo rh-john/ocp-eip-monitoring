@@ -1619,7 +1619,8 @@ cleanup_all() {
     
     if oc get namespace "$NAMESPACE" &>/dev/null; then
         # Check if namespace is empty (only finalizers remaining)
-        local remaining_resources=$(oc get all -n "$NAMESPACE" 2>/dev/null | grep -v "No resources found" | wc -l || echo "0")
+        local remaining_resources=$(oc get all -n "$NAMESPACE" 2>/dev/null | grep -v "No resources found" | wc -l | tr -d '\n' || echo "0")
+        remaining_resources=${remaining_resources//[[:space:]]/}  # Strip all whitespace
         
         if [[ "$remaining_resources" -gt 0 ]]; then
             log_info "Remaining resources in namespace, deleting namespace..."
