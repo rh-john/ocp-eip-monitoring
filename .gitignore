@@ -1,0 +1,4 @@
+__pycache__/
+
+# Build hash files (used for change detection)
+.build-hash-*
