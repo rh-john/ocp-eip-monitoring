@@ -877,6 +877,77 @@ deploy() {
     log_info "Applying Kubernetes manifests from k8s/deployment/..."
     oc apply -f "$manifest_file"
     
+    # Add monitoring method labels to resources
+    # Only add labels if monitoring type is explicitly set or detected
+    # Use app=eip-monitor-coo or app=eip-monitor-uwm format (matches ServiceMonitor selectors)
+    local monitoring_type_to_use=""
+    if [[ -n "$MONITORING_TYPE" ]] && [[ "$MONITORING_TYPE" == "coo" || "$MONITORING_TYPE" == "uwm" ]]; then
+        # Use explicitly set monitoring type
+        monitoring_type_to_use="$MONITORING_TYPE"
+    else
+        # Try to detect current monitoring type
+        local detected_type=$(detect_current_monitoring_type)
+        if [[ "$detected_type" != "none" ]]; then
+            monitoring_type_to_use="$detected_type"
+        fi
+    fi
+    
+    # Only add labels if monitoring type is determined
+    if [[ -n "$monitoring_type_to_use" ]]; then
+        log_info "Adding monitoring labels (type: $monitoring_type_to_use) to eip-monitor resources..."
+        
+        # Use app=eip-monitor-{coo|uwm} format to match ServiceMonitor selectors
+        local app_label="app=eip-monitor-$monitoring_type_to_use"
+        
+        # Update Deployment: change app label and add monitoring label
+        # This requires updating both metadata labels and pod template labels
+        oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p "[
+            {\"op\": \"replace\", \"path\": \"/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
+            {\"op\": \"add\", \"path\": \"/metadata/labels/monitoring\", \"value\": \"true\"},
+            {\"op\": \"replace\", \"path\": \"/spec/selector/matchLabels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
+            {\"op\": \"replace\", \"path\": \"/spec/template/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
+            {\"op\": \"add\", \"path\": \"/spec/template/metadata/labels/monitoring\", \"value\": \"true\"}
+        ]" &>/dev/null || {
+            # Fallback: use oc label and patch separately
+            log_info "Using fallback method to update labels..."
+            # Remove old app label and add new one
+            oc label deployment eip-monitor -n "$NAMESPACE" app- --overwrite &>/dev/null || true
+            oc label deployment eip-monitor -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
+            # Update selector and pod template via patch
+            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p "[
+                {\"op\": \"replace\", \"path\": \"/spec/selector/matchLabels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
+                {\"op\": \"replace\", \"path\": \"/spec/template/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"}
+            ]" &>/dev/null || true
+        }
+        
+        # Update Service: change app label and add monitoring label
+        oc patch service eip-monitor -n "$NAMESPACE" --type json -p "[
+            {\"op\": \"replace\", \"path\": \"/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
+            {\"op\": \"add\", \"path\": \"/metadata/labels/monitoring\", \"value\": \"true\"},
+            {\"op\": \"replace\", \"path\": \"/spec/selector/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"}
+        ]" &>/dev/null || {
+            # Fallback: use oc label
+            oc label service eip-monitor -n "$NAMESPACE" app- --overwrite &>/dev/null || true
+            oc label service eip-monitor -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
+            # Update service selector separately
+            oc patch service eip-monitor -n "$NAMESPACE" --type merge -p "{\"spec\":{\"selector\":{\"app\":\"eip-monitor-$monitoring_type_to_use\"}}}" &>/dev/null || true
+        }
+        
+        # Add labels to ServiceAccount (keep app label for consistency)
+        oc label serviceaccount eip-monitor -n "$NAMESPACE" app- --overwrite &>/dev/null || true
+        oc label serviceaccount eip-monitor -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
+        
+        # Add labels to ConfigMap (keep app label for consistency)
+        oc label configmap eip-monitor-config -n "$NAMESPACE" app- --overwrite &>/dev/null || true
+        oc label configmap eip-monitor-config -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
+        
+        log_success "Updated app label to $app_label and added monitoring=true to eip-monitor resources"
+        log_info "Note: This will trigger a pod restart to apply new labels"
+    else
+        log_info "No monitoring type detected or specified, skipping label updates"
+        log_info "Resources will use default app=eip-monitor label"
+    fi
+    
     # Update log level in ConfigMap if specified
     if [[ -n "$LOG_LEVEL" ]]; then
         log_info "Setting log level to: $LOG_LEVEL"
