@@ -30,7 +30,7 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "api_response_time_seconds",
+              "expr": "sum(api_response_time_seconds)",
               "legendFormat": "{{operation}}",
               "refId": "A",
               "format": "time_series"
@@ -66,7 +66,7 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 12, "y": 0},
           "targets": [
             {
-              "expr": "api_success_rate_percent",
+              "expr": "sum(api_success_rate_percent)",
               "legendFormat": "{{operation}}",
               "refId": "A",
               "format": "time_series"
@@ -145,7 +145,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
           "targets": [
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "CPIC Errors",
               "refId": "A"
             },
@@ -155,7 +155,7 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "eip_nodes_with_errors_total",
+              "expr": "sum(eip_nodes_with_errors_total)",
               "legendFormat": "Nodes with Errors",
               "refId": "C"
             }
@@ -189,7 +189,7 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 0, "y": 18},
           "targets": [
             {
-              "expr": "cpic_error_duration_seconds",
+              "expr": "sum(cpic_error_duration_seconds)",
               "legendFormat": "{{resource_name}}",
               "refId": "A",
               "format": "time_series"
@@ -225,7 +225,7 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 12, "y": 18},
           "targets": [
             {
-              "expr": "cpic_pending_duration_seconds",
+              "expr": "sum(cpic_pending_duration_seconds)",
               "legendFormat": "{{resource_name}}",
               "refId": "A",
               "format": "time_series"
@@ -261,17 +261,17 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
           "targets": [
             {
-              "expr": "cpic_recoveries_last_hour / (cpic_error_total + 1)",
+              "expr": "cpic_recoveries_last_hour / (sum(cpic_error_total) + 1)",
               "legendFormat": "Recovery Efficiency",
               "refId": "A"
             },
             {
-              "expr": "cpic_recoveries_last_hour",
+              "expr": "sum(cpic_recoveries_last_hour)",
               "legendFormat": "Recoveries",
               "refId": "B"
             },
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "Current Errors",
               "refId": "C"
             }
@@ -356,13 +356,13 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
           "targets": [
             {
-              "expr": "eip_changes_last_hour",
+              "expr": "sum(eip_changes_last_hour)",
               "legendFormat": "EIP Changes",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "legendFormat": "Health Score",
               "refId": "B",
               "format": "time_series"
@@ -396,17 +396,17 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
           "targets": [
             {
-              "expr": "(cluster_eip_health_score + cluster_eip_stability_score) / 2",
+              "expr": "(sum(cluster_eip_health_score) + sum(cluster_eip_stability_score)) / 2",
               "legendFormat": "Composite Health",
               "refId": "A"
             },
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "legendFormat": "Health Score",
               "refId": "B"
             },
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "legendFormat": "Stability Score",
               "refId": "C"
             }
@@ -452,7 +452,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 44},
           "targets": [
             {
-              "expr": "eip_scrape_duration_seconds",
+              "expr": "sum(eip_scrape_duration_seconds)",
               "legendFormat": "Duration",
               "refId": "A",
               "instant": true
@@ -486,7 +486,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 6, "y": 44},
           "targets": [
             {
-              "expr": "eip_scrape_errors_total",
+              "expr": "sum(eip_scrape_errors_total)",
               "legendFormat": "Errors",
               "refId": "A",
               "instant": true
@@ -554,7 +554,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 44},
           "targets": [
             {
-              "expr": "eip_scrape_errors_total == 0",
+              "expr": "sum(eip_scrape_errors_total) == 0",
               "legendFormat": "Healthy",
               "refId": "A",
               "instant": true

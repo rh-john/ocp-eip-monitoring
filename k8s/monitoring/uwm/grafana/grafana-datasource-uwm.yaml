@@ -8,6 +8,8 @@ metadata:
   namespace: eip-monitoring
   labels:
     app: eip-monitor
+    monitoring: uwm
+    uwm: eip-monitoring
 spec:
   name: Prometheus
   datasource:

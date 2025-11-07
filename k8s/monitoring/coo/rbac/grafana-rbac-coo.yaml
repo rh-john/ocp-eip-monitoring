@@ -1,0 +1,53 @@
+---
+# Service Account for Grafana to access COO Prometheus
+# COO Prometheus is namespace-scoped, so we may not need cluster-level RBAC
+# This is kept for consistency and potential future needs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-prometheus-coo
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    coo: eip-monitoring
+
+---
+# RoleBinding for Grafana to access COO Prometheus (namespace-scoped)
+# COO Prometheus is in the same namespace, so namespace-scoped permissions are sufficient
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: grafana-prometheus-coo
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: grafana-prometheus-coo
+subjects:
+  - kind: ServiceAccount
+    name: grafana-prometheus-coo
+    namespace: eip-monitoring
+
+---
+# Role for Grafana to access Prometheus service endpoints
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: grafana-prometheus-coo
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list"]
+  - apiGroups: ["monitoring.rhobs"]
+    resources: ["monitoringstacks"]
+    verbs: ["get", "list"]
+

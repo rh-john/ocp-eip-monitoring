@@ -16,7 +16,13 @@ spec:
     {
       "id": null,
       "title": "EIP Operations & Analytics",
-      "tags": ["eip", "operations", "analytics", "mosaic", "advanced"],
+      "tags": [
+        "eip",
+        "operations",
+        "analytics",
+        "mosaic",
+        "advanced"
+      ],
       "style": "dark",
       "timezone": "browser",
       "refresh": "30s",
@@ -27,7 +33,12 @@ spec:
           "id": 1,
           "title": "Current Time",
           "type": "grafana-clock-panel",
-          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 0
+          },
           "options": {
             "mode": "time",
             "timezone": "browser",
@@ -39,10 +50,15 @@ spec:
           "id": 2,
           "title": "Cluster Health Status",
           "type": "vonage-status-panel",
-          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 0
+          },
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "refId": "A",
               "instant": true
             }
@@ -52,10 +68,26 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "red", "text": "Critical"},
-                  {"value": 50, "color": "orange", "text": "Poor"},
-                  {"value": 70, "color": "yellow", "text": "Fair"},
-                  {"value": 90, "color": "green", "text": "Good"}
+                  {
+                    "value": null,
+                    "color": "red",
+                    "text": "Critical"
+                  },
+                  {
+                    "value": 50,
+                    "color": "orange",
+                    "text": "Poor"
+                  },
+                  {
+                    "value": 70,
+                    "color": "yellow",
+                    "text": "Fair"
+                  },
+                  {
+                    "value": 90,
+                    "color": "green",
+                    "text": "Good"
+                  }
                 ]
               },
               "unit": "short"
@@ -70,10 +102,15 @@ spec:
           "id": 3,
           "title": "Stability Status",
           "type": "vonage-status-panel",
-          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 0
+          },
           "targets": [
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "refId": "A",
               "instant": true
             }
@@ -83,10 +120,22 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "red"},
-                  {"value": 50, "color": "orange"},
-                  {"value": 70, "color": "yellow"},
-                  {"value": 90, "color": "green"}
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 50,
+                    "color": "orange"
+                  },
+                  {
+                    "value": 70,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 90,
+                    "color": "green"
+                  }
                 ]
               },
               "unit": "short"
@@ -101,28 +150,33 @@ spec:
           "id": 4,
           "title": "Multi-Stat Operations Overview",
           "type": "grafana-polystat-panel",
-          "gridPos": {"h": 4, "w": 12, "x": 12, "y": 0},
+          "gridPos": {
+            "h": 4,
+            "w": 12,
+            "x": 12,
+            "y": 0
+          },
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
               "refId": "A",
               "instant": true
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
               "refId": "B",
               "instant": true
             },
             {
-              "expr": "eip_utilization_percent",
+              "expr": "sum(eip_utilization_percent)",
               "legendFormat": "Utilization %",
               "refId": "C",
               "instant": true
             },
             {
-              "expr": "cpic_success_total",
+              "expr": "sum(cpic_success_total)",
               "legendFormat": "CPIC Success",
               "refId": "D",
               "instant": true
@@ -136,9 +190,18 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "red"},
-                  {"value": 1, "color": "yellow"},
-                  {"value": 10, "color": "green"}
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 1,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 10,
+                    "color": "green"
+                  }
                 ]
               },
               "unit": "short"
@@ -154,10 +217,15 @@ spec:
           "id": 5,
           "title": "Node EIP Distribution Over Time (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 4},
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 4
+          },
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "legendFormat": "{{node}}",
               "refId": "A",
               "format": "time_series"
@@ -190,22 +258,27 @@ spec:
           "id": 6,
           "title": "CPIC Status Transitions Over Time (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 14},
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 14
+          },
           "targets": [
             {
-              "expr": "sum by (node) (node_cpic_success_total)",
+              "expr": "sum by (node) (sum(node_cpic_success_total))",
               "legendFormat": "{{node}} - Success",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "sum by (node) (node_cpic_pending_total)",
+              "expr": "sum by (node) (sum(node_cpic_pending_total))",
               "legendFormat": "{{node}} - Pending",
               "refId": "B",
               "format": "time_series"
             },
             {
-              "expr": "sum by (node) (node_cpic_error_total)",
+              "expr": "sum by (node) (sum(node_cpic_error_total))",
               "legendFormat": "{{node}} - Error",
               "refId": "C",
               "format": "time_series"
@@ -236,10 +309,15 @@ spec:
           "id": 7,
           "title": "API Performance Heatmap (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 14},
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 14
+          },
           "targets": [
             {
-              "expr": "api_response_time_seconds",
+              "expr": "sum(api_response_time_seconds)",
               "legendFormat": "{{operation}}",
               "refId": "A",
               "format": "time_series"
@@ -272,16 +350,21 @@ spec:
           "id": 8,
           "title": "Health Score Trends (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 24
+          },
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "legendFormat": "Health Score",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "legendFormat": "Stability Score",
               "refId": "B",
               "format": "time_series"
@@ -314,10 +397,15 @@ spec:
           "id": 9,
           "title": "Distribution Fairness Over Time (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 24
+          },
           "targets": [
             {
-              "expr": "eip_distribution_gini_coefficient",
+              "expr": "sum(eip_distribution_gini_coefficient)",
               "legendFormat": "Gini Coefficient",
               "refId": "A",
               "format": "time_series"
@@ -354,24 +442,29 @@ spec:
           "id": 10,
           "title": "EIP Capacity Flow (Funnel)",
           "type": "mckn-funnel-panel",
-          "gridPos": {"h": 8, "w": 8, "x": 0, "y": 32},
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 32
+          },
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
               "refId": "A",
               "instant": true,
               "format": "table"
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
               "refId": "B",
               "instant": true,
               "format": "table"
             },
             {
-              "expr": "cpic_success_total",
+              "expr": "sum(cpic_success_total)",
               "legendFormat": "Active (CPIC Success)",
               "refId": "C",
               "instant": true,
@@ -397,20 +490,25 @@ spec:
           "id": 11,
           "title": "Node Relationships (Bubble Chart)",
           "type": "digrich-bubblechart-panel",
-          "gridPos": {"h": 8, "w": 8, "x": 8, "y": 32},
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 32
+          },
           "targets": [
             {
-              "expr": "node_eip_assigned_total",
+              "expr": "sum(node_eip_assigned_total)",
               "legendFormat": "{{node}}",
               "refId": "A"
             },
             {
-              "expr": "node_eip_utilization_percent",
+              "expr": "sum(node_eip_utilization_percent)",
               "legendFormat": "{{node}} - Utilization",
               "refId": "B"
             },
             {
-              "expr": "node_cpic_success_total",
+              "expr": "sum(node_cpic_success_total)",
               "legendFormat": "{{node}} - CPIC Success",
               "refId": "C"
             }
@@ -438,22 +536,27 @@ spec:
           "id": 12,
           "title": "Node Performance Matrix (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 8, "w": 8, "x": 16, "y": 32},
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 32
+          },
           "targets": [
             {
-              "expr": "node_eip_utilization_percent",
+              "expr": "sum(node_eip_utilization_percent)",
               "legendFormat": "{{node}} - Utilization",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "(node_cpic_success_total / (node_cpic_success_total + node_cpic_pending_total + node_cpic_error_total)) * 100",
+              "expr": "(sum(sum(node_cpic_success_total)) / (node_cpic_success_total + sum(node_cpic_pending_total) + sum(node_cpic_error_total))) * 100",
               "legendFormat": "{{node}} - Success Rate %",
               "refId": "B",
               "format": "time_series"
             },
             {
-              "expr": "100 - node_eip_utilization_percent",
+              "expr": "100 - sum(node_eip_utilization_percent)",
               "legendFormat": "{{node}} - Headroom %",
               "refId": "C",
               "format": "time_series"
@@ -484,22 +587,27 @@ spec:
           "id": 13,
           "title": "Change Rate Analysis (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 40
+          },
           "targets": [
             {
-              "expr": "eip_assignment_rate_per_minute",
+              "expr": "sum(eip_assignment_rate_per_minute)",
               "legendFormat": "Assignment Rate",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "eip_unassignment_rate_per_minute",
+              "expr": "sum(eip_unassignment_rate_per_minute)",
               "legendFormat": "Unassignment Rate",
               "refId": "B",
               "format": "time_series"
             },
             {
-              "expr": "cpic_transitions_per_minute",
+              "expr": "sum(cpic_transitions_per_minute)",
               "legendFormat": "CPIC Transitions",
               "refId": "C",
               "format": "time_series"
@@ -532,16 +640,21 @@ spec:
           "id": 14,
           "title": "Error Duration Heatmap (Mosaic)",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 40
+          },
           "targets": [
             {
-              "expr": "cpic_pending_duration_seconds",
+              "expr": "sum(cpic_pending_duration_seconds)",
               "legendFormat": "{{resource_name}} - Pending",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "cpic_error_duration_seconds",
+              "expr": "sum(cpic_error_duration_seconds)",
               "legendFormat": "{{resource_name}} - Error",
               "refId": "B",
               "format": "time_series"
@@ -576,7 +689,16 @@ spec:
         "to": "now"
       },
       "timepicker": {
-        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+        "refresh_intervals": [
+          "10s",
+          "30s",
+          "1m",
+          "5m",
+          "15m",
+          "30m",
+          "1h",
+          "2h",
+          "1d"
+        ]
       }
     }
-

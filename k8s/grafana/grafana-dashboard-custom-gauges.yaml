@@ -29,9 +29,10 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "(eips_assigned_total / eips_configured_total) * 100",
+              "expr": "(sum(eips_assigned_total) / sum(eips_configured_total)) * 100",
               "legendFormat": "Utilization",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -72,9 +73,10 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
           "targets": [
             {
-              "expr": "(cpic_success_total / (cpic_success_total + cpic_error_total + cpic_pending_total)) * 100",
+              "expr": "(sum(cpic_success_total) / (sum(cpic_success_total) + sum(cpic_error_total) + sum(cpic_pending_total))) * 100",
               "legendFormat": "Success Rate",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -113,9 +115,10 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 16, "y": 0},
           "targets": [
             {
-              "expr": "100 - (stddev_over_time(node_eip_assigned_total[5m]) / avg_over_time(node_eip_assigned_total[5m])) * 100",
+              "expr": "100 - (stddev_over_time(sum(node_eip_assigned_total)[5m]) / avg_over_time(sum(node_eip_assigned_total)[5m])) * 100",
               "legendFormat": "Balance Score",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -154,9 +157,10 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 0, "y": 8},
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assignments/min",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -195,9 +199,10 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 8, "y": 8},
           "targets": [
             {
-              "expr": "(cpic_error_total / (cpic_success_total + cpic_error_total + cpic_pending_total)) * 100",
+              "expr": "(sum(cpic_error_total) / (sum(cpic_success_total) + sum(cpic_error_total) + sum(cpic_pending_total))) * 100",
               "legendFormat": "Error Rate",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -237,9 +242,10 @@ spec:
           "gridPos": {"h": 8, "w": 8, "x": 16, "y": 8},
           "targets": [
             {
-              "expr": "cpic_pending_total",
+              "expr": "sum(cpic_pending_total)",
               "legendFormat": "Pending",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -279,17 +285,17 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16},
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
               "refId": "A"
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
               "refId": "B"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
               "refId": "C"
             }

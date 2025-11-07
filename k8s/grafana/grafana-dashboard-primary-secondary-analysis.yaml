@@ -30,15 +30,17 @@ spec:
           "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "node_eip_primary_total",
+              "expr": "sum(node_eip_primary_total)",
               "legendFormat": "Primary - {{node}}",
               "refId": "A",
+              "instant": true,
               "format": "time_series"
             },
             {
-              "expr": "node_eip_secondary_total",
+              "expr": "sum(node_eip_secondary_total)",
               "legendFormat": "Secondary - {{node}}",
               "refId": "B",
+              "instant": true,
               "format": "time_series"
             }
           ],
@@ -73,9 +75,10 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
           "targets": [
             {
-              "expr": "node_eip_primary_total",
+              "expr": "sum(node_eip_primary_total)",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -113,9 +116,10 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
           "targets": [
             {
-              "expr": "node_eip_secondary_total",
+              "expr": "sum(node_eip_secondary_total)",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -155,7 +159,8 @@ spec:
             {
               "expr": "sum(node_eip_primary_total) / sum(node_eip_secondary_total)",
               "legendFormat": "Primary/Secondary Ratio",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -191,12 +196,14 @@ spec:
             {
               "expr": "sum(node_eip_primary_total)",
               "legendFormat": "Primary",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
               "expr": "sum(node_eip_secondary_total)",
               "legendFormat": "Secondary",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -296,9 +303,10 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
           "targets": [
             {
-              "expr": "node_eip_primary_total",
+              "expr": "sum(node_eip_primary_total)",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -322,21 +330,23 @@ spec:
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 34},
           "targets": [
             {
-              "expr": "node_eip_primary_total",
+              "expr": "sum(node_eip_primary_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "node_eip_secondary_total",
+              "expr": "sum(node_eip_secondary_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "{{node}}",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "node_eip_assigned_total",
+              "expr": "sum(node_eip_assigned_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "{{node}}",
