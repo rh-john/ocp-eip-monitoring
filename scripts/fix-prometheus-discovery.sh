@@ -95,7 +95,7 @@ main() {
     # Check if ServiceMonitor exists
     local sm_name=""
     if [[ "$MONITORING_TYPE" == "coo" ]]; then
-        sm_name="eip-monitor-coo"
+        sm_name="eip-monitor"
     else
         sm_name="eip-monitor"
     fi

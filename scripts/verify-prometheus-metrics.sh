@@ -130,15 +130,15 @@ get_target_status() {
 check_servicemonitor() {
     log_info "Checking ServiceMonitor configuration..."
     
-    local sm_name=""
-    if [[ "$MONITORING_TYPE" == "coo" ]]; then
-        sm_name="eip-monitor-coo"
-    else
-        sm_name="eip-monitor"
-    fi
+    local sm_name="eip-monitor"
     
-    if ! oc get servicemonitor "$sm_name" -n "$NAMESPACE" &>/dev/null; then
+    # Try both CRD versions (COO uses monitoring.rhobs/v1)
+    if ! oc get servicemonitor.monitoring.rhobs "$sm_name" -n "$NAMESPACE" &>/dev/null && \
+       ! oc get servicemonitor.monitoring.coreos.com "$sm_name" -n "$NAMESPACE" &>/dev/null && \
+       ! oc get servicemonitor "$sm_name" -n "$NAMESPACE" &>/dev/null; then
         log_error "ServiceMonitor '$sm_name' not found in namespace '$NAMESPACE'"
+        log_info "Checking for ServiceMonitors in namespace..."
+        oc get servicemonitor -n "$NAMESPACE" 2>&1 | head -5
         return 1
     fi
     
@@ -305,14 +305,15 @@ check_prometheus_scrape_configs() {
     echo "$job_names" | sed 's/^/  - /'
     
     # Check for eip-monitor related jobs
-    local eip_jobs=$(echo "$job_names" | grep -i "eip" || echo "")
+    # COO creates jobs with pattern: serviceMonitor/namespace/name/0
+    local eip_jobs=$(echo "$job_names" | grep -iE "eip|serviceMonitor.*eip-monitoring.*eip-monitor" || echo "")
     
     if [[ -z "$eip_jobs" ]]; then
         log_warn "No eip-monitor job found in scrape configs"
         log_info "This means Prometheus hasn't created scrape targets from the ServiceMonitor"
         
         # Try to find ServiceMonitor in the config
-        if echo "$full_config" | grep -q "eip-monitor-coo\|eip-monitor"; then
+        if echo "$full_config" | grep -q "eip-monitor"; then
             log_info "ServiceMonitor reference found in config, but no scrape job created"
             log_info "This usually means Prometheus needs to evaluate the ServiceMonitor"
         fi
@@ -582,7 +583,7 @@ verify_metrics() {
             log_info "  1. Verify MonitoringStack resourceSelector:"
             log_info "     oc get monitoringstack eip-monitoring-stack -n $NAMESPACE -o yaml | grep -A 3 resourceSelector"
             log_info "  2. Check ServiceMonitor labels match resourceSelector:"
-            log_info "     oc get servicemonitor eip-monitor-coo -n $NAMESPACE -o yaml | grep -A 5 labels"
+            log_info "     oc get servicemonitor eip-monitor -n $NAMESPACE -o yaml | grep -A 5 labels"
             log_info "  3. Check Prometheus logs:"
             log_info "     oc logs $prom_pod -n $prom_namespace --tail=200 | grep -i servicemonitor"
         fi
