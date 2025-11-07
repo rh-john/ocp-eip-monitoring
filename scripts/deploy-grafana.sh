@@ -8,7 +8,7 @@ set -euo pipefail
 
 # Configuration
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
-MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
+MONITORING_TYPE="${MONITORING_TYPE:-}"  # Will be auto-detected if not set
 REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
 
 # Colors for output
@@ -44,13 +44,13 @@ Usage: $0 [options]
 
 Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
-  --monitoring-type TYPE    Monitoring type: coo or uwm (default: uwm)
+  --monitoring-type TYPE    Monitoring type: coo or uwm (auto-detected if not specified)
   --remove-grafana          Remove Grafana resources
   -h, --help               Show this help message
 
 Environment Variables:
   NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
-  MONITORING_TYPE           Monitoring type: coo or uwm (default: uwm)
+  MONITORING_TYPE           Monitoring type: coo or uwm (auto-detected if not specified)
 
 Examples:
   $0
@@ -60,6 +60,54 @@ Examples:
   $0 --remove-grafana
 
 EOF
+}
+
+# Auto-detect monitoring type
+detect_monitoring_type() {
+    # Check for COO (Cluster Observability Operator)
+    # COO uses MonitoringStack CRD
+    if oc get crd monitoringstacks.monitoring.rhobs &>/dev/null; then
+        # Check if there are any MonitoringStack resources
+        local monitoring_stacks=$(oc get monitoringstack --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [[ "$monitoring_stacks" =~ ^[0-9]+$ ]] && [[ "$monitoring_stacks" -gt 0 ]]; then
+            log_info "Detected Cluster Observability Operator (COO) - found $monitoring_stacks MonitoringStack resource(s)" >&2
+            echo "coo"
+            return 0
+        fi
+    fi
+    
+    # Check for UWM (User Workload Monitoring)
+    # UWM uses openshift-user-workload-monitoring namespace
+    if oc get namespace openshift-user-workload-monitoring &>/dev/null; then
+        # Verify it's actually active by checking for Prometheus pods
+        local prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null | tr -d '[:space:]' || echo "0")
+        if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
+            log_info "Detected User Workload Monitoring (UWM) - found $prom_pods Prometheus pod(s) in openshift-user-workload-monitoring" >&2
+            echo "uwm"
+            return 0
+        fi
+    fi
+    
+    # If neither is clearly detected, check for UWM namespace existence (even without pods)
+    if oc get namespace openshift-user-workload-monitoring &>/dev/null; then
+        log_warn "Found openshift-user-workload-monitoring namespace but no running Prometheus pods" >&2
+        log_info "Assuming UWM (User Workload Monitoring)" >&2
+        echo "uwm"
+        return 0
+    fi
+    
+    # Default fallback - could not detect
+    log_warn "Could not auto-detect monitoring type" >&2
+    log_info "Checking for COO MonitoringStack CRD..." >&2
+    if oc get crd monitoringstacks.monitoring.rhobs &>/dev/null; then
+        log_info "COO CRD found but no MonitoringStack resources detected" >&2
+    fi
+    log_info "Checking for UWM namespace..." >&2
+    if ! oc get namespace openshift-user-workload-monitoring &>/dev/null; then
+        log_info "UWM namespace not found" >&2
+    fi
+    log_error "Please specify --monitoring-type coo or --monitoring-type uwm" >&2
+    return 1
 }
 
 # Check prerequisites
@@ -91,24 +139,47 @@ check_prerequisites() {
 remove_grafana_resources() {
     log_info "Removing Grafana resources..."
     
+    local resources_found=false
+    
     # Delete dashboards
-    oc delete grafanadashboard -n "$NAMESPACE" --all 2>/dev/null || true
+    if oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
+        oc delete grafanadashboard -n "$NAMESPACE" --all 2>&1 | grep -v "No resources found" || true
+        resources_found=true
+    else
+        log_info "  No GrafanaDashboards found"
+    fi
     
     # Delete datasources
-    oc delete grafanadatasource -n "$NAMESPACE" --all 2>/dev/null || true
+    if oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
+        oc delete grafanadatasource -n "$NAMESPACE" --all 2>&1 | grep -v "No resources found" || true
+        resources_found=true
+    else
+        log_info "  No GrafanaDataSources found"
+    fi
     
     # Delete Grafana instance
-    oc delete grafana -n "$NAMESPACE" --all 2>/dev/null || true
+    if oc get grafana -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
+        oc delete grafana -n "$NAMESPACE" --all 2>&1 | grep -v "No resources found" || true
+        resources_found=true
+    else
+        log_info "  No Grafana instances found"
+    fi
     
     # Delete RBAC (monitoring-specific)
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
     local rbac_file="${project_root}/k8s/monitoring/${MONITORING_TYPE}/rbac/grafana-rbac-${MONITORING_TYPE}.yaml"
     if [[ -f "$rbac_file" ]]; then
-        oc delete -f "$rbac_file" 2>/dev/null || true
+        log_info "  Removing RBAC resources..."
+        oc delete -f "$rbac_file" 2>&1 | grep -v "not found\|No resources found" || true
+        resources_found=true
     fi
     
-    log_success "Grafana resources removed"
+    if [[ "$resources_found" == "true" ]]; then
+        log_success "Grafana resources removed"
+    else
+        log_info "No Grafana resources found to remove"
+    fi
 }
 
 # Deploy Grafana resources
@@ -312,6 +383,17 @@ main() {
     parse_args "$@"
     
     check_prerequisites
+    
+    # Auto-detect monitoring type if not explicitly set
+    if [[ -z "$MONITORING_TYPE" ]]; then
+        log_info "Auto-detecting monitoring type..."
+        local detected_type
+        detected_type=$(detect_monitoring_type)
+        if [[ -z "$detected_type" ]]; then
+            exit 1
+        fi
+        MONITORING_TYPE="$detected_type"
+    fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     log_info "Deploying to namespace: $NAMESPACE"
