@@ -314,7 +314,7 @@ class EIPMetricsCollector:
         """Get list of EIP-enabled nodes with comprehensive validation"""
         output = self.run_oc_command([
             'oc', 'get', 'nodes', 
-            '-l', 'k8s.ovn.org/egress-assignable=true', 
+            '-l', 'k8s.ovn.org/egress-assignable', 
             '-o', 'name'
         ], operation='nodes_get')
         
