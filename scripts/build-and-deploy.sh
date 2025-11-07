@@ -19,7 +19,7 @@ LOG_LEVEL="${LOG_LEVEL:-INFO}"  # Default to INFO, can be DEBUG, INFO, WARNING, 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[1;34m'  # Bright blue for readability on black terminals
 NC='\033[0m' # No Color
 
 # Logging functions
@@ -801,7 +801,7 @@ deploy_monitoring() {
     fi
     
     log_info "Monitoring infrastructure status:"
-    oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
+    oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || log_info "  (Resources may still be initializing)"
 }
 
 # Deploy to OpenShift (eip-monitor only, no monitoring)
@@ -872,8 +872,8 @@ deploy() {
         kill "$rollout_pid" 2>/dev/null || true
         wait "$rollout_pid" 2>/dev/null || true
         log_info "Checking deployment status..."
-        oc get deployment eip-monitor -n "$NAMESPACE"
-        oc get pods -n "$NAMESPACE" -l app=eip-monitor
+        oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+        oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
         log_warn "Deployment may still be in progress. Check logs with: oc logs -f deployment/eip-monitor -n $NAMESPACE"
     else
         wait "$rollout_pid"
@@ -882,8 +882,8 @@ deploy() {
         else
             log_warn "Deployment rollout check failed"
             log_info "Checking deployment status..."
-            oc get deployment eip-monitor -n "$NAMESPACE"
-            oc get pods -n "$NAMESPACE" -l app=eip-monitor
+            oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+            oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
         fi
     fi
     
@@ -895,10 +895,10 @@ deploy() {
     
     # Show status
     log_info "Deployment status:"
-    oc get pods -n "$NAMESPACE" -l app=eip-monitor
+    oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
     
     log_info "Service endpoints:"
-    oc get svc eip-monitor -n "$NAMESPACE"
+    oc get svc eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
     
     # Restore colors
     RED="${old_colors[0]}" GREEN="${old_colors[1]}" YELLOW="${old_colors[2]}" BLUE="${old_colors[3]}" NC="${old_colors[4]}"
