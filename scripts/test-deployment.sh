@@ -187,7 +187,40 @@ test_resource_limits() {
 }
 
 test_servicemonitor_exists() {
+    # Check for ServiceMonitor with -coo suffix (COO monitoring stack)
+    oc get servicemonitor "${SERVICE_NAME}-coo" -n "$NAMESPACE" &>/dev/null || \
+    # Check for ServiceMonitor with -uwm suffix (UWM monitoring stack)
+    oc get servicemonitor "${SERVICE_NAME}-uwm" -n "$NAMESPACE" &>/dev/null || \
+    # Fallback to base name if neither -coo nor -uwm exist
     oc get servicemonitor "$SERVICE_NAME" -n "$NAMESPACE" &>/dev/null
+}
+
+test_prometheusrule_exists() {
+    # First check if PrometheusRule CRD exists
+    if ! oc get crd prometheusrules.monitoring.coreos.com &>/dev/null; then
+        # CRD doesn't exist, skip test
+        return 0
+    fi
+    
+    # Try multiple naming patterns
+    # Check for PrometheusRule with -coo suffix (COO monitoring stack)
+    oc get prometheusrule "${SERVICE_NAME}-coo" -n "$NAMESPACE" &>/dev/null && return 0
+    # Check for PrometheusRule with -uwm suffix (UWM monitoring stack)
+    oc get prometheusrule "${SERVICE_NAME}-uwm" -n "$NAMESPACE" &>/dev/null && return 0
+    # Check for common alert name pattern
+    oc get prometheusrule "${SERVICE_NAME}-alerts" -n "$NAMESPACE" &>/dev/null && return 0
+    # Check for base name
+    oc get prometheusrule "$SERVICE_NAME" -n "$NAMESPACE" &>/dev/null && return 0
+    
+    # If none found, check if any PrometheusRule exists in the namespace (might be named differently)
+    local pr_count=$(oc get prometheusrule -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$pr_count" -gt 0 ]]; then
+        # At least one PrometheusRule exists, consider it a pass
+        return 0
+    fi
+    
+    # No PrometheusRule found
+    return 1
 }
 
 # Performance and load tests
@@ -244,6 +277,7 @@ run_all_tests() {
     
     # Monitoring tests
     run_test "ServiceMonitor exists" test_servicemonitor_exists
+    run_test "PrometheusRule exists" test_prometheusrule_exists
     run_test "Metrics performance" test_metrics_performance
     
     echo ""
