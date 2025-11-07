@@ -1358,9 +1358,9 @@ cleanup_grafana() {
     
     # Force delete any remaining resources (in case they're still stuck after finalizer removal)
     log_info "Force deleting any remaining Grafana resources..."
-    oc delete grafanadashboard -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -v "No resources found" || true
-    oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -v "No resources found" || true
-    oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -v "No resources found" || true
+    oc delete grafanadashboard -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     
     # Delete Grafana RBAC (monitoring-specific)
     # Try to detect monitoring type and remove appropriate RBAC
