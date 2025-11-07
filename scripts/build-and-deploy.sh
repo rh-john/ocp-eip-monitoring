@@ -1392,31 +1392,31 @@ cleanup_eip_monitor() {
     
     # Delete ServiceMonitor and PrometheusRule first (dependencies)
     log_info "Removing ServiceMonitor and PrometheusRule..."
-    oc delete servicemonitor eip-monitor -n "$NAMESPACE" 2>/dev/null || true
-    oc delete prometheusrule eip-monitor-alerts -n "$NAMESPACE" 2>/dev/null || true
+    oc delete servicemonitor eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    oc delete prometheusrule eip-monitor-alerts -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
     
     # Delete deployment first to stop pods immediately
     if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
         log_info "Stopping deployment..."
-        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>/dev/null || true
+        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     fi
     
     # Force kill any remaining pods for faster cleanup
     if oc get pods -n "$NAMESPACE" -l app=eip-monitor &>/dev/null; then
         log_info "Force killing any remaining pods..."
-        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>/dev/null || true
+        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     fi
     
     # Delete service
-    oc delete service eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    oc delete service eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
     
     # Delete ConfigMap
-    oc delete configmap eip-monitor-config -n "$NAMESPACE" 2>/dev/null || true
+    oc delete configmap eip-monitor-config -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
     
     # Delete RBAC resources
-    oc delete rolebinding eip-monitor -n "$NAMESPACE" 2>/dev/null || true
-    oc delete role eip-monitor -n "$NAMESPACE" 2>/dev/null || true
-    oc delete serviceaccount eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    oc delete rolebinding eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    oc delete role eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    oc delete serviceaccount eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
     
     log_success "eip-monitor resources removed"
     echo ""
