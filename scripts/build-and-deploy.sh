@@ -10,6 +10,7 @@ IMAGE_NAME="eip-monitor"
 IMAGE_TAG="latest"
 NAMESPACE="eip-monitoring"
 REGISTRY=""  # Set this to your container registry
+CLEAN_ALL="${CLEAN_ALL:-false}"  # Flag for cleaning everything
 MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"  # Default to INFO, can be DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -62,6 +63,7 @@ Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
   --monitoring-type TYPE    Monitoring type: coo or uwm (for monitoring command)
   --remove-monitoring       Remove monitoring infrastructure
+  --all                     Clean up everything (Grafana, eip-monitor, and monitoring)
   --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
 
 Environment Variables:
@@ -76,6 +78,7 @@ Examples:
   $0 all -r quay.io/myorg --log-level DEBUG
   $0 test
   $0 clean
+  $0 clean --all              Clean up everything (Grafana, eip-monitor, monitoring)
 
 Note: To deploy Grafana dashboards, use the separate script:
   ./scripts/deploy-grafana.sh
@@ -1288,8 +1291,381 @@ show_logs() {
     oc logs -f deployment/eip-monitor -n "$NAMESPACE"
 }
 
-# Clean up deployment
+# Clean up Grafana resources
+cleanup_grafana() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 1: Removing Grafana resources..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    # Delete Grafana resources in correct dependency order
+    # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
+    log_info "Deleting GrafanaDashboards (depends on DataSources)..."
+    oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
+    
+    # Wait a moment for dashboards to start deletion
+    sleep 2
+    
+    log_info "Deleting GrafanaDataSources (depends on Grafana Instance)..."
+    oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
+    
+    # Wait a moment for datasources to start deletion
+    sleep 2
+    
+    log_info "Deleting Grafana Instances..."
+    oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
+    
+    # Force delete if finalizers are blocking (common issue with Grafana CRDs)
+    log_info "Checking for resources stuck with finalizers..."
+    local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_dashboards" ]]; then
+        log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
+        echo "$stuck_dashboards" | while read -r name; do
+            oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    
+    local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_datasources" ]]; then
+        log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
+        echo "$stuck_datasources" | while read -r name; do
+            oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    
+    local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_instances" ]]; then
+        log_warn "Found Grafana Instances with finalizers, removing finalizers..."
+        echo "$stuck_instances" | while read -r name; do
+            oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    
+    # Wait a moment for finalizer removal to take effect
+    sleep 2
+    
+    # Force delete any remaining resources (in case they're still stuck after finalizer removal)
+    log_info "Force deleting any remaining Grafana resources..."
+    oc delete grafanadashboard -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -v "No resources found" || true
+    oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -v "No resources found" || true
+    oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -v "No resources found" || true
+    
+    # Delete Grafana RBAC (monitoring-specific)
+    # Try to detect monitoring type and remove appropriate RBAC
+    local current_type=$(detect_current_monitoring_type)
+    if [[ "$current_type" != "none" ]]; then
+        local rbac_file="${project_root}/k8s/monitoring/${current_type}/rbac/grafana-rbac-${current_type}.yaml"
+        if [[ -f "$rbac_file" ]]; then
+            log_info "Removing Grafana RBAC for ${current_type}..."
+            oc delete -f "$rbac_file" 2>/dev/null || true
+        fi
+    else
+        # Try both types if we can't detect
+        log_info "Monitoring type unknown, trying both COO and UWM RBAC cleanup..."
+        local coo_rbac="${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        local uwm_rbac="${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        [[ -f "$coo_rbac" ]] && oc delete -f "$coo_rbac" 2>/dev/null || true
+        [[ -f "$uwm_rbac" ]] && oc delete -f "$uwm_rbac" 2>/dev/null || true
+    fi
+    
+    log_success "Grafana resources removed"
+    echo ""
+}
+
+# Clean up eip-monitor deployment
+cleanup_eip_monitor() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 2: Removing eip-monitor resources..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Delete ServiceMonitor and PrometheusRule first (dependencies)
+    log_info "Removing ServiceMonitor and PrometheusRule..."
+    oc delete servicemonitor eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    oc delete prometheusrule eip-monitor-alerts -n "$NAMESPACE" 2>/dev/null || true
+    
+    # Delete deployment first to stop pods immediately
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_info "Stopping deployment..."
+        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Force kill any remaining pods for faster cleanup
+    if oc get pods -n "$NAMESPACE" -l app=eip-monitor &>/dev/null; then
+        log_info "Force killing any remaining pods..."
+        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Delete service
+    oc delete service eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    
+    # Delete ConfigMap
+    oc delete configmap eip-monitor-config -n "$NAMESPACE" 2>/dev/null || true
+    
+    # Delete RBAC resources
+    oc delete rolebinding eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    oc delete role eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    oc delete serviceaccount eip-monitor -n "$NAMESPACE" 2>/dev/null || true
+    
+    log_success "eip-monitor resources removed"
+    echo ""
+}
+
+# Clean up monitoring infrastructure
+cleanup_monitoring() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 3: Removing monitoring infrastructure..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Detect and remove both COO and UWM if present
+    local current_type=$(detect_current_monitoring_type)
+    
+    if [[ "$current_type" == "coo" ]]; then
+        log_info "Removing COO monitoring infrastructure..."
+        remove_coo_monitoring
+    elif [[ "$current_type" == "uwm" ]]; then
+        log_info "Removing UWM monitoring infrastructure..."
+        remove_uwm_monitoring
+    else
+        log_info "No monitoring infrastructure detected, but cleaning up any remaining resources..."
+        # Try to clean up both types just in case
+        remove_coo_monitoring 2>/dev/null || true
+        remove_uwm_monitoring 2>/dev/null || true
+    fi
+    
+    log_success "Monitoring infrastructure removed"
+    echo ""
+}
+
+# Clean up operators (COO and Grafana)
+cleanup_operators() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 4: Removing operators..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Remove COO operator subscription
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        log_info "Removing Cluster Observability Operator subscription..."
+        oc delete subscription cluster-observability-operator -n openshift-operators 2>/dev/null || {
+            log_warn "Failed to delete COO subscription (may require cluster-admin)"
+        }
+        
+        # Wait for CSV to be removed, or delete it directly if stuck
+        log_info "Waiting for COO CSV to be removed..."
+        local max_wait=30
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local csv_info=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | "\(.metadata.name)|\(.metadata.deletionTimestamp // "active")"' | head -1 || echo "")
+            if [[ -z "$csv_info" ]]; then
+                log_success "COO operator removed"
+                break
+            fi
+            
+            # Check if CSV is being deleted (has deletionTimestamp)
+            local csv_name=$(echo "$csv_info" | cut -d'|' -f1)
+            local deletion_status=$(echo "$csv_info" | cut -d'|' -f2)
+            
+            if [[ "$deletion_status" != "active" ]]; then
+                log_info "COO CSV is being deleted (deletionTimestamp: $deletion_status), waiting..."
+            fi
+            
+            sleep 2
+            waited=$((waited + 2))
+        done
+        
+        # If CSV still exists after waiting, try to delete it directly
+        local remaining_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | .metadata.name' | head -1 || echo "")
+        if [[ -n "$remaining_csv" ]]; then
+            log_warn "COO CSV still exists after subscription deletion, deleting CSV directly..."
+            oc delete csv "$remaining_csv" -n openshift-operators --force --grace-period=0 2>/dev/null || {
+                log_warn "Failed to delete COO CSV directly (may require cluster-admin or CSV may be stuck)"
+            }
+            
+            # Remove finalizers if CSV is stuck
+            local csv_finalizers=$(oc get csv "$remaining_csv" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+            if [[ -n "$csv_finalizers" ]]; then
+                log_info "Removing finalizers from COO CSV..."
+                oc patch csv "$remaining_csv" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            fi
+        else
+            log_success "COO operator removed successfully"
+        fi
+    else
+        log_info "COO operator subscription not found"
+    fi
+    
+    # Remove Grafana operator subscription (cluster-scoped)
+    if oc get subscription grafana-operator -n openshift-operators &>/dev/null; then
+        log_info "Removing Grafana Operator subscription (cluster-scoped)..."
+        oc delete subscription grafana-operator -n openshift-operators 2>/dev/null || {
+            log_warn "Failed to delete Grafana operator subscription (may require cluster-admin)"
+        }
+        
+        # Wait for CSV to be removed, or delete it directly if stuck
+        log_info "Waiting for Grafana operator CSV to be removed..."
+        local max_wait=30
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local csv_info=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | "\(.metadata.name)|\(.metadata.deletionTimestamp // "active")"' | head -1 || echo "")
+            if [[ -z "$csv_info" ]]; then
+                log_success "Grafana operator removed"
+                break
+            fi
+            
+            # Check if CSV is being deleted
+            local csv_name=$(echo "$csv_info" | cut -d'|' -f1)
+            local deletion_status=$(echo "$csv_info" | cut -d'|' -f2)
+            
+            if [[ "$deletion_status" != "active" ]]; then
+                log_info "Grafana operator CSV is being deleted (deletionTimestamp: $deletion_status), waiting..."
+            fi
+            
+            sleep 2
+            waited=$((waited + 2))
+        done
+        
+        # If CSV still exists after waiting, try to delete it directly
+        local remaining_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+        if [[ -n "$remaining_csv" ]]; then
+            log_warn "Grafana operator CSV still exists after subscription deletion, deleting CSV directly..."
+            oc delete csv "$remaining_csv" -n openshift-operators --force --grace-period=0 2>/dev/null || {
+                log_warn "Failed to delete Grafana operator CSV directly (may require cluster-admin or CSV may be stuck)"
+            }
+            
+            # Remove finalizers if CSV is stuck
+            local csv_finalizers=$(oc get csv "$remaining_csv" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+            if [[ -n "$csv_finalizers" ]]; then
+                log_info "Removing finalizers from Grafana operator CSV..."
+                oc patch csv "$remaining_csv" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            fi
+        else
+            log_success "Grafana operator removed successfully"
+        fi
+    else
+        log_info "Grafana operator subscription (cluster-scoped) not found"
+    fi
+    
+    # Also check for namespace-scoped Grafana operator
+    if oc get subscription grafana-operator -n "$NAMESPACE" &>/dev/null; then
+        log_info "Removing namespace-scoped Grafana Operator subscription..."
+        oc delete subscription grafana-operator -n "$NAMESPACE" 2>/dev/null || true
+        
+        # Wait for CSV to be removed
+        log_info "Waiting for namespace-scoped Grafana operator CSV to be removed..."
+        local max_wait=30
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local csv_exists=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+            if [[ -z "$csv_exists" ]]; then
+                log_success "Namespace-scoped Grafana operator removed"
+                break
+            fi
+            sleep 2
+            waited=$((waited + 2))
+        done
+        
+        if [[ $waited -ge $max_wait ]]; then
+            log_warn "Namespace-scoped Grafana operator removal may still be in progress"
+        fi
+    else
+        log_info "Namespace-scoped Grafana operator subscription not found"
+    fi
+    
+    log_success "Operators removed"
+    echo ""
+}
+
+# Complete cleanup (everything)
+cleanup_all() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Complete Cleanup (--all flag)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    log_warn "This will remove ALL resources related to this project:"
+    log_warn "  • Grafana resources (dashboards, datasources, instances)"
+    log_warn "  • eip-monitor application (deployment, service, RBAC)"
+    log_warn "  • Monitoring infrastructure (COO/UWM)"
+    log_warn "  • Operators (COO and Grafana operator subscriptions)"
+    log_warn "  • Namespace"
+    echo ""
+    
+    # Step 1: Remove Grafana resources
+    cleanup_grafana
+    
+    # Step 2: Remove eip-monitor deployment
+    cleanup_eip_monitor
+    
+    # Step 3: Remove monitoring infrastructure (COO/UWM)
+    cleanup_monitoring
+    
+    # Step 4: Remove operators (COO and Grafana)
+    cleanup_operators
+    
+    # Step 5: Delete namespace if empty (optional, but clean)
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 5: Cleaning up namespace..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if oc get namespace "$NAMESPACE" &>/dev/null; then
+        # Check if namespace is empty (only finalizers remaining)
+        local remaining_resources=$(oc get all -n "$NAMESPACE" 2>/dev/null | grep -v "No resources found" | wc -l || echo "0")
+        
+        if [[ "$remaining_resources" -gt 0 ]]; then
+            log_info "Remaining resources in namespace, deleting namespace..."
+            oc delete namespace "$NAMESPACE" 2>/dev/null || true
+            
+            # Wait for namespace deletion
+            local timeout=120
+            local elapsed=0
+            while oc get namespace "$NAMESPACE" &>/dev/null && [[ $elapsed -lt $timeout ]]; do
+                sleep 3
+                elapsed=$((elapsed + 3))
+                if [[ $((elapsed % 15)) -eq 0 ]]; then
+                    log_info "Waiting for namespace deletion... (${elapsed}s elapsed)"
+                fi
+            done
+            
+            if oc get namespace "$NAMESPACE" &>/dev/null; then
+                log_warn "Namespace deletion may still be in progress"
+                log_info "Check with: oc get namespace $NAMESPACE"
+            else
+                log_success "Namespace fully deleted"
+            fi
+        else
+            log_info "Namespace appears empty, deleting..."
+            oc delete namespace "$NAMESPACE" 2>/dev/null || true
+            log_success "Namespace deletion initiated"
+        fi
+    else
+        log_info "Namespace '$NAMESPACE' not found or already deleted"
+    fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "✅ Complete cleanup finished!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    log_info "All resources have been removed:"
+    log_info "  ✓ Grafana resources (dashboards, datasources, instances)"
+    log_info "  ✓ eip-monitor application (deployment, service, RBAC)"
+    log_info "  ✓ Monitoring infrastructure (COO/UWM)"
+    log_info "  ✓ Operators (COO and Grafana operator subscriptions)"
+    log_info "  ✓ Namespace"
+    log_info "  ✓ UWM disabled in cluster-monitoring-config (if it was enabled)"
+    echo ""
+    log_info "Note: If UWM disable failed, you may need cluster-admin permissions:"
+    log_info "  oc -n openshift-monitoring edit configmap cluster-monitoring-config"
+    log_info "  Set: enableUserWorkload: false"
+}
+
+# Clean up deployment (basic cleanup - just eip-monitor and namespace)
 cleanup() {
+    if [[ "$CLEAN_ALL" == "true" ]]; then
+        cleanup_all
+        return
+    fi
+    
     log_info "Cleaning up EIP Monitor deployment..."
     
     # Delete deployment first to stop pods immediately
@@ -1354,6 +1730,10 @@ parse_args() {
                 ;;
             --remove-monitoring)
                 REMOVE_MONITORING="true"
+                shift
+                ;;
+            --all)
+                CLEAN_ALL="true"
                 shift
                 ;;
             --log-level)
