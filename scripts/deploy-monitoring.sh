@@ -10,12 +10,13 @@ set -euo pipefail
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
+VERBOSE="${VERBOSE:-false}"
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[1;36m'  # Light blue (cyan)
 NC='\033[0m' # No Color
 
 # Logging functions
@@ -35,6 +36,24 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Helper function to run oc commands with optional verbose output
+oc_cmd() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc "$@"
+    else
+        oc "$@" 2>/dev/null
+    fi
+}
+
+# Helper function for oc commands that need to suppress output in non-verbose mode
+oc_cmd_silent() {
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc "$@"
+    else
+        oc "$@" &>/dev/null
+    fi
+}
+
 # Show usage
 show_usage() {
     cat << EOF
@@ -46,17 +65,20 @@ Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
   --monitoring-type TYPE    Monitoring type: coo or uwm (default: uwm)
   --remove-monitoring       Remove monitoring infrastructure
+  -v, --verbose            Show verbose output (raw oc command output)
   -h, --help               Show this help message
 
 Environment Variables:
   NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
   MONITORING_TYPE           Monitoring type: coo or uwm (default: uwm)
   REMOVE_MONITORING         Set to true to remove monitoring (default: false)
+  VERBOSE                   Set to true to show verbose output (default: false)
 
 Examples:
   $0 --monitoring-type uwm
   $0 --monitoring-type coo -n my-namespace
   $0 --remove-monitoring
+  $0 --remove-monitoring --verbose
 
 EOF
 }
@@ -323,15 +345,36 @@ enable_user_workload_alertmanager() {
 
 # Detect currently installed monitoring type
 detect_current_monitoring_type() {
-    # Check for COO operator
-    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+    # Check for COO resources in the namespace (MonitoringStack, ServiceMonitor with COO labels, etc.)
+    # Use --no-headers and check for actual output to ensure resources exist
+    if (oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .); then
         echo "coo"
         return 0
     fi
     
-    # Check for UWM
-    local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
-    if echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
+    # Check for COO ServiceMonitor
+    if (oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .); then
+        echo "coo"
+        return 0
+    fi
+    
+    # Check for COO operator subscription (fallback check)
+    if (oc get subscription cluster-observability-operator -n openshift-operators --no-headers 2>/dev/null | grep -q .); then
+        # Only return COO if we also have COO resources, otherwise might be unused operator
+        if (oc get servicemonitor -n "$NAMESPACE" -l coo=eip-monitoring --no-headers 2>/dev/null | grep -q .) || \
+           (oc get prometheusrule -n "$NAMESPACE" -l coo=eip-monitoring --no-headers 2>/dev/null | grep -q .); then
+            echo "coo"
+            return 0
+        fi
+    fi
+    
+    # Check for UWM resources in namespace first (most reliable indicator)
+    # Only detect UWM if actual resources exist, not just based on cluster config
+    # Use --no-headers and check for actual output to ensure resources exist
+    if (oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .) || \
+       (oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .) || \
+       (oc get prometheusrule -n "$NAMESPACE" -l monitoring=uwm --no-headers 2>/dev/null | grep -q .) || \
+       (oc get networkpolicy eip-monitor-uwm -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .); then
         echo "uwm"
         return 0
     fi
@@ -432,19 +475,42 @@ remove_coo_monitoring() {
     # Delete MonitoringStack
     if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
         log_info "Deleting COO MonitoringStack..."
-        oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true || log_warn "Failed to delete MonitoringStack"
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true || log_warn "Failed to delete MonitoringStack"
+        else
+            oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true &>/dev/null || log_warn "Failed to delete MonitoringStack"
+        fi
     fi
     
     # Delete COO manifests
     log_info "Removing COO manifests..."
-    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null || true
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" || true
+        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" || true
+        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" || true
+        oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" || true
+    else
+        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" &>/dev/null || true
+        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" &>/dev/null || true
+        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" &>/dev/null || true
+        oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" &>/dev/null || true
+    fi
     
-    # Delete COO operator subscription (optional - may want to keep operator)
-    log_warn "COO operator subscription will not be removed automatically"
-    log_info "To remove COO operator: oc delete subscription cluster-observability-operator -n openshift-operators"
+    # Delete COO operator subscription
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        log_info "Deleting COO operator subscription..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete subscription cluster-observability-operator -n openshift-operators || log_warn "Failed to delete COO operator subscription"
+        else
+            oc delete subscription cluster-observability-operator -n openshift-operators &>/dev/null || log_warn "Failed to delete COO operator subscription"
+        fi
+    fi
+    
+    # Delete ThanosQuerier
+    if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO ThanosQuerier..."
+        oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" 2>/dev/null || true
+    fi
     
     log_success "COO monitoring infrastructure removed"
 }
@@ -456,12 +522,32 @@ remove_uwm_monitoring() {
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
     
+    # Verify UWM resources actually exist before attempting removal
+    local has_uwm_resources=false
+    if oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null || \
+       oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null || \
+       oc get networkpolicy eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+        has_uwm_resources=true
+    fi
+    
+    if [[ "$has_uwm_resources" == "false" ]]; then
+        log_info "No UWM resources found in namespace, skipping removal"
+        return 0
+    fi
+    
     # Delete UWM manifests
     log_info "Removing UWM manifests..."
-    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null || true
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" || true
+        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" || true
+        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" || true
+        oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" || true
+    else
+        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" &>/dev/null || true
+        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" &>/dev/null || true
+        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" &>/dev/null || true
+        oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" &>/dev/null || true
+    fi
     
     # Disable UWM in cluster-monitoring-config
     log_info "Disabling User Workload Monitoring..."
@@ -478,15 +564,26 @@ remove_uwm_monitoring() {
         updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
         updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
         
-        oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
-            -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>/dev/null || {
-            log_warn "Failed to disable UWM in cluster-monitoring-config"
-        }
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
+                -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" || {
+                log_warn "Failed to disable UWM in cluster-monitoring-config"
+            }
+        else
+            oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
+                -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" &>/dev/null || {
+                log_warn "Failed to disable UWM in cluster-monitoring-config"
+            }
+        fi
         rm -f "$temp_config"
     fi
     
     # Delete user-workload-monitoring-config
-    oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring 2>/dev/null || true
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring || true
+    else
+        oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring &>/dev/null || true
+    fi
     
     log_success "UWM monitoring infrastructure removed"
 }
@@ -551,10 +648,17 @@ deploy_monitoring() {
         
         # Apply COO manifests
         log_info "Applying COO monitoring manifests..."
-        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        else
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
+        fi
         
         log_success "COO monitoring infrastructure deployed!"
         
@@ -567,16 +671,33 @@ deploy_monitoring() {
         
         # Apply UWM manifests
         log_info "Applying UWM monitoring manifests..."
-        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        else
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null
+        fi
         
         log_success "UWM monitoring infrastructure deployed!"
     fi
     
     log_info "Monitoring infrastructure status:"
-    oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
+    if [[ "$VERBOSE" == "true" ]]; then
+        local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>&1)
+    else
+        local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>/dev/null || echo "")
+    fi
+    
+    if [[ -z "$status_output" ]] || echo "$status_output" | grep -qiE "(no resources found|not found)"; then
+        log_info "  (Resources may still be initializing)"
+    else
+        echo "$status_output" | sed 's/^/  /'
+    fi
 }
 
 # Parse command line arguments
@@ -593,6 +714,10 @@ parse_args() {
                 ;;
             --remove-monitoring)
                 REMOVE_MONITORING="true"
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE="true"
                 shift
                 ;;
             -h|--help)
@@ -616,15 +741,51 @@ main() {
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     log_info "Deploying to namespace: $NAMESPACE"
-    log_info "Monitoring type: $MONITORING_TYPE"
+    
+    # If removing, detect the actual type first and log it
+    if [[ "$REMOVE_MONITORING" == "true" ]]; then
+        local detected_type=$(detect_current_monitoring_type)
+        if [[ "$detected_type" != "none" ]]; then
+            log_info "Detected monitoring type: $detected_type"
+        else
+            log_info "Monitoring type: (none detected)"
+        fi
+    else
+        log_info "Monitoring type: $MONITORING_TYPE"
+    fi
     
     deploy_monitoring
     
     log_success "Monitoring deployment completed!"
     log_info "Monitoring infrastructure status:"
-    oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
+    if [[ "$VERBOSE" == "true" ]]; then
+        local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>&1)
+    else
+        local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>/dev/null || echo "")
+    fi
+    
+    if [[ "$REMOVE_MONITORING" == "true" ]]; then
+        # Check if output is empty or contains "No resources found"
+        if [[ -z "$status_output" ]] || echo "$status_output" | grep -qiE "(no resources found|not found)"; then
+            log_success "  ✓ No monitoring resources found (removed successfully)"
+        else
+            if [[ "$VERBOSE" == "true" ]]; then
+                echo "$status_output" | sed 's/^/  /'
+            else
+                echo "$status_output" | sed 's/^/  /'
+            fi
+        fi
+    else
+        if [[ -z "$status_output" ]] || echo "$status_output" | grep -qiE "(no resources found|not found)"; then
+            log_info "  (Resources may still be initializing)"
+        else
+            echo "$status_output" | sed 's/^/  /'
+        fi
+    fi
 }
 
-# Run main function
-main "$@"
+# Run main function only if script is executed directly (not sourced)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
 
