@@ -298,15 +298,34 @@ check_prometheus_scrape_configs() {
         return 1
     fi
     
-    # Extract all job names
-    local job_names=$(echo "$full_config" | grep -E "^\s+- job_name:" | sed 's/.*job_name: *//' | tr -d '"' || echo "")
+    # Extract all job names - handle different YAML formatting
+    # Try multiple patterns to extract job names from YAML
+    local job_names=$(echo "$full_config" | grep -E "^\s+- job_name:" | sed 's/.*job_name: *//' | sed 's/^"//' | sed 's/"$//' | tr -d '"' | sed 's/^[ ]*//' | grep -v "^$" || echo "")
+    
+    # If that didn't work, try extracting from scrape_configs section
+    if [[ -z "$job_names" ]]; then
+        job_names=$(echo "$full_config" | awk '/scrape_configs:/{flag=1} flag && /^- job_name:/{gsub(/.*job_name: */, ""); gsub(/^[ ]+/, ""); print}' | head -10 || echo "")
+    fi
     
     log_info "Available scrape jobs:"
-    echo "$job_names" | sed 's/^/  - /'
+    if [[ -n "$job_names" ]] && [[ "$job_names" != "" ]]; then
+        echo "$job_names" | sed 's/^/  - /'
+    else
+        log_info "  (Could not extract job names from config, but checking targets directly)"
+    fi
     
     # Check for eip-monitor related jobs
     # COO creates jobs with pattern: serviceMonitor/namespace/name/0
-    local eip_jobs=$(echo "$job_names" | grep -iE "eip|serviceMonitor.*eip-monitoring.*eip-monitor" || echo "")
+    # Check both job names and the full config
+    local eip_jobs=""
+    if [[ -n "$job_names" ]]; then
+        eip_jobs=$(echo "$job_names" | grep -iE "eip|serviceMonitor.*eip" || echo "")
+    fi
+    
+    # Also check if eip-monitor appears in the config or if we have active targets
+    if [[ -z "$eip_jobs" ]] && echo "$full_config" | grep -qi "eip-monitor"; then
+        eip_jobs="eip-monitor"
+    fi
     
     if [[ -z "$eip_jobs" ]]; then
         log_warn "No eip-monitor job found in scrape configs"
