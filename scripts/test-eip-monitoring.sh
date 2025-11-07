@@ -115,7 +115,27 @@ test_monitoring_integration() {
         return 0
     fi
     
-    # Test 1: Verify metrics are scraped by Prometheus
+    # Test 1: Verify ServiceMonitor exists
+    ((TOTAL_TESTS++))
+    local servicemonitor_name=""
+    if [[ "$monitoring_type" == "coo" ]]; then
+        servicemonitor_name="eip-monitor-coo"
+    else
+        servicemonitor_name="eip-monitor"
+    fi
+    
+    if oc get servicemonitor "$servicemonitor_name" -n "$TEST_NAMESPACE" &>/dev/null; then
+        log_success "✓ ServiceMonitor '$servicemonitor_name' exists"
+        ((TESTS_PASSED++))
+    else
+        log_error "✗ ServiceMonitor '$servicemonitor_name' not found"
+        log_info "  ServiceMonitor must exist for Prometheus to scrape metrics"
+        ((TESTS_FAILED++))
+        # Skip Prometheus query test if ServiceMonitor doesn't exist
+        return 0
+    fi
+    
+    # Test 2: Verify metrics are scraped by Prometheus
     ((TOTAL_TESTS++))
     local prom_namespace=""
     if [[ "$monitoring_type" == "coo" ]]; then
@@ -126,23 +146,70 @@ test_monitoring_integration() {
     
     local prom_pod=$(oc get pods -n "$prom_namespace" -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     
-    if [[ -n "$prom_pod" ]]; then
-        log_info "Waiting for Prometheus to scrape metrics (may take a few minutes)..."
-        sleep 30  # Give Prometheus time to scrape
+    if [[ -z "$prom_pod" ]]; then
+        log_error "✗ Prometheus pod not found in namespace '$prom_namespace'"
+        ((TESTS_FAILED++))
+    else
+        log_info "Found Prometheus pod: $prom_pod"
         
-        if run_test "Metrics scraped by Prometheus" \
-            "oc exec $prom_pod -n $prom_namespace -- curl -sf 'http://localhost:9090/api/v1/query?query=eips_configured_total' | grep -q 'eips_configured_total'"; then
-            ((TESTS_PASSED++))
+        # Check if Prometheus has discovered the target
+        log_info "Checking if Prometheus has discovered the target..."
+        local targets_check=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
+            curl -sf "http://localhost:9090/api/v1/targets" 2>/dev/null || echo "")
+        
+        if echo "$targets_check" | grep -q "eip-monitor"; then
+            log_success "✓ Prometheus has discovered eip-monitor target"
         else
-            log_warn "Metrics may not be scraped yet (this is normal if ServiceMonitor was just created)"
+            log_warn "⚠️  Prometheus may not have discovered eip-monitor target yet"
+            log_info "  This is normal if ServiceMonitor was just created (can take 1-2 minutes)"
+        fi
+        
+        # Wait and retry query with exponential backoff
+        log_info "Waiting for Prometheus to scrape metrics (may take a few minutes)..."
+        local max_attempts=6
+        local attempt=1
+        local wait_time=30
+        local query_success=false
+        
+        while [[ $attempt -le $max_attempts ]]; do
+            log_info "Attempt $attempt/$max_attempts: Querying Prometheus..."
+            
+            local query_result=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
+                curl -sf --max-time 10 "http://localhost:9090/api/v1/query?query=eips_configured_total" 2>/dev/null || echo "")
+            
+            # Check if query was successful and contains the metric
+            if [[ -n "$query_result" ]] && echo "$query_result" | grep -q "eips_configured_total"; then
+                # Verify the response has actual data (not just empty result array)
+                # Prometheus returns {"status":"success","data":{"resultType":"vector","result":[...]}}
+                # We want to check if result array contains at least one entry
+                if echo "$query_result" | grep -qE '"result":\s*\[[^]]+\]'; then
+                    log_success "✓ Metrics scraped by Prometheus (found metric data)"
+                    query_success=true
+                    ((TESTS_PASSED++))
+                    break
+                elif echo "$query_result" | grep -qE '"result":\s*\[\]'; then
+                    # Empty result array - metric exists but no data yet
+                    log_info "  Metric exists in Prometheus but result is empty (may need more time)"
+                fi
+            fi
+            
+            if [[ $attempt -lt $max_attempts ]]; then
+                log_info "  Metric not found yet, waiting ${wait_time}s before retry..."
+                sleep "$wait_time"
+                wait_time=$((wait_time * 2))  # Exponential backoff: 30s, 60s, 120s, 240s, 480s
+            fi
+            attempt=$((attempt + 1))
+        done
+        
+        if [[ "$query_success" == "false" ]]; then
+            log_warn "⚠️  Metrics may not be scraped yet (this is normal if ServiceMonitor was just created)"
+            log_info "  Prometheus typically takes 1-2 minutes to discover and scrape new ServiceMonitors"
+            log_info "  You can check Prometheus targets at: http://localhost:9090/targets (via port-forward)"
             ((TESTS_FAILED++))
         fi
-    else
-        log_error "✗ Prometheus pod not found"
-        ((TESTS_FAILED++))
     fi
     
-    # Test 2: Verify metrics appear in Grafana datasource
+    # Test 3: Verify metrics appear in Grafana datasource
     ((TOTAL_TESTS++))
     if oc get grafanadatasource -n "$TEST_NAMESPACE" &>/dev/null; then
         log_success "✓ Grafana datasource exists"
