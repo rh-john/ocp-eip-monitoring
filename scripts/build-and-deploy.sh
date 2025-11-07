@@ -14,6 +14,9 @@ CLEAN_ALL="${CLEAN_ALL:-false}"  # Flag for cleaning everything
 MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"  # Default to INFO, can be DEBUG, INFO, WARNING, ERROR, CRITICAL
+SKIP_BUILD="${SKIP_BUILD:-false}"  # Skip building the image
+QUAY_IMAGE=""  # Full Quay image path (e.g., quay.io/org/eip-monitor:tag)
+WITH_MONITORING="${WITH_MONITORING:-false}"  # Deploy monitoring with 'all' command
 
 
 # Colors for output
@@ -52,7 +55,7 @@ Commands:
   push        Push image to registry
   deploy      Deploy eip-monitor application to OpenShift (no monitoring)
   monitoring  Deploy monitoring infrastructure (COO or UWM)
-  all         Build, push, and deploy
+  all         Build, push, and deploy (use --skip-build to use existing image, --with-monitoring to include monitoring)
   clean       Clean up deployment
   test        Test the deployment
   logs        Show container logs
@@ -65,6 +68,9 @@ Options:
   --remove-monitoring       Remove monitoring infrastructure
   --all                     Clean up everything (Grafana, eip-monitor, and monitoring)
   --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
+  --skip-build              Skip building the image (use with --quay-image or -r)
+  --quay-image IMAGE        Full Quay image path (e.g., quay.io/org/eip-monitor:tag)
+  --with-monitoring         Deploy monitoring infrastructure with 'all' command
 
 Environment Variables:
   None required - OpenShift-only monitoring
@@ -76,6 +82,8 @@ Examples:
   $0 deploy --log-level DEBUG
   $0 all -r quay.io/myorg
   $0 all -r quay.io/myorg --log-level DEBUG
+  $0 all --skip-build --quay-image quay.io/myorg/eip-monitor:v1.2.3 --with-monitoring
+  $0 all --skip-build -r quay.io/myorg -t v1.2.3 --with-monitoring
   $0 test
   $0 clean
   $0 clean --all              Clean up everything (Grafana, eip-monitor, monitoring)
@@ -841,9 +849,16 @@ deploy() {
     local project_root="$(dirname "$script_dir")"
     local manifest_file="${project_root}/k8s/deployment/k8s-manifests.yaml"
     
-    # Update image name only if registry is specified
-    if [[ -n "$REGISTRY" ]]; then
-        local full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+    # Update image name - prioritize QUAY_IMAGE, then REGISTRY, then use default
+    local full_image_name=""
+    if [[ -n "$QUAY_IMAGE" ]]; then
+        full_image_name="$QUAY_IMAGE"
+        local temp_manifest=$(mktemp)
+        sed "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$manifest_file" > "$temp_manifest"
+        manifest_file="$temp_manifest"
+        log_info "Using Quay image: $full_image_name"
+    elif [[ -n "$REGISTRY" ]]; then
+        full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
         local temp_manifest=$(mktemp)
         sed "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$manifest_file" > "$temp_manifest"
         manifest_file="$temp_manifest"
@@ -1751,6 +1766,18 @@ parse_args() {
                 LOG_LEVEL="$2"
                 shift 2
                 ;;
+            --skip-build)
+                SKIP_BUILD="true"
+                shift
+                ;;
+            --quay-image)
+                QUAY_IMAGE="$2"
+                shift 2
+                ;;
+            --with-monitoring)
+                WITH_MONITORING="true"
+                shift
+                ;;
             -h|--help)
                 show_usage
                 exit 0
@@ -1790,9 +1817,28 @@ main() {
             deploy_monitoring
             ;;
         all)
-            build_image
-            push_image
+            # Skip build if requested
+            if [[ "$SKIP_BUILD" != "true" ]]; then
+                build_image
+                push_image
+            else
+                log_info "Skipping build (--skip-build flag set)"
+                # Validate that an image is specified when skipping build
+                if [[ -z "$QUAY_IMAGE" ]] && [[ -z "$REGISTRY" ]]; then
+                    log_warn "No image specified with --skip-build. Using default image from manifest."
+                    log_info "Consider using --quay-image or -r/--registry to specify the image to use."
+                elif [[ -n "$QUAY_IMAGE" ]]; then
+                    log_info "Using Quay image: $QUAY_IMAGE"
+                elif [[ -n "$REGISTRY" ]]; then
+                    log_info "Using registry image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+                fi
+            fi
             deploy
+            # Deploy monitoring if requested
+            if [[ "$WITH_MONITORING" == "true" ]]; then
+                log_info "Deploying monitoring infrastructure..."
+                deploy_monitoring
+            fi
             ;;
         test)
             test_deployment
