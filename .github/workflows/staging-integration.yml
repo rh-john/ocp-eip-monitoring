@@ -1,0 +1,111 @@
+name: Staging Integration
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  integrate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to quay.io
+        uses: docker/login-action@v3
+        with:
+          registry: quay.io
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD || secrets.QUAY_TOKEN }}
+      
+      - name: Bump version
+        id: version
+        run: |
+          # Determine bump type from commit messages (default: patch)
+          BUMP_TYPE="patch"
+          if git log --oneline -1 | grep -qiE "feat|feature|minor"; then
+            BUMP_TYPE="minor"
+          fi
+          if git log --oneline -1 | grep -qiE "breaking|major"; then
+            BUMP_TYPE="major"
+          fi
+          
+          export BUMP_TYPE
+          NEW_VERSION=$(./scripts/bump-version.sh)
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "bump_type=${BUMP_TYPE}" >> $GITHUB_OUTPUT
+          
+          # Commit version bump
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .version
+          git commit -m "chore: bump version to ${NEW_VERSION}" || echo "No version change needed"
+          git push origin staging
+      
+      - name: Get RC number
+        id: rc
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Count existing RC tags for this version
+          RC_COUNT=$(git tag -l "v${VERSION}-rc*" | wc -l | tr -d ' ')
+          RC_NUM=$((RC_COUNT + 1))
+          echo "rc=${RC_NUM}" >> $GITHUB_OUTPUT
+      
+      - name: Create pre-release tag
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          RC="${{ steps.rc.outputs.rc }}"
+          TAG="v${VERSION}-rc${RC}"
+          git tag -a "$TAG" -m "Pre-release $TAG"
+          git push origin "$TAG"
+          echo "Created pre-release tag: $TAG"
+      
+      - name: Get commit SHA
+        id: commit
+        run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      
+      - name: Get date
+        id: date
+        run: echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+      
+      - name: Build and push container image
+        run: |
+          IMAGE_NAME="eip-monitor"
+          REGISTRY="quay.io/${{ secrets.QUAY_REPOSITORY }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          RC="${{ steps.rc.outputs.rc }}"
+          DATE="${{ steps.date.outputs.date }}"
+          SHA="${{ steps.commit.outputs.sha }}"
+          
+          # Build image
+          docker build --platform linux/amd64 -t ${REGISTRY}/${IMAGE_NAME}:v${VERSION}-rc${RC} .
+          docker tag ${REGISTRY}/${IMAGE_NAME}:v${VERSION}-rc${RC} ${REGISTRY}/${IMAGE_NAME}:staging-${DATE}
+          docker tag ${REGISTRY}/${IMAGE_NAME}:v${VERSION}-rc${RC} ${REGISTRY}/${IMAGE_NAME}:sha-${SHA}
+          
+          # Push images
+          docker push ${REGISTRY}/${IMAGE_NAME}:v${VERSION}-rc${RC}
+          docker push ${REGISTRY}/${IMAGE_NAME}:staging-${DATE}
+          docker push ${REGISTRY}/${IMAGE_NAME}:sha-${SHA}
+      
+      - name: Run integration tests
+        continue-on-error: true
+        run: |
+          echo "Running integration tests..."
+          # Placeholder for integration test execution
+          # Would require OpenShift cluster access
+          echo "Integration tests would run here if configured"
+      
+      - name: Generate test report
+        if: always()
+        run: |
+          echo "## Staging Integration Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Pre-release tag: v${{ steps.version.outputs.version }}-rc${{ steps.rc.outputs.rc }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+

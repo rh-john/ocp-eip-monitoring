@@ -1,0 +1,40 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [dev, coo, grafana, staging, main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Validate YAML manifests
+        run: |
+          echo "Validating YAML manifests..."
+          find k8s -name "*.yaml" -type f | while read file; do
+            echo "Checking $file"
+            python3 -c "import yaml; yaml.safe_load(open('$file'))" || exit 1
+          done
+          echo "All YAML files are valid"
+      
+      - name: Check for conflicts
+        run: |
+          echo "Checking for potential conflicts with other component branches..."
+          # This is informational - actual conflict detection happens during merge
+      
+      - name: Build container image (if Dockerfile changed)
+        if: contains(github.event.pull_request.changed_files, 'Dockerfile') || contains(github.event.pull_request.changed_files, 'src/')
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Test build
+        if: contains(github.event.pull_request.changed_files, 'Dockerfile') || contains(github.event.pull_request.changed_files, 'src/')
+        run: |
+          docker build --platform linux/amd64 -t eip-monitor:test .
+          echo "Build successful"
+
