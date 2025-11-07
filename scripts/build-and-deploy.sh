@@ -54,6 +54,7 @@ Commands:
   build       Build the container image
   push        Push image to registry
   deploy      Deploy eip-monitor application to OpenShift (no monitoring)
+  restart     Restart deployment to pull new image (useful after pushing same tag)
   monitoring  Deploy monitoring infrastructure (COO or UWM)
   all         Build, push, and deploy (use --skip-build to use existing image, --with-monitoring to include monitoring)
   clean       Clean up deployment
@@ -84,6 +85,7 @@ Examples:
   $0 all -r quay.io/myorg --log-level DEBUG
   $0 all --quay-image quay.io/myorg/eip-monitor:v1.2.3 --with-monitoring
   $0 all --skip-build -r quay.io/myorg -t v1.2.3 --with-monitoring
+  $0 restart                  Restart deployment to pull new image with same tag
   $0 test
   $0 clean
   $0 clean --all              Clean up everything (Grafana, eip-monitor, monitoring)
@@ -1469,6 +1471,57 @@ test_deployment() {
     fi
 }
 
+# Restart deployment to pull new image
+restart_deployment() {
+    # Check OpenShift connectivity
+    if ! oc whoami &>/dev/null; then
+        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
+        exit 1
+    fi
+    
+    log_info "Connected to OpenShift as: $(oc whoami)"
+    
+    # Check if deployment exists
+    if ! oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_error "Deployment 'eip-monitor' not found in namespace '$NAMESPACE'"
+        log_info "Deploy the application first using: $0 deploy"
+        exit 1
+    fi
+    
+    log_info "Restarting deployment to pull new image..."
+    log_info "This will trigger a rollout restart, forcing pods to pull the latest image (even with same tag)"
+    
+    # Get current image
+    local current_image=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
+    if [[ -n "$current_image" ]]; then
+        log_info "Current image: $current_image"
+    fi
+    
+    # Trigger rollout restart
+    oc rollout restart deployment/eip-monitor -n "$NAMESPACE"
+    
+    if [[ $? -eq 0 ]]; then
+        log_success "Rollout restart triggered successfully"
+        log_info "Waiting for rollout to complete..."
+        
+        # Wait for rollout with timeout
+        local timeout_seconds=120
+        if oc rollout status deployment/eip-monitor -n "$NAMESPACE" --timeout="${timeout_seconds}s" 2>/dev/null; then
+            log_success "Deployment restarted and ready"
+        else
+            log_warn "Rollout may still be in progress (timeout after ${timeout_seconds}s)"
+            log_info "Check status with: oc rollout status deployment/eip-monitor -n $NAMESPACE"
+        fi
+        
+        # Show pod status
+        log_info "Current pod status:"
+        oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
+    else
+        log_error "Failed to restart deployment"
+        return 1
+    fi
+}
+
 # Show logs
 show_logs() {
     if ! oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
@@ -1976,6 +2029,9 @@ main() {
             ;;
         deploy)
             deploy
+            ;;
+        restart)
+            restart_deployment
             ;;
         monitoring)
             deploy_monitoring
