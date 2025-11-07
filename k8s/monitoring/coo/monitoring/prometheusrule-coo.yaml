@@ -1,6 +1,6 @@
 ---
 # PrometheusRule for EIP monitoring alerts (COO)
-apiVersion: monitoring.coreos.com/v1
+apiVersion: monitoring.rhobs/v1
 kind: PrometheusRule
 metadata:
   name: eip-monitor-alerts-coo
@@ -305,7 +305,7 @@ spec:
         description: "EIP metrics collection has failed {{ $value }} times in the last 5 minutes."
     
     - alert: EIPMonitoringDown
-      expr: up{job="eip-monitor"} == 0
+      expr: up{job=~"serviceMonitor/.*/eip-monitor-coo/.*|eip-monitor-coo"} == 0
       for: 3m
       labels:
         severity: critical
