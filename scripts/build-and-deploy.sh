@@ -68,8 +68,8 @@ Options:
   --remove-monitoring       Remove monitoring infrastructure
   --all                     Clean up everything (Grafana, eip-monitor, and monitoring)
   --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
-  --skip-build              Skip building the image (use with --quay-image or -r)
-  --quay-image IMAGE        Full Quay image path (e.g., quay.io/org/eip-monitor:tag)
+  --skip-build              Skip building the image (use with -r/--registry)
+  --quay-image IMAGE        Full Quay image path (e.g., quay.io/org/eip-monitor:tag) - automatically skips build
   --with-monitoring         Deploy monitoring infrastructure with 'all' command
 
 Environment Variables:
@@ -82,7 +82,7 @@ Examples:
   $0 deploy --log-level DEBUG
   $0 all -r quay.io/myorg
   $0 all -r quay.io/myorg --log-level DEBUG
-  $0 all --skip-build --quay-image quay.io/myorg/eip-monitor:v1.2.3 --with-monitoring
+  $0 all --quay-image quay.io/myorg/eip-monitor:v1.2.3 --with-monitoring
   $0 all --skip-build -r quay.io/myorg -t v1.2.3 --with-monitoring
   $0 test
   $0 clean
@@ -1817,21 +1817,23 @@ main() {
             deploy_monitoring
             ;;
         all)
-            # Skip build if requested
-            if [[ "$SKIP_BUILD" != "true" ]]; then
+            # Skip build if requested or if using --quay-image (implies using existing image)
+            if [[ "$SKIP_BUILD" == "true" ]] || [[ -n "$QUAY_IMAGE" ]]; then
+                if [[ -n "$QUAY_IMAGE" ]]; then
+                    log_info "Using Quay image: $QUAY_IMAGE (skipping build)"
+                elif [[ "$SKIP_BUILD" == "true" ]]; then
+                    log_info "Skipping build (--skip-build flag set)"
+                    # Validate that an image is specified when skipping build
+                    if [[ -z "$REGISTRY" ]]; then
+                        log_warn "No image specified with --skip-build. Using default image from manifest."
+                        log_info "Consider using --quay-image or -r/--registry to specify the image to use."
+                    else
+                        log_info "Using registry image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+                    fi
+                fi
+            else
                 build_image
                 push_image
-            else
-                log_info "Skipping build (--skip-build flag set)"
-                # Validate that an image is specified when skipping build
-                if [[ -z "$QUAY_IMAGE" ]] && [[ -z "$REGISTRY" ]]; then
-                    log_warn "No image specified with --skip-build. Using default image from manifest."
-                    log_info "Consider using --quay-image or -r/--registry to specify the image to use."
-                elif [[ -n "$QUAY_IMAGE" ]]; then
-                    log_info "Using Quay image: $QUAY_IMAGE"
-                elif [[ -n "$REGISTRY" ]]; then
-                    log_info "Using registry image: ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
-                fi
             fi
             deploy
             # Deploy monitoring if requested
