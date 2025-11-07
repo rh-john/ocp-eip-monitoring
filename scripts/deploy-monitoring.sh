@@ -442,9 +442,17 @@ remove_coo_monitoring() {
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null || true
     
-    # Delete COO operator subscription (optional - may want to keep operator)
-    log_warn "COO operator subscription will not be removed automatically"
-    log_info "To remove COO operator: oc delete subscription cluster-observability-operator -n openshift-operators"
+    # Delete COO operator subscription
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        log_info "Deleting COO operator subscription..."
+        oc delete subscription cluster-observability-operator -n openshift-operators 2>/dev/null || log_warn "Failed to delete COO operator subscription"
+    fi
+    
+    # Delete ThanosQuerier
+    if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO ThanosQuerier..."
+        oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" 2>/dev/null || true
+    fi
     
     log_success "COO monitoring infrastructure removed"
 }
