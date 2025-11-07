@@ -324,7 +324,7 @@ main() {
         
         log_success "Grafana deployment completed!"
         log_info "Grafana resources status:"
-        oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
+        oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || log_info "  (Resources may still be initializing)"
     fi
 }
 
