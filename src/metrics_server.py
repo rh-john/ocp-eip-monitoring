@@ -1140,9 +1140,47 @@ def main():
     """Main function"""
     logger.info("Starting EIP Metrics Server")
     
+    # Initialize metrics with default values to ensure they're always present
+    # This ensures metrics are available immediately, even before first collection
+    eips_configured.set(0)
+    eips_assigned.set(0)
+    eips_unassigned.set(0)
+    eip_utilization_percent.set(0)
+    cpic_success.set(0)
+    cpic_pending.set(0)
+    cpic_error.set(0)
+    node_available.set(0)
+    node_with_errors.set(0)
+    # Counters start at 0 by default, no need to initialize
+    last_scrape_timestamp.set(0)
+    scrape_duration_seconds.set(0)
+    
+    # Set initial monitoring info
+    monitoring_info.info({
+        'version': '1.0.0',
+        'status': 'initializing',
+        'node_count': '0'
+    })
+    
+    logger.info("Metrics initialized with default values")
+    
     # Start metrics collection in background
     metrics_thread = threading.Thread(target=metrics_worker, daemon=True)
     metrics_thread.start()
+    
+    # Trigger immediate metrics collection (non-blocking)
+    # This ensures metrics are available as soon as possible
+    def initial_collection():
+        time.sleep(2)  # Give the server a moment to start
+        logger.info("Performing initial metrics collection...")
+        try:
+            collector.collect_metrics()
+            logger.info("Initial metrics collection completed")
+        except Exception as e:
+            logger.warning(f"Initial metrics collection failed (will retry): {e}")
+    
+    initial_thread = threading.Thread(target=initial_collection, daemon=True)
+    initial_thread.start()
     
     # Start Flask server
     port = int(os.getenv('PORT', '8080'))

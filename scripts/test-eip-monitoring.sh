@@ -152,6 +152,31 @@ test_monitoring_integration() {
     else
         log_info "Found Prometheus pod: $prom_pod"
         
+        # First, verify the pod is actually serving metrics
+        local eip_pod=$(oc get pods -n "$TEST_NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        if [[ -n "$eip_pod" ]]; then
+            log_info "Verifying eip-monitor pod is serving metrics..."
+            local pod_metrics=$(oc exec "$eip_pod" -n "$TEST_NAMESPACE" -- curl -sf http://localhost:8080/metrics 2>/dev/null || echo "")
+            if echo "$pod_metrics" | grep -q "eips_configured_total"; then
+                log_success "✓ eip-monitor pod is serving metrics"
+            else
+                log_warn "⚠️  eip-monitor pod metrics endpoint may not be ready yet"
+                log_info "  Waiting for pod to complete first metrics collection (may take up to 30s)..."
+                # Wait for metrics to appear in pod
+                local pod_wait_attempts=6
+                local pod_wait_count=0
+                while [[ $pod_wait_count -lt $pod_wait_attempts ]]; do
+                    sleep 5
+                    pod_metrics=$(oc exec "$eip_pod" -n "$TEST_NAMESPACE" -- curl -sf http://localhost:8080/metrics 2>/dev/null || echo "")
+                    if echo "$pod_metrics" | grep -q "eips_configured_total"; then
+                        log_success "✓ eip-monitor pod is now serving metrics"
+                        break
+                    fi
+                    pod_wait_count=$((pod_wait_count + 1))
+                done
+            fi
+        fi
+        
         # Check if Prometheus has discovered the target
         log_info "Checking if Prometheus has discovered the target..."
         local targets_check=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
@@ -159,6 +184,16 @@ test_monitoring_integration() {
         
         if echo "$targets_check" | grep -q "eip-monitor"; then
             log_success "✓ Prometheus has discovered eip-monitor target"
+            
+            # Check target health status
+            local target_health=$(echo "$targets_check" | grep -A 10 "eip-monitor" | grep -o '"health":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+            if [[ "$target_health" == "up" ]]; then
+                log_success "✓ Prometheus target is healthy (up)"
+            elif [[ "$target_health" == "down" ]]; then
+                log_warn "⚠️  Prometheus target is down - check service and pod connectivity"
+            else
+                log_info "  Target health status: ${target_health:-unknown}"
+            fi
         else
             log_warn "⚠️  Prometheus may not have discovered eip-monitor target yet"
             log_info "  This is normal if ServiceMonitor was just created (can take 1-2 minutes)"
@@ -174,8 +209,106 @@ test_monitoring_integration() {
         while [[ $attempt -le $max_attempts ]]; do
             log_info "Attempt $attempt/$max_attempts: Querying Prometheus..."
             
+            # First, check target scrape status for diagnostics
+            local targets_status=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
+                curl -sf "http://localhost:9090/api/v1/targets" 2>/dev/null || echo "")
+            
+            # Extract scrape information
+            local last_scrape=$(echo "$targets_status" | grep -A 30 "eip-monitor" | grep -o '"lastScrape":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+            local last_scrape_success=$(echo "$targets_status" | grep -A 30 "eip-monitor" | grep -o '"lastScrapeDuration":[0-9.]*' | head -1 | cut -d':' -f2 || echo "")
+            local last_error=$(echo "$targets_status" | grep -A 30 "eip-monitor" | grep -o '"lastError":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+            
+            if [[ -n "$last_scrape" ]] && [[ "$last_scrape" != "0001-01-01T00:00:00Z" ]]; then
+                log_info "  Last scrape: $last_scrape"
+                if [[ -n "$last_scrape_success" ]]; then
+                    log_info "  Last scrape duration: ${last_scrape_success}s"
+                fi
+                
+                # Check what was actually scraped by querying the scrape endpoint directly
+                if [[ $attempt -eq 1 ]]; then
+                    log_info "  Checking what Prometheus scraped from the target..."
+                    # Try to get the scrape URL from targets
+                    local scrape_url=$(echo "$targets_status" | grep -A 30 "eip-monitor" | grep -o '"scrapeUrl":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "")
+                    if [[ -n "$scrape_url" ]]; then
+                        log_info "  Scrape URL: $scrape_url"
+                        # Try to see what Prometheus got (this might not work if we can't access the service directly)
+                        # But we can at least verify the URL is correct
+                    fi
+                fi
+            else
+                log_info "  No scrape has occurred yet (target may have just been discovered)"
+            fi
+            
+            if [[ -n "$last_error" ]]; then
+                log_warn "  ⚠️  Last scrape error: $last_error"
+            fi
+            
+            # Try to query for the metric
             local query_result=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
                 curl -sf --max-time 10 "http://localhost:9090/api/v1/query?query=eips_configured_total" 2>/dev/null || echo "")
+            
+            # Also try a broader query for any EIP metric
+            if [[ $attempt -eq 1 ]] && ([[ -z "$query_result" ]] || ! echo "$query_result" | grep -qE '"result":\s*\[[^]]+\]'); then
+                log_info "  Trying broader query for any EIP metric..."
+                local broad_query=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
+                    curl -sf --max-time 10 "http://localhost:9090/api/v1/query?query={__name__=~\"eip.*\"}" 2>/dev/null || echo "")
+                if echo "$broad_query" | grep -qE '"result":\s*\[[^]]+\]'; then
+                    local metric_count=$(echo "$broad_query" | grep -o '"__name__"' | wc -l | tr -d ' ')
+                    log_info "  Found $metric_count EIP metrics with broader query"
+                    # Use this result if the specific query didn't work
+                    if [[ -z "$query_result" ]] || ! echo "$query_result" | grep -q "eips_configured_total"; then
+                        query_result="$broad_query"
+                    fi
+                fi
+            fi
+            
+            # Also try to see what metrics are available
+            if [[ $attempt -eq 1 ]] || [[ $attempt -eq 3 ]]; then
+                log_info "  Checking what metrics are available in Prometheus..."
+                local metrics_query=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
+                    curl -sf --max-time 10 "http://localhost:9090/api/v1/label/__name__/values" 2>/dev/null || echo "")
+                if echo "$metrics_query" | grep -q "eip"; then
+                    local eip_metrics=$(echo "$metrics_query" | grep -o '"eip[^"]*"' | head -5)
+                    log_info "  Found EIP-related metrics: $eip_metrics"
+                else
+                    log_info "  No EIP metrics found in Prometheus yet"
+                fi
+                
+                # Try querying for any metric from the eip-monitor job
+                log_info "  Checking if any metrics from eip-monitor job are available..."
+                local job_query=$(oc exec "$prom_pod" -n "$prom_namespace" -- \
+                    curl -sf --max-time 10 "http://localhost:9090/api/v1/query?query={job=~\"eip.*\"}" 2>/dev/null || echo "")
+                if echo "$job_query" | grep -qE '"result":\s*\[[^]]+\]'; then
+                    log_info "  Found metrics from eip-monitor job"
+                else
+                    log_info "  No metrics found from eip-monitor job"
+                fi
+                
+                # Check what the pod is actually serving
+                if [[ -n "$eip_pod" ]]; then
+                    log_info "  Verifying what metrics the pod is actually serving..."
+                    local pod_metrics_sample=$(oc exec "$eip_pod" -n "$TEST_NAMESPACE" -- \
+                        curl -sf http://localhost:8080/metrics 2>/dev/null | grep -E "^eip|^cpic|^node" | head -10 || echo "")
+                    if [[ -n "$pod_metrics_sample" ]]; then
+                        log_info "  Pod metrics sample (first 10 EIP/CPIC/node metrics):"
+                        echo "$pod_metrics_sample" | while read -r line; do
+                            log_info "    $line"
+                        done
+                    else
+                        log_warn "  ⚠️  Pod metrics endpoint returned no EIP/CPIC/node metrics"
+                        # Check if endpoint is working at all
+                        local all_metrics=$(oc exec "$eip_pod" -n "$TEST_NAMESPACE" -- \
+                            curl -sf http://localhost:8080/metrics 2>/dev/null | head -20 || echo "")
+                        if [[ -n "$all_metrics" ]]; then
+                            log_info "  Pod metrics endpoint is working, but no EIP metrics found"
+                            log_info "  Sample of what is available:"
+                            echo "$all_metrics" | while read -r line; do
+                                log_info "    $line"
+                            done
+                        fi
+                    fi
+                fi
+            fi
             
             # Check if query was successful and contains the metric
             if [[ -n "$query_result" ]] && echo "$query_result" | grep -q "eips_configured_total"; then
