@@ -879,39 +879,203 @@ deploy() {
     fi
     
     # Wait for deployment with timeout (using background process for reliability)
-    log_info "Waiting for deployment to be ready (timeout: 10 seconds)..."
-    oc rollout status deployment/eip-monitor -n "$NAMESPACE" --timeout=10s &
+    local timeout_seconds=60  # 1 minute - reasonable timeout with early error detection
+    log_info "Waiting for deployment to be ready (timeout: ${timeout_seconds}s)..."
+    oc rollout status deployment/eip-monitor -n "$NAMESPACE" --timeout="${timeout_seconds}s" &
     local rollout_pid=$!
-    local timeout_seconds=10
     local elapsed=0
-    while kill -0 "$rollout_pid" 2>/dev/null && [[ $elapsed -lt $timeout_seconds ]]; do
-        sleep 2
-        elapsed=$((elapsed + 2))
-        log_info "Still waiting... (${elapsed}s elapsed)"
-        # Show pod status every 2 seconds
+    local last_diagnostic_time=0
+    local diagnostic_interval=15  # Show detailed diagnostics every 15 seconds
+    local last_pod_status=""
+    local last_ready_replicas="0"
+    local error_detected=false
+    
+    while kill -0 "$rollout_pid" 2>/dev/null && [[ $elapsed -lt $timeout_seconds ]] && [[ "$error_detected" != "true" ]]; do
+        sleep 5
+        elapsed=$((elapsed + 5))
+        
+        # Get current status
+        local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
         local pod_status=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "unknown")
         local ready_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
         local desired_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
-        log_info "  Pod status: $pod_status, Ready: $ready_replicas/$desired_replicas"
+        local available_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
+        
+        # Check for error states in container statuses
+        if [[ -n "$pod_name" ]]; then
+            # Get container waiting states (ImagePullBackOff, ErrImagePull, CrashLoopBackOff, etc.)
+            local waiting_reason=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "")
+            local last_state_reason=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || echo "")
+            
+            # Check for fatal error states
+            if [[ -n "$waiting_reason" ]]; then
+                case "$waiting_reason" in
+                    ImagePullBackOff|ErrImagePull)
+                        log_error "Fatal error detected: $waiting_reason"
+                        error_detected=true
+                        ;;
+                    CrashLoopBackOff)
+                        log_error "Fatal error detected: $waiting_reason"
+                        error_detected=true
+                        ;;
+                    CreateContainerError|CreateContainerConfigError)
+                        log_error "Fatal error detected: $waiting_reason"
+                        error_detected=true
+                        ;;
+                esac
+            fi
+            
+            # Check last state for crash loops
+            if [[ -n "$last_state_reason" ]]; then
+                case "$last_state_reason" in
+                    Error|CrashLoopBackOff)
+                        # Only treat as error if we've seen it multiple times (not just initial crash)
+                        local restart_count=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo "0")
+                        if [[ "$restart_count" -gt 2 ]]; then
+                            log_error "Fatal error detected: Container crashed multiple times (restart count: $restart_count)"
+                            error_detected=true
+                        fi
+                        ;;
+                esac
+            fi
+        fi
+        
+        # Check if deployment is progressing
+        local is_progressing=false
+        if [[ "$pod_status" != "$last_pod_status" ]]; then
+            is_progressing=true
+        fi
+        if [[ "$ready_replicas" != "$last_ready_replicas" ]]; then
+            is_progressing=true
+        fi
+        
+        # Show status updates
+        if [[ $((elapsed % 10)) -eq 0 ]] || [[ "$is_progressing" == "true" ]]; then
+            log_info "Still waiting... (${elapsed}s elapsed)"
+            log_info "  Deployment status: Ready: $ready_replicas/$desired_replicas, Available: $available_replicas/$desired_replicas"
+            log_info "  Pod status: $pod_status"
+            if [[ -n "$waiting_reason" ]]; then
+                log_info "  Container waiting reason: $waiting_reason"
+            fi
+        fi
+        
+        # Show detailed diagnostics periodically or if pod is stuck
+        if [[ $((elapsed - last_diagnostic_time)) -ge $diagnostic_interval ]] || [[ "$pod_status" == "Pending" && $((elapsed % 15)) -eq 0 ]]; then
+            last_diagnostic_time=$elapsed
+            log_info "  Detailed status check:"
+            
+            if [[ -n "$pod_name" ]]; then
+                # Check pod conditions
+                local pod_conditions=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[*].type}:{.status.conditions[*].status}' 2>/dev/null || echo "")
+                if [[ -n "$pod_conditions" ]]; then
+                    log_info "    Pod conditions: $pod_conditions"
+                fi
+                
+                # Show recent events for the pod
+                local recent_events=$(oc get events -n "$NAMESPACE" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' -o jsonpath='{range .items[-3:]}{.lastTimestamp} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || echo "")
+                if [[ -n "$recent_events" ]]; then
+                    log_info "    Recent events:"
+                    echo "$recent_events" | while IFS= read -r line; do
+                        log_info "      $line"
+                    done
+                fi
+                
+                # If pod is Pending, check for common issues
+                if [[ "$pod_status" == "Pending" ]]; then
+                    local pending_reason=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="PodScheduled")].reason}' 2>/dev/null || echo "")
+                    if [[ -n "$pending_reason" && "$pending_reason" != "null" ]]; then
+                        log_warn "    Pod scheduling issue: $pending_reason"
+                    fi
+                fi
+            fi
+        fi
+        
+        # Update tracking variables
+        last_pod_status="$pod_status"
+        last_ready_replicas="$ready_replicas"
     done
+    
+    # If error was detected, exit early with diagnostics
+    if [[ "$error_detected" == "true" ]]; then
+        kill "$rollout_pid" 2>/dev/null || true
+        wait "$rollout_pid" 2>/dev/null || true
+        
+        log_error "Deployment failed due to detected error state"
+        log_info "Gathering error diagnostics..."
+        echo ""
+        log_info "=== Deployment Status ==="
+        oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+        echo ""
+        log_info "=== Pod Status ==="
+        oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
+        echo ""
+        
+        if [[ -n "$pod_name" ]]; then
+            log_info "=== Pod Events (for $pod_name) ==="
+            oc get events -n "$NAMESPACE" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' | tail -10 || true
+            echo ""
+            log_info "=== Pod Description (for $pod_name) ==="
+            oc describe pod "$pod_name" -n "$NAMESPACE" | tail -40 || true
+            echo ""
+            log_info "=== Pod Logs (for $pod_name) ==="
+            oc logs "$pod_name" -n "$NAMESPACE" --tail=50 2>&1 || true
+        fi
+        
+        echo ""
+        log_error "Deployment failed. Please fix the errors above and retry."
+        return 1
+    fi
     
     if kill -0 "$rollout_pid" 2>/dev/null; then
         log_warn "Deployment rollout timed out after ${timeout_seconds} seconds"
         kill "$rollout_pid" 2>/dev/null || true
         wait "$rollout_pid" 2>/dev/null || true
-        log_info "Checking deployment status..."
+        
+        log_info "Gathering deployment diagnostics..."
+        echo ""
+        log_info "=== Deployment Status ==="
         oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+        echo ""
+        log_info "=== Pod Status ==="
         oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
-        log_warn "Deployment may still be in progress. Check logs with: oc logs -f deployment/eip-monitor -n $NAMESPACE"
+        echo ""
+        
+        # Get pod name for detailed diagnostics
+        local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        if [[ -n "$pod_name" ]]; then
+            log_info "=== Pod Events (for $pod_name) ==="
+            oc get events -n "$NAMESPACE" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' | tail -10 || true
+            echo ""
+            log_info "=== Pod Description (for $pod_name) ==="
+            oc describe pod "$pod_name" -n "$NAMESPACE" | tail -30 || true
+        fi
+        
+        echo ""
+        log_warn "Deployment may still be in progress. Common issues:"
+        log_info "  - Image pull errors: Check if image is accessible and credentials are correct"
+        log_info "  - Resource constraints: Check cluster resources with 'oc describe node'"
+        log_info "  - Network issues: Check if image registry is reachable"
+        log_info ""
+        log_info "To monitor deployment progress:"
+        log_info "  oc rollout status deployment/eip-monitor -n $NAMESPACE"
+        log_info "  oc logs -f deployment/eip-monitor -n $NAMESPACE"
+        log_info "  oc get events -n $NAMESPACE --sort-by='.lastTimestamp'"
+        log_info ""
+        log_info "Deployment has been applied. The script will continue, but the deployment may still be initializing."
     else
         wait "$rollout_pid"
-        if [[ $? -eq 0 ]]; then
+        local rollout_exit_code=$?
+        if [[ $rollout_exit_code -eq 0 ]]; then
             log_success "Deployment is ready"
         else
-            log_warn "Deployment rollout check failed"
+            log_warn "Deployment rollout check completed with exit code $rollout_exit_code"
             log_info "Checking deployment status..."
+            echo ""
             oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+            echo ""
             oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
+            echo ""
+            log_info "Deployment may still be initializing. Monitor with: oc rollout status deployment/eip-monitor -n $NAMESPACE"
         fi
     fi
     
