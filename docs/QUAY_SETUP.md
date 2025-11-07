@@ -43,9 +43,12 @@ In your GitHub repository:
   - Scope: Repository (default)
   - **Note**: Prefer QUAY_TOKEN over QUAY_PASSWORD for robot accounts
 
-- **QUAY_REPOSITORY**: Repository path (e.g., `rh-john/eip-monitor`)
+- **QUAY_REPOSITORY**: **Just the namespace/organization** (e.g., `rh-john`)
   - Type: Secret (or Variable if you prefer - this is not sensitive but can be a secret for consistency)
   - Scope: Repository (default)
+  - **Important**: Do NOT include the repository name or full path
+  - The workflow constructs: `quay.io/$QUAY_REPOSITORY/eip-monitor`
+  - Example: If `QUAY_REPOSITORY=rh-john`, images will be pushed to `quay.io/rh-john/eip-monitor`
 
 **Why Secrets vs Variables?**
 - **Secrets**: Encrypted, masked in logs, never exposed in output
