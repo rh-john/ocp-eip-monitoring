@@ -1,8 +1,8 @@
 # 🚀 Enhanced EIP Monitoring - Comprehensive Metrics & Alerting
 
-The EIP monitoring solution now includes **50+ advanced metrics** and **30+ intelligent alerts** for comprehensive OpenShift EIP and CPIC monitoring, capacity planning, and operational excellence.
+The EIP monitoring solution now includes **40+ advanced metrics** and **30+ intelligent alerts** for comprehensive OpenShift EIP and CPIC monitoring, capacity planning, and operational excellence.
 
-## 📊 **Complete Metrics Catalog (50+ Metrics)**
+## 📊 **Complete Metrics Catalog (40+ Metrics)**
 
 ### **Core EIP Metrics** (6 metrics)
 | Metric | Description | Type |
@@ -24,15 +24,13 @@ The EIP monitoring solution now includes **50+ advanced metrics** and **30+ inte
 | `cpic_pending_duration_seconds` | Time in pending state | resource_name |
 | `cpic_error_duration_seconds` | Time in error state | resource_name |
 
-### **Per-Node Metrics** (10 metrics)
+### **Per-Node Metrics** (8 metrics)
 | Metric | Description | Labels |
 |--------|-------------|--------|
 | `node_cpic_success_total` | Node CPIC success count | node |
 | `node_cpic_pending_total` | Node CPIC pending count | node |
 | `node_cpic_error_total` | Node CPIC error count | node |
 | `node_eip_assigned_total` | Node EIP assignment count | node |
-| `node_eip_primary_total` | Primary EIP count per node (first IP from each resource) | node |
-| `node_eip_secondary_total` | Secondary EIP count per node (remaining IPs) | node |
 | `node_eip_capacity_total` | Node EIP capacity | node |
 | `node_eip_utilization_percent` | Node EIP utilization % | node |
 | `eip_nodes_available_total` | Available EIP nodes count | - |
@@ -64,16 +62,6 @@ The EIP monitoring solution now includes **50+ advanced metrics** and **30+ inte
 |--------|-------------|-------|
 | `cluster_eip_health_score` | Overall cluster health score | 0-100 |
 | `cluster_eip_stability_score` | Stability score (change frequency) | 0-100 |
-
-### **Health Status Metrics** (6 metrics)
-| Metric | Description | Use Case |
-|--------|-------------|----------|
-| `malfunctioning_eip_objects_count` | Number of EIP resources with EIP-CPIC mismatches | Detect misaligned resources |
-| `overcommitted_eip_objects_count` | Total overcommitted IPs (when configured > available nodes) | Capacity planning |
-| `critical_eip_objects_count` | Number of EIP resources with no working assignments | Critical issue detection |
-| `eip_cpic_mismatches_total` | Total count of all EIP-CPIC mismatches | Overall mismatch tracking |
-| `eip_cpic_mismatches_node_mismatch` | IPs with different node assignments in EIP vs CPIC | Node assignment issues |
-| `eip_cpic_mismatches_missing_in_eip` | IPs in CPIC but missing from EIP status.items | Stale CPIC detection |
 
 ### **Monitoring System Metrics** (4 metrics)
 | Metric | Description | Purpose |
@@ -241,27 +229,6 @@ rate(eip_changes_last_hour[30m]) and (cluster_eip_health_score < 80)
 cpic_recoveries_last_hour / cpic_error_total
 ```
 
-### **Mismatch & Health Status Queries**
-```promql
-# Overall mismatch rate
-eip_cpic_mismatches_total / eips_configured_total * 100
-
-# Node mismatch breakdown
-eip_cpic_mismatches_node_mismatch
-
-# Critical resources percentage
-critical_eip_objects_count / count(count by (namespace, name) (eips_configured_total)) * 100
-
-# Overcommitted IPs per resource
-overcommitted_eip_objects_count
-
-# Primary vs Secondary EIP distribution
-sum(node_eip_primary_total) / sum(node_eip_secondary_total)
-
-# Malfunctioning resources alert condition
-malfunctioning_eip_objects_count > 0
-```
-
 ## 🔧 **Configuration & Tuning**
 
 ### **Alert Thresholds**
@@ -316,4 +283,4 @@ curl http://eip-monitor:8080/metrics | grep eip_
 
 For detailed deployment instructions, see [CONTAINER_DEPLOYMENT.md](CONTAINER_DEPLOYMENT.md).
 
-All 50+ metrics and 30+ alerts are immediately available in Prometheus and AlertManager!
+All 40+ metrics and 25+ alerts are immediately available in Prometheus and AlertManager!

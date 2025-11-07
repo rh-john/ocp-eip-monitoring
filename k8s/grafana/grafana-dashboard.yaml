@@ -1,0 +1,428 @@
+---
+# Grafana Dashboard for EIP Monitoring
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-monitoring-dashboard
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "EIP Monitoring Dashboard",
+      "tags": ["eip", "openshift", "monitoring"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+          {
+            "id": 1,
+            "title": "EIP Overview",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(eips_configured_total)",
+                "legendFormat": "Configured",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(eips_assigned_total)",
+                "legendFormat": "Assigned",
+                "refId": "B",
+              "instant": true
+              },
+              {
+                "expr": "sum(eips_unassigned_total)",
+                "legendFormat": "Unassigned",
+                "refId": "C",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "palette-classic"},
+                "unit": "short"
+              }
+            }
+          },
+          {
+            "id": 2,
+            "title": "EIP Utilization",
+            "type": "gauge",
+            "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(eip_utilization_percent)",
+                "legendFormat": "Utilization",
+                "refId": "A",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "unit": "percent",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"value": null, "color": "green"},
+                    {"value": 80, "color": "yellow"},
+                    {"value": 90, "color": "red"}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 3,
+            "title": "CPIC Status",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(cpic_success_total)",
+                "legendFormat": "Success",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(cpic_pending_total)",
+                "legendFormat": "Pending",
+                "refId": "B",
+              "instant": true
+              },
+              {
+                "expr": "sum(cpic_error_total)",
+                "legendFormat": "Error",
+                "refId": "C",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "palette-classic"},
+                "unit": "short"
+              }
+            }
+          },
+          {
+            "id": 4,
+            "title": "Cluster Health Score",
+            "type": "gauge",
+            "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+            "targets": [
+              {
+                "expr": "sum(cluster_eip_health_score)",
+                "legendFormat": "Health Score",
+                "refId": "A",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "unit": "short",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"value": null, "color": "red"},
+                    {"value": 70, "color": "yellow"},
+                    {"value": 90, "color": "green"}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 5,
+            "title": "EIP Assignment Over Time",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+            "targets": [
+              {
+                "expr": "sum(eips_assigned_total)",
+                "legendFormat": "Assigned",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(eips_unassigned_total)",
+                "legendFormat": "Unassigned",
+                "refId": "B",
+              "instant": true
+              },
+              {
+                "expr": "sum(eips_configured_total)",
+                "legendFormat": "Configured",
+                "refId": "C",
+              "instant": true
+              }
+            ],
+            "xaxis": {"mode": "time"},
+            "yaxes": [
+              {"format": "short", "label": "Count"},
+              {"format": "short"}
+            ]
+          },
+          {
+            "id": 6,
+            "title": "CPIC Status Over Time",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+            "targets": [
+              {
+                "expr": "sum(cpic_success_total)",
+                "legendFormat": "Success",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(cpic_pending_total)",
+                "legendFormat": "Pending",
+                "refId": "B",
+              "instant": true
+              },
+              {
+                "expr": "sum(cpic_error_total)",
+                "legendFormat": "Error",
+                "refId": "C",
+              "instant": true
+              }
+            ],
+            "xaxis": {"mode": "time"},
+            "yaxes": [
+              {"format": "short", "label": "Count"},
+              {"format": "short"}
+            ]
+          },
+          {
+            "id": 7,
+            "title": "EIP Distribution by Node",
+            "type": "bargauge",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+            "targets": [
+              {
+                "expr": "sum(node_eip_assigned_total)",
+                "legendFormat": "{{node}}",
+                "refId": "A",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              }
+            }
+          },
+          {
+            "id": 8,
+            "title": "CPIC Status by Node",
+            "type": "bargauge",
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+            "targets": [
+              {
+                "expr": "sum(node_cpic_success_total)",
+                "legendFormat": "{{node}} - Success",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(node_cpic_pending_total)",
+                "legendFormat": "{{node}} - Pending",
+                "refId": "B",
+              "instant": true
+              },
+              {
+                "expr": "sum(node_cpic_error_total)",
+                "legendFormat": "{{node}} - Error",
+                "refId": "C",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              }
+            }
+          },
+          {
+            "id": 9,
+            "title": "EIP Utilization by Node",
+            "type": "bargauge",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+            "targets": [
+              {
+                "expr": "sum(node_eip_utilization_percent)",
+                "legendFormat": "{{node}}",
+                "refId": "A",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "unit": "percent",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"value": null, "color": "green"},
+                    {"value": 80, "color": "yellow"},
+                    {"value": 90, "color": "red"}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 10,
+            "title": "Distribution Metrics",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 20},
+            "targets": [
+              {
+                "expr": "sum(eip_distribution_gini_coefficient)",
+                "legendFormat": "Gini Coefficient",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "eip_distribution_stddev",
+                "legendFormat": "Std Dev",
+                "refId": "B",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "short"
+              }
+            }
+          },
+          {
+            "id": 11,
+            "title": "Node Availability",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 18, "y": 20},
+            "targets": [
+              {
+                "expr": "sum(eip_nodes_available_total)",
+                "legendFormat": "Available",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(eip_nodes_with_errors_total)",
+                "legendFormat": "With Errors",
+                "refId": "B",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "palette-classic"},
+                "unit": "short"
+              }
+            }
+          },
+          {
+            "id": 12,
+            "title": "EIP Assignment Rate",
+            "type": "graph",
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+            "targets": [
+              {
+                "expr": "sum(eip_assignment_rate_per_minute)",
+                "legendFormat": "Assignment Rate",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(eip_unassignment_rate_per_minute)",
+                "legendFormat": "Unassignment Rate",
+                "refId": "B",
+              "instant": true
+              }
+            ],
+            "xaxis": {"mode": "time"},
+            "yaxes": [
+              {"format": "short", "label": "Rate/min"},
+              {"format": "short"}
+            ]
+          },
+          {
+            "id": 13,
+            "title": "Cluster Stability Score",
+            "type": "gauge",
+            "gridPos": {"h": 4, "w": 6, "x": 12, "y": 28},
+            "targets": [
+              {
+                "expr": "sum(cluster_eip_stability_score)",
+                "legendFormat": "Stability Score",
+                "refId": "A",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "min": 0,
+                "max": 100,
+                "unit": "short",
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"value": null, "color": "red"},
+                    {"value": 70, "color": "yellow"},
+                    {"value": 90, "color": "green"}
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": 14,
+            "title": "Recent Changes",
+            "type": "stat",
+            "gridPos": {"h": 4, "w": 6, "x": 18, "y": 28},
+            "targets": [
+              {
+                "expr": "sum(eip_changes_last_hour)",
+                "legendFormat": "EIP Changes",
+                "refId": "A",
+              "instant": true
+              },
+              {
+                "expr": "sum(cpic_recoveries_last_hour)",
+                "legendFormat": "CPIC Recoveries",
+                "refId": "B",
+              "instant": true
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {"mode": "palette-classic"},
+                "unit": "short"
+              }
+            }
+          }
+        ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {
+        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+      }
+    }
+

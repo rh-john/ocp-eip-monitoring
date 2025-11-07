@@ -5,19 +5,8 @@ A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CP
 ## Prerequisites
 
 - OpenShift 4.18+
-- User Workload Monitoring enabled
+- User Workload Monitoring enabled (or COO monitoring infrastructure)
 - EgressIP feature enabled
-
-## Quick Start
-
-```bash
-# Build and deploy
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
-
-# Or deploy with existing image
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
-```
 
 ## Development Workflow
 
@@ -38,6 +27,31 @@ See [docs/BRANCH_STRATEGY.md](docs/BRANCH_STRATEGY.md) and [docs/RELEASE_PROCESS
 - Pre-releases: `quay.io/<namespace>/eip-monitor:v<version>-rc<number>`
 - Releases: `quay.io/<namespace>/eip-monitor:v<version>` and `latest`
 - Nightly builds: `quay.io/<namespace>/eip-monitor:<branch>-<date>`
+
+## Quick Start
+
+**Step 1: Install monitoring infrastructure**
+
+Install monitoring infrastructure (COO or UWM):
+```bash
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo  # or uwm
+```
+
+**Step 2: Deploy EIP Monitor**
+
+Deploy the EIP monitoring application:
+```bash
+./scripts/build-and-deploy.sh deploy -r quay.io/your-registry
+```
+
+**Step 3: Deploy Grafana Dashboards (Optional)**
+
+Deploy Grafana dashboards for visualization:
+```bash
+./scripts/deploy-grafana.sh --monitoring-type coo  # or uwm (must match Step 1)
+```
+
+**Note:** The monitoring type (COO or UWM) must match between Step 1 and Step 3.
 
 ## Architecture
 
@@ -156,18 +170,56 @@ EOF
 
 ## Installation
 
-### Method 1: Automated Build and Deploy
+### Prerequisites: Install Monitoring Infrastructure
+
+**This branch only contains Grafana resources. You must first install the monitoring infrastructure from the `coo` branch:**
+
 ```bash
+# Clone and switch to coo branch
 git clone https://github.com/rh-john/ocp-eip-monitoring.git
 cd ocp-eip-monitoring
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+git checkout coo
+
+# Install monitoring infrastructure (choose COO or UWM)
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo
+# OR
+./scripts/build-and-deploy.sh monitoring --monitoring-type uwm
 ```
 
-### Method 2: Deploy with Pre-built Image
+### Deploy Grafana (This Branch)
+
+**After monitoring infrastructure is installed, switch to this branch and deploy Grafana:**
+
 ```bash
-oc new-project eip-monitoring
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+# Switch to grafana branch
+git checkout grafana
+
+# Deploy Grafana (must match the monitoring type from above)
+./scripts/deploy-grafana.sh --monitoring-type coo
+# OR
+./scripts/deploy-grafana.sh --monitoring-type uwm
+```
+
+### Manual Deployment
+
+If you prefer to deploy Grafana resources manually:
+
+```bash
+# Deploy Grafana operator and instance (shared)
+oc apply -f k8s/grafana/grafana-operator.yaml
+oc apply -f k8s/grafana/grafana-instance.yaml
+
+# Deploy monitoring-specific datasource and RBAC
+# For COO:
+oc apply -f k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml
+oc apply -f k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml
+
+# For UWM:
+oc apply -f k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml
+oc apply -f k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml
+
+# Deploy dashboards
+oc apply -f k8s/grafana/grafana-dashboard-*.yaml
 ```
 
 ## Configuration
@@ -197,9 +249,28 @@ oc apply -f k8s/servicemonitor.yaml
 
 ## Usage
 
-### View Metrics
+### Access Grafana
+
+After deploying Grafana, access it via the OpenShift route:
+
 ```bash
-# Port-forward to access metrics
+# Get Grafana route URL
+oc get route -n eip-monitoring | grep grafana
+
+# Or port-forward to Grafana service
+oc port-forward service/eip-monitoring-grafana-service 3000:3000 -n eip-monitoring
+# Access at http://localhost:3000
+```
+
+### View Metrics in Grafana
+
+1. Log in to Grafana (default credentials may be in the Grafana instance manifest)
+2. Navigate to Dashboards
+3. Browse the pre-configured EIP monitoring dashboards
+
+### View Metrics Directly
+```bash
+# Port-forward to access metrics endpoint
 oc port-forward service/eip-monitor 8080:8080 -n eip-monitoring
 curl http://localhost:8080/metrics
 ```
@@ -265,19 +336,28 @@ oc get prometheusrule eip-monitor-alerts -n eip-monitoring
 
 ## Project Structure
 
+**This branch (grafana) contains only Grafana resources:**
+
 ```
 ocp-eip-monitoring/
-├── src/metrics_server.py          # Core monitoring application
-├── k8s/                           # Kubernetes manifests
-│   ├── k8s-manifests.yaml         # Deployment resources
-│   └── servicemonitor.yaml        # Prometheus configuration
-├── scripts/                       # Operational scripts
-│   ├── build-and-deploy.sh        # Build and deployment
-│   └── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
-└── docs/                          # Documentation
-    ├── CONTAINER_DEPLOYMENT.md    # Deployment guide
-    └── ENHANCED_METRICS_GUIDE.md  # Metrics reference
+├── k8s/
+│   ├── grafana/                   # Shared Grafana resources
+│   │   ├── grafana-operator.yaml # Grafana operator subscription
+│   │   ├── grafana-instance.yaml # Grafana instance
+│   │   ├── grafana-dashboard-*.yaml  # Dashboard definitions (23 dashboards)
+│   │   └── *.md                   # Grafana documentation
+│   └── monitoring/                # Monitoring-specific Grafana resources
+│       ├── coo/                   # COO-specific
+│       │   ├── grafana/          # COO Grafana datasource
+│       │   └── rbac/             # COO Grafana RBAC
+│       └── uwm/                   # UWM-specific
+│           ├── grafana/           # UWM Grafana datasource
+│           └── rbac/              # UWM Grafana RBAC
+└── scripts/
+    └── deploy-grafana.sh          # Grafana deployment script
 ```
+
+**For monitoring infrastructure (COO/UWM), eip-monitor tool, and other resources, see the [`coo` branch](https://github.com/rh-john/ocp-eip-monitoring/tree/coo).**
 
 ## Documentation
 

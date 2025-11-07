@@ -1,0 +1,344 @@
+---
+# Interactive Drilldown Dashboard
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-interactive-drilldown
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "Interactive EIP Drilldown",
+      "tags": ["eip", "interactive", "drilldown", "exploration"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "title": "EIP Overview - Click to Drill Down",
+          "type": "stat",
+          "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(eips_configured_total)",
+              "legendFormat": "Configured",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "blue"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "links": [
+            {
+              "title": "View Details",
+              "url": "/d/eip-enhanced-tables/eip-enhanced-tables?var-node=__all",
+              "targetBlank": false
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "Assigned EIPs - Click for Node Details",
+          "type": "stat",
+          "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(eips_assigned_total)",
+              "legendFormat": "Assigned",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "links": [
+            {
+              "title": "Node Distribution",
+              "url": "/d/eip-distribution-heatmap/eip-distribution-heatmap-analysis",
+              "targetBlank": false
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "CPIC Success - Click for Health Details",
+          "type": "stat",
+          "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(cpic_success_total)",
+              "legendFormat": "Success",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "links": [
+            {
+              "title": "Node Health Grid",
+              "url": "/d/eip-node-health-grid/eip-node-health-status-grid",
+              "targetBlank": false
+            }
+          ]
+        },
+        {
+          "id": 4,
+          "title": "CPIC Errors - Click for Timeline",
+          "type": "stat",
+          "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(cpic_error_total)",
+              "legendFormat": "Errors",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "thresholds"},
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "links": [
+            {
+              "title": "Event Timeline",
+              "url": "/d/eip-timeline-events/eip-timeline-events",
+              "targetBlank": false
+            }
+          ]
+        },
+        {
+          "id": 5,
+          "title": "Node Selection",
+          "type": "table",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 6},
+          "targets": [
+            {
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "{{node}}",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "displayMode": "color-background"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 10, "color": "yellow"},
+                  {"value": 20, "color": "orange"},
+                  {"value": 30, "color": "red"}
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Value"
+              }
+            ]
+          },
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Value": "EIPs Assigned",
+                  "node": "Node Name"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 6,
+          "title": "Quick Metrics",
+          "type": "timeseries",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 6},
+          "targets": [
+            {
+              "expr": "sum(eips_configured_total)",
+              "legendFormat": "Configured",
+              "refId": "A",
+              "instant": true
+            },
+            {
+              "expr": "sum(eips_assigned_total)",
+              "legendFormat": "Assigned",
+              "refId": "B",
+              "instant": true
+            },
+            {
+              "expr": "sum(eips_unassigned_total)",
+              "legendFormat": "Unassigned",
+              "refId": "C",
+              "instant": true
+            },
+            {
+              "expr": "sum(cpic_success_total)",
+              "legendFormat": "CPIC Success",
+              "refId": "D"
+            },
+            {
+              "expr": "sum(cpic_error_total)",
+              "legendFormat": "CPIC Error",
+              "refId": "E"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "unit": "short"
+            }
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Node Details (Select from table above)",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
+          "targets": [
+            {
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
+              "legendFormat": "{{node}}",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "id": "8",
+          "title": "CPIC Status for Selected Node",
+          "type": "piechart",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+          "targets": [
+            {
+              "expr": "sum by (node) (sum(cpic_success_total))",
+              "legendFormat": "{{node}} - Success",
+              "refId": "A",
+              "instant": true
+            },
+            {
+              "expr": "sum by (node) (sum(cpic_error_total))",
+              "legendFormat": "{{node}} - Error",
+              "refId": "B",
+              "instant": true
+            },
+            {
+              "expr": "sum by (node) (sum(cpic_pending_total))",
+              "legendFormat": "{{node}} - Pending",
+              "refId": "C",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {"mode": "palette-classic"},
+              "unit": "short"
+            }
+          },
+          "options": {
+            "pieType": "donut",
+            "tooltip": {
+              "mode": "single"
+            },
+            "legend": {
+              "displayMode": "visible",
+              "placement": "right"
+            }
+          }
+        },
+        {
+          "id": 9,
+          "title": "Navigation Links",
+          "type": "text",
+          "gridPos": {"h": 4, "w": 12, "x": 0, "y": 20},
+          "options": {
+            "content": "## Quick Navigation\n\n- [Enhanced Tables](./eip-enhanced-tables)\n- [Node Health Grid](./eip-node-health-grid)\n- [Timeline Events](./eip-timeline-events)\n- [Network Topology](./eip-network-topology)\n- [Custom Gauges](./eip-custom-gauges)\n- [State Visualization](./eip-state-visualization)\n- [Architecture Diagram](./eip-architecture-diagram)\n",
+            "mode": "markdown"
+          }
+        }
+      ]
+    }
+
