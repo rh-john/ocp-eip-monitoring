@@ -1926,6 +1926,19 @@ cleanup_all() {
     log_info "🗑️  Step 5: Cleaning up namespace..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    # Delete deployment first to stop pods immediately
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_info "Stopping deployment..."
+        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Force kill any remaining pods for faster cleanup
+    if oc get pods -n "$NAMESPACE" -l app=eip-monitor &>/dev/null; then
+        log_info "Force killing any remaining pods..."
+        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Delete the namespace and wait for it to be fully deleted
     if oc get namespace "$NAMESPACE" &>/dev/null; then
         # Check if namespace is empty (only finalizers remaining)
         local remaining_resources=$(oc get all -n "$NAMESPACE" 2>/dev/null | grep -v "No resources found" | wc -l | tr -d '\n' || echo "0")

@@ -115,6 +115,7 @@ test_monitoring_integration() {
         return 0
     fi
     
+<<<<<<< HEAD
     # Test 1: Verify ServiceMonitor exists
     ((TOTAL_TESTS++))
     local servicemonitor_name=""
@@ -136,6 +137,9 @@ test_monitoring_integration() {
     fi
     
     # Test 2: Verify metrics are scraped by Prometheus
+=======
+    # Test 1: Verify metrics are scraped by Prometheus
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
     ((TOTAL_TESTS++))
     local prom_namespace=""
     if [[ "$monitoring_type" == "coo" ]]; then
@@ -146,6 +150,7 @@ test_monitoring_integration() {
     
     local prom_pod=$(oc get pods -n "$prom_namespace" -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     
+<<<<<<< HEAD
     if [[ -z "$prom_pod" ]]; then
         log_error "✗ Prometheus pod not found in namespace '$prom_namespace'"
         ((TESTS_FAILED++))
@@ -343,6 +348,25 @@ test_monitoring_integration() {
     fi
     
     # Test 3: Verify metrics appear in Grafana datasource
+=======
+    if [[ -n "$prom_pod" ]]; then
+        log_info "Waiting for Prometheus to scrape metrics (may take a few minutes)..."
+        sleep 30  # Give Prometheus time to scrape
+        
+        if run_test "Metrics scraped by Prometheus" \
+            "oc exec $prom_pod -n $prom_namespace -- curl -sf 'http://localhost:9090/api/v1/query?query=eips_configured_total' | grep -q 'eips_configured_total'"; then
+            ((TESTS_PASSED++))
+        else
+            log_warn "Metrics may not be scraped yet (this is normal if ServiceMonitor was just created)"
+            ((TESTS_FAILED++))
+        fi
+    else
+        log_error "✗ Prometheus pod not found"
+        ((TESTS_FAILED++))
+    fi
+    
+    # Test 2: Verify metrics appear in Grafana datasource
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
     ((TOTAL_TESTS++))
     if oc get grafanadatasource -n "$TEST_NAMESPACE" &>/dev/null; then
         log_success "✓ Grafana datasource exists"

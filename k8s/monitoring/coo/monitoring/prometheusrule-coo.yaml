@@ -1,6 +1,10 @@
 ---
 # PrometheusRule for EIP monitoring alerts (COO)
+<<<<<<< HEAD
 apiVersion: monitoring.rhobs/v1
+=======
+apiVersion: monitoring.coreos.com/v1
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
 kind: PrometheusRule
 metadata:
   name: eip-monitor-alerts-coo
@@ -305,7 +309,11 @@ spec:
         description: "EIP metrics collection has failed {{ $value }} times in the last 5 minutes."
     
     - alert: EIPMonitoringDown
+<<<<<<< HEAD
       expr: up{job=~"serviceMonitor/.*/eip-monitor-coo/.*|eip-monitor-coo"} == 0
+=======
+      expr: up{job="eip-monitor"} == 0
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
       for: 3m
       labels:
         severity: critical

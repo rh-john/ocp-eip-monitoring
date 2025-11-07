@@ -121,6 +121,7 @@ verify_grafana_accessible() {
     
     log_info "Checking Grafana route accessibility..."
     
+<<<<<<< HEAD
     # Try multiple methods to find the Grafana route
     # 1. Try by route name matching Grafana instance name (e.g., eip-monitoring-grafana)
     local route=$(oc get route eip-monitoring-grafana -n "$namespace" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
@@ -145,6 +146,9 @@ verify_grafana_accessible() {
             fi
         done
     fi
+=======
+    local route=$(oc get route -n "$namespace" -l app=eip-monitor -o jsonpath='{.items[0].spec.host}' 2>/dev/null || echo "")
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
     
     if [[ -z "$route" ]]; then
         log_error "Grafana route not found"
@@ -153,6 +157,7 @@ verify_grafana_accessible() {
     
     log_info "Grafana route: https://$route"
     
+<<<<<<< HEAD
     # Find the route name to check its status
     local route_name=$(oc get route -n "$namespace" -o jsonpath="{.items[?(@.spec.host==\"$route\")].metadata.name}" 2>/dev/null || echo "")
     
@@ -207,6 +212,16 @@ verify_grafana_accessible() {
         return 0
     else
         log_warn "Grafana route returned HTTP $http_code (route exists but may not be fully ready)"
+=======
+    # Try to access the route (may need authentication)
+    local response=$(curl -k -s -o /dev/null -w "%{http_code}" "https://$route" 2>/dev/null || echo "000")
+    
+    if [[ "$response" == "200" ]] || [[ "$response" == "302" ]] || [[ "$response" == "401" ]]; then
+        log_success "Grafana route is accessible (HTTP $response)"
+        return 0
+    else
+        log_warn "Grafana route returned HTTP $response"
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
         return 1
     fi
 }

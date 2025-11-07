@@ -3,7 +3,11 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
+<<<<<<< HEAD
   name: eip-monitor-uwm
+=======
+  name: eip-monitor
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
   namespace: eip-monitoring
   labels:
     app: eip-monitor
