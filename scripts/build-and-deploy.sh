@@ -10,12 +10,17 @@ IMAGE_NAME="eip-monitor"
 IMAGE_TAG="latest"
 NAMESPACE="eip-monitoring"
 REGISTRY=""  # Set this to your container registry
+CLEAN_ALL="${CLEAN_ALL:-false}"  # Flag for cleaning everything
+MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
+REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"  # Default to INFO, can be DEBUG, INFO, WARNING, ERROR, CRITICAL
+
 
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[1;34m'  # Bright blue for readability on black terminals
 NC='\033[0m' # No Color
 
 # Logging functions
@@ -45,7 +50,8 @@ Usage: $0 <command> [options]
 Commands:
   build       Build the container image
   push        Push image to registry
-  deploy      Deploy to OpenShift
+  deploy      Deploy eip-monitor application to OpenShift (no monitoring)
+  monitoring  Deploy monitoring infrastructure (COO or UWM)
   all         Build, push, and deploy
   clean       Clean up deployment
   test        Test the deployment
@@ -55,6 +61,10 @@ Options:
   -r, --registry REGISTRY   Container registry URL
   -t, --tag TAG             Image tag (default: latest)
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
+  --monitoring-type TYPE    Monitoring type: coo or uwm (for monitoring command)
+  --remove-monitoring       Remove monitoring infrastructure
+  --all                     Clean up everything (Grafana, eip-monitor, and monitoring)
+  --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
 
 Environment Variables:
   None required - OpenShift-only monitoring
@@ -63,9 +73,15 @@ Examples:
   $0 build
   $0 build -r quay.io/myorg -t v1.0.0
   $0 deploy
+  $0 deploy --log-level DEBUG
   $0 all -r quay.io/myorg
+  $0 all -r quay.io/myorg --log-level DEBUG
   $0 test
   $0 clean
+  $0 clean --all              Clean up everything (Grafana, eip-monitor, monitoring)
+
+Note: To deploy Grafana dashboards, use the separate script:
+  ./scripts/deploy-grafana.sh
 
 EOF
 }
@@ -102,6 +118,91 @@ check_prerequisites() {
     log_info "Using container runtime: $CONTAINER_RUNTIME"
 }
 
+# Calculate hash of source files only (not Dockerfile)
+calculate_source_hash() {
+    local current_hash
+    
+    # Calculate hash of source files only
+    if command -v sha256sum &>/dev/null; then
+        current_hash=$(find src/ -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+    elif command -v shasum &>/dev/null; then
+        current_hash=$(find src/ -type f 2>/dev/null | sort | xargs shasum -a 256 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+    else
+        # Fallback: use file modification times (works on both macOS and Linux)
+        if [[ "$(uname)" == "Darwin" ]]; then
+            current_hash=$(find src/ -type f 2>/dev/null -exec stat -f "%m %N" {} \; 2>/dev/null | sort | shasum -a 256 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+        else
+            current_hash=$(find src/ -type f 2>/dev/null -exec stat -c "%Y %n" {} \; 2>/dev/null | sort | sha256sum 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+        fi
+    fi
+    
+    echo "$current_hash"
+}
+
+# Calculate hash of Dockerfile
+calculate_dockerfile_hash() {
+    local current_hash
+    
+    if [[ -f "Dockerfile" ]]; then
+        if command -v sha256sum &>/dev/null; then
+            current_hash=$(sha256sum Dockerfile 2>/dev/null | cut -d' ' -f1)
+        elif command -v shasum &>/dev/null; then
+            current_hash=$(shasum -a 256 Dockerfile 2>/dev/null | cut -d' ' -f1)
+        else
+            current_hash="unknown"
+        fi
+    else
+        current_hash=""
+    fi
+    
+    echo "$current_hash"
+}
+
+# Check if source files have changed since last build
+has_source_changed() {
+    local hash_file=".build-hash-source-${IMAGE_TAG:-latest}"
+    local current_hash=$(calculate_source_hash)
+    local last_hash=""
+    
+    if [[ -f "$hash_file" ]]; then
+        last_hash=$(cat "$hash_file" 2>/dev/null || echo "")
+    fi
+    
+    if [[ "$current_hash" != "$last_hash" ]]; then
+        return 0  # Changed
+    else
+        return 1  # Not changed
+    fi
+}
+
+# Check if Dockerfile has changed since last build
+has_dockerfile_changed() {
+    local hash_file=".build-hash-dockerfile-${IMAGE_TAG:-latest}"
+    local current_hash=$(calculate_dockerfile_hash)
+    local last_hash=""
+    
+    if [[ -f "$hash_file" ]]; then
+        last_hash=$(cat "$hash_file" 2>/dev/null || echo "")
+    fi
+    
+    if [[ "$current_hash" != "$last_hash" ]]; then
+        return 0  # Changed
+    else
+        return 1  # Not changed
+    fi
+}
+
+# Save hashes after successful build
+save_build_hashes() {
+    local source_hash_file=".build-hash-source-${IMAGE_TAG:-latest}"
+    local dockerfile_hash_file=".build-hash-dockerfile-${IMAGE_TAG:-latest}"
+    local current_source_hash=$(calculate_source_hash)
+    local current_dockerfile_hash=$(calculate_dockerfile_hash)
+    
+    echo "$current_source_hash" > "$source_hash_file"
+    echo "$current_dockerfile_hash" > "$dockerfile_hash_file"
+}
+
 # Build container image
 build_image() {
     log_info "Building container image..."
@@ -115,9 +216,40 @@ build_image() {
     log_info "Building image: $full_image_name"
     log_info "Building for linux/amd64 platform (OpenShift compatibility)"
     
-    $CONTAINER_RUNTIME build --platform linux/amd64 -t "$full_image_name" .
+    # Check what has changed to determine build strategy
+    local use_cache=""
+    local source_changed=false
+    local dockerfile_changed=false
     
-    log_success "Successfully built image: $full_image_name"
+    if has_source_changed; then
+        source_changed=true
+    fi
+    
+    if has_dockerfile_changed; then
+        dockerfile_changed=true
+    fi
+    
+    if [[ "$dockerfile_changed" == "true" ]]; then
+        log_info "Dockerfile has changed - rebuilding all layers without cache"
+        use_cache="--no-cache"
+    elif [[ "$source_changed" == "true" ]]; then
+        log_info "Source code has changed - rebuilding only affected layers (using cache for base layers)"
+        # Don't use --no-cache, let Docker's layer caching handle it
+        use_cache=""
+    else
+        log_info "No changes detected - using full cache for fastest build"
+        use_cache=""
+    fi
+    
+    $CONTAINER_RUNTIME build $use_cache --platform linux/amd64 -t "$full_image_name" .
+    
+    if [[ $? -eq 0 ]]; then
+        save_build_hashes
+        log_success "Successfully built image: $full_image_name"
+    else
+        log_error "Build failed"
+        return 1
+    fi
 }
 
 # Push image to registry
@@ -421,15 +553,275 @@ enable_user_workload_alertmanager() {
     log_info "AlertManager pods will start shortly (may take a few minutes)"
 }
 
-# Deploy to OpenShift
+# Detect currently installed monitoring type
+detect_current_monitoring_type() {
+    # Check for COO operator
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        echo "coo"
+        return 0
+    fi
+    
+    # Check for UWM
+    local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
+    if echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
+        echo "uwm"
+        return 0
+    fi
+    
+    echo "none"
+    return 0
+}
+
+# Install COO operator
+install_coo_operator() {
+    log_info "Installing Cluster Observability Operator..."
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    local subscription_file="${project_root}/k8s/monitoring/coo/operator/coo-operator-subscription.yaml"
+    
+    if [[ ! -f "$subscription_file" ]]; then
+        log_error "COO operator subscription file not found: $subscription_file"
+        return 1
+    fi
+    
+    oc apply -f "$subscription_file" || {
+        log_error "Failed to install COO operator subscription"
+        log_error "This requires cluster-admin permissions"
+        return 1
+    }
+    
+    log_success "COO operator subscription created"
+    log_info "Waiting for COO operator to be installed (this may take a few minutes)..."
+    
+    # Wait for CSV to succeed
+    local max_wait=300
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        local csv_phase=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | .status.phase' | head -1 || echo "")
+        if [[ "$csv_phase" == "Succeeded" ]]; then
+            log_success "COO operator installed successfully"
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [[ $((waited % 30)) -eq 0 ]]; then
+            log_info "Still waiting for COO operator... (${waited}s, CSV phase: ${csv_phase:-none})"
+        fi
+    done
+    
+    if [[ $waited -ge $max_wait ]]; then
+        log_warn "COO operator may not be fully ready yet (waited ${max_wait}s)"
+    fi
+}
+
+# Configure COO monitoring stack
+configure_coo_monitoring_stack() {
+    log_info "Deploying COO MonitoringStack..."
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    local monitoringstack_file="${project_root}/k8s/monitoring/coo/monitoring/coo-monitoringstack.yaml"
+    
+    if [[ ! -f "$monitoringstack_file" ]]; then
+        log_error "COO MonitoringStack file not found: $monitoringstack_file"
+        return 1
+    fi
+    
+    oc apply -f "$monitoringstack_file" || {
+        log_error "Failed to deploy COO MonitoringStack"
+        return 1
+    }
+    
+    log_success "COO MonitoringStack deployed"
+    log_info "Waiting for COO Prometheus and Alertmanager to be ready (this may take a few minutes)..."
+    
+    # Wait for Prometheus pods
+    local max_wait=300
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        local prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || echo "0")
+        prom_pods=$(echo "$prom_pods" | tr -d '[:space:]')
+        if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
+            log_success "COO Prometheus pods are running"
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [[ $((waited % 30)) -eq 0 ]]; then
+            log_info "Still waiting for COO Prometheus... (${waited}s)"
+        fi
+    done
+}
+
+# Remove COO monitoring
+remove_coo_monitoring() {
+    log_info "Removing COO monitoring infrastructure..."
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    # Delete MonitoringStack
+    if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO MonitoringStack..."
+        oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true || log_warn "Failed to delete MonitoringStack"
+    fi
+    
+    # Delete COO manifests
+    log_info "Removing COO manifests..."
+    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null || true
+    
+    # Delete COO operator subscription (optional - may want to keep operator)
+    log_warn "COO operator subscription will not be removed automatically"
+    log_info "To remove COO operator: oc delete subscription cluster-observability-operator -n openshift-operators"
+    
+    log_success "COO monitoring infrastructure removed"
+}
+
+# Remove UWM monitoring
+remove_uwm_monitoring() {
+    log_info "Removing UWM monitoring infrastructure..."
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    # Delete UWM manifests
+    log_info "Removing UWM manifests..."
+    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null || true
+    
+    # Disable UWM in cluster-monitoring-config
+    log_info "Disabling User Workload Monitoring in cluster-monitoring-config..."
+    local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
+    
+    if [[ -n "$cluster_config" ]] && echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
+        # Set enableUserWorkload to false
+        local temp_config=$(mktemp)
+        echo "$cluster_config" > "$temp_config"
+        
+        # Replace enableUserWorkload: true with false
+        sed -i '' 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config" 2>/dev/null || \
+        sed -i 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config"
+        
+        local updated_config=$(cat "$temp_config")
+        
+        # Escape for JSON
+        updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
+        updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+        
+        if oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
+            -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>/dev/null; then
+            log_success "Disabled UWM in cluster-monitoring-config"
+        else
+            log_warn "Failed to disable UWM in cluster-monitoring-config (may require cluster-admin)"
+            log_info "You may need to manually edit: oc -n openshift-monitoring edit configmap cluster-monitoring-config"
+        fi
+        
+        rm -f "$temp_config"
+    else
+        log_info "UWM not enabled in cluster-monitoring-config (or config doesn't exist)"
+    fi
+    
+    # Delete user-workload-monitoring-config
+    oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring 2>/dev/null || true
+    
+    log_success "UWM monitoring infrastructure removed"
+}
+
+# Deploy monitoring infrastructure
+deploy_monitoring() {
+    # Check OpenShift connectivity
+    if ! oc whoami &>/dev/null; then
+        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
+        exit 1
+    fi
+    
+    log_info "Connected to OpenShift as: $(oc whoami)"
+    
+    # Validate monitoring type
+    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]]; then
+        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo' or 'uwm'"
+        exit 1
+    fi
+    
+    # Detect current monitoring type
+    local current_type=$(detect_current_monitoring_type)
+    
+    # If removing monitoring
+    if [[ "$REMOVE_MONITORING" == "true" ]]; then
+        if [[ "$current_type" == "none" ]]; then
+            log_warn "No monitoring infrastructure detected to remove"
+            return 0
+        fi
+        
+        if [[ "$current_type" == "coo" ]]; then
+            remove_coo_monitoring
+        elif [[ "$current_type" == "uwm" ]]; then
+            remove_uwm_monitoring
+        fi
+        return 0
+    fi
+    
+    # If switching types, remove current first
+    if [[ "$current_type" != "none" ]] && [[ "$current_type" != "$MONITORING_TYPE" ]]; then
+        log_warn "Detected $current_type monitoring, but requested $MONITORING_TYPE"
+        log_info "Removing existing $current_type monitoring before installing $MONITORING_TYPE..."
+        if [[ "$current_type" == "coo" ]]; then
+            remove_coo_monitoring
+        elif [[ "$current_type" == "uwm" ]]; then
+            remove_uwm_monitoring
+        fi
+        sleep 10  # Wait a bit before installing new type
+    fi
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        log_info "Deploying COO monitoring infrastructure..."
+        
+        # Install COO operator
+        install_coo_operator
+        
+        # Configure monitoring stack
+        configure_coo_monitoring_stack
+        
+        # Apply COO manifests
+        log_info "Applying COO monitoring manifests..."
+        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        
+        log_success "COO monitoring infrastructure deployed!"
+        
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        log_info "Deploying UWM monitoring infrastructure..."
+        
+        # Enable UWM
+        enable_user_workload_monitoring
+        enable_user_workload_alertmanager
+        
+        # Apply UWM manifests
+        log_info "Applying UWM monitoring manifests..."
+        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        
+        log_success "UWM monitoring infrastructure deployed!"
+    fi
+    
+    log_info "Monitoring infrastructure status:"
+    oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || log_info "  (Resources may still be initializing)"
+}
+
+# Deploy to OpenShift (eip-monitor only, no monitoring)
 deploy() {
     # Disable colors for deployment to avoid any command parsing issues
     local old_colors=("$RED" "$GREEN" "$YELLOW" "$BLUE" "$NC")
     RED="" GREEN="" YELLOW="" BLUE="" NC=""
-    
-    log_info "Deploying EIP Monitor to OpenShift..."
-    
-    check_env_vars
     
     # Check OpenShift connectivity
     if ! oc whoami &>/dev/null; then
@@ -439,44 +831,87 @@ deploy() {
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     
-    # Check and enable User Workload Monitoring if needed
-    enable_user_workload_monitoring
+    # EIP Monitor deployment only (no monitoring infrastructure)
+    log_info "Deploying EIP Monitor application to OpenShift..."
     
-    # Enable AlertManager for user workloads
-    enable_user_workload_alertmanager
+    check_env_vars
     
-    # Update manifests
-    local manifest_files=($(update_manifests))
-    local temp_manifest="${manifest_files[0]}"
-    local temp_servicemonitor="${manifest_files[1]}"
+    # Get script directory to make paths relative to script location
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    local manifest_file="${project_root}/k8s/deployment/k8s-manifests.yaml"
     
-    # Apply main manifests
-    log_info "Applying Kubernetes manifests..."
-    oc apply -f "$temp_manifest"
-    
-    # Wait for deployment
-    log_info "Waiting for deployment to be ready..."
-    oc rollout status deployment/eip-monitor -n "$NAMESPACE" --timeout=300s
-    
-    # Apply ServiceMonitor if Prometheus Operator is available
-    if oc get crd servicemonitors.monitoring.coreos.com &>/dev/null; then
-        log_info "Applying ServiceMonitor..."
-        oc apply -f "$temp_servicemonitor"
-    else
-        log_warn "Prometheus Operator not found, skipping ServiceMonitor deployment"
+    # Update image name only if registry is specified
+    if [[ -n "$REGISTRY" ]]; then
+        local full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        local temp_manifest=$(mktemp)
+        sed "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$manifest_file" > "$temp_manifest"
+        manifest_file="$temp_manifest"
+        log_info "Updated image to: $full_image_name"
     fi
     
-    # Clean up temp files
-    rm -f "$temp_manifest" "$temp_servicemonitor"
+    # Apply main manifests
+    log_info "Applying Kubernetes manifests from k8s/deployment/..."
+    oc apply -f "$manifest_file"
     
-    log_success "Deployment completed successfully!"
+    # Update log level in ConfigMap if specified
+    if [[ -n "$LOG_LEVEL" ]]; then
+        log_info "Setting log level to: $LOG_LEVEL"
+        oc patch configmap eip-monitor-config -n "$NAMESPACE" --type merge -p "{\"data\":{\"log-level\":\"$LOG_LEVEL\"}}" 2>/dev/null || {
+            log_warn "ConfigMap not found or patch failed, will be created on next apply"
+        }
+        log_info "Log level updated. Restart deployment manually if needed: oc rollout restart deployment/eip-monitor -n $NAMESPACE"
+    fi
+    
+    # Wait for deployment with timeout (using background process for reliability)
+    log_info "Waiting for deployment to be ready (timeout: 10 seconds)..."
+    oc rollout status deployment/eip-monitor -n "$NAMESPACE" --timeout=10s &
+    local rollout_pid=$!
+    local timeout_seconds=10
+    local elapsed=0
+    while kill -0 "$rollout_pid" 2>/dev/null && [[ $elapsed -lt $timeout_seconds ]]; do
+        sleep 2
+        elapsed=$((elapsed + 2))
+        log_info "Still waiting... (${elapsed}s elapsed)"
+        # Show pod status every 2 seconds
+        local pod_status=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "unknown")
+        local ready_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+        local desired_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+        log_info "  Pod status: $pod_status, Ready: $ready_replicas/$desired_replicas"
+    done
+    
+    if kill -0 "$rollout_pid" 2>/dev/null; then
+        log_warn "Deployment rollout timed out after ${timeout_seconds} seconds"
+        kill "$rollout_pid" 2>/dev/null || true
+        wait "$rollout_pid" 2>/dev/null || true
+        log_info "Checking deployment status..."
+        oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+        oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
+        log_warn "Deployment may still be in progress. Check logs with: oc logs -f deployment/eip-monitor -n $NAMESPACE"
+    else
+        wait "$rollout_pid"
+        if [[ $? -eq 0 ]]; then
+            log_success "Deployment is ready"
+        else
+            log_warn "Deployment rollout check failed"
+            log_info "Checking deployment status..."
+            oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+            oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
+        fi
+    fi
+    
+    # Clean up temp file if created
+    [[ -n "$REGISTRY" ]] && rm -f "$temp_manifest"
+    
+    log_success "EIP Monitor deployment completed successfully!"
+    log_info "Note: Monitoring infrastructure is deployed separately using: $0 monitoring --monitoring-type <coo|uwm>"
     
     # Show status
     log_info "Deployment status:"
-    oc get pods -n "$NAMESPACE" -l app=eip-monitor
+    oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
     
     log_info "Service endpoints:"
-    oc get svc eip-monitor -n "$NAMESPACE"
+    oc get svc eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
     
     # Restore colors
     RED="${old_colors[0]}" GREEN="${old_colors[1]}" YELLOW="${old_colors[2]}" BLUE="${old_colors[3]}" NC="${old_colors[4]}"
@@ -866,15 +1301,420 @@ show_logs() {
     oc logs -f deployment/eip-monitor -n "$NAMESPACE"
 }
 
-# Clean up deployment
-cleanup() {
-    log_info "Cleaning up EIP Monitor deployment..."
+# Clean up Grafana resources
+cleanup_grafana() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 1: Removing Grafana resources..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    # Delete Grafana resources in correct dependency order
+    # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
+    log_info "Deleting GrafanaDashboards (depends on DataSources)..."
+    oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
+    
+    # Wait a moment for dashboards to start deletion
+    sleep 2
+    
+    log_info "Deleting GrafanaDataSources (depends on Grafana Instance)..."
+    oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
+    
+    # Wait a moment for datasources to start deletion
+    sleep 2
+    
+    log_info "Deleting Grafana Instances..."
+    oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
+    
+    # Force delete if finalizers are blocking (common issue with Grafana CRDs)
+    log_info "Checking for resources stuck with finalizers..."
+    local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_dashboards" ]]; then
+        log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
+        echo "$stuck_dashboards" | while read -r name; do
+            oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    
+    local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_datasources" ]]; then
+        log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
+        echo "$stuck_datasources" | while read -r name; do
+            oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    
+    local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_instances" ]]; then
+        log_warn "Found Grafana Instances with finalizers, removing finalizers..."
+        echo "$stuck_instances" | while read -r name; do
+            oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+        done
+    fi
+    
+    # Wait a moment for finalizer removal to take effect
+    sleep 2
+    
+    # Force delete any remaining resources (in case they're still stuck after finalizer removal)
+    log_info "Force deleting any remaining Grafana resources..."
+    oc delete grafanadashboard -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    
+    # Delete Grafana RBAC (monitoring-specific)
+    # Try to detect monitoring type and remove appropriate RBAC
+    local current_type=$(detect_current_monitoring_type)
+    if [[ "$current_type" != "none" ]]; then
+        local rbac_file="${project_root}/k8s/monitoring/${current_type}/rbac/grafana-rbac-${current_type}.yaml"
+        if [[ -f "$rbac_file" ]]; then
+            log_info "Removing Grafana RBAC for ${current_type}..."
+            oc delete -f "$rbac_file" 2>/dev/null || true
+        fi
+    else
+        # Try both types if we can't detect
+        log_info "Monitoring type unknown, trying both COO and UWM RBAC cleanup..."
+        local coo_rbac="${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        local uwm_rbac="${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        [[ -f "$coo_rbac" ]] && oc delete -f "$coo_rbac" 2>/dev/null || true
+        [[ -f "$uwm_rbac" ]] && oc delete -f "$uwm_rbac" 2>/dev/null || true
+    fi
+    
+    log_success "Grafana resources removed"
+    echo ""
+}
+
+# Clean up eip-monitor deployment
+cleanup_eip_monitor() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 2: Removing eip-monitor resources..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Delete ServiceMonitor and PrometheusRule first (dependencies)
+    log_info "Removing ServiceMonitor and PrometheusRule..."
+    oc delete servicemonitor eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    oc delete prometheusrule eip-monitor-alerts -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    
+    # Delete deployment first to stop pods immediately
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_info "Stopping deployment..."
+        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    fi
+    
+    # Force kill any remaining pods for faster cleanup
+    if oc get pods -n "$NAMESPACE" -l app=eip-monitor &>/dev/null; then
+        log_info "Force killing any remaining pods..."
+        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
+    fi
+    
+    # Delete service
+    oc delete service eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    
+    # Delete ConfigMap
+    oc delete configmap eip-monitor-config -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    
+    # Delete RBAC resources
+    oc delete rolebinding eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    oc delete role eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    oc delete serviceaccount eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
+    
+    log_success "eip-monitor resources removed"
+    echo ""
+}
+
+# Clean up monitoring infrastructure
+cleanup_monitoring() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 3: Removing monitoring infrastructure..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Detect and remove both COO and UWM if present
+    local current_type=$(detect_current_monitoring_type)
+    
+    if [[ "$current_type" == "coo" ]]; then
+        log_info "Removing COO monitoring infrastructure..."
+        remove_coo_monitoring
+    elif [[ "$current_type" == "uwm" ]]; then
+        log_info "Removing UWM monitoring infrastructure..."
+        remove_uwm_monitoring
+    else
+        log_info "No monitoring infrastructure detected, but cleaning up any remaining resources..."
+        # Try to clean up both types just in case
+        remove_coo_monitoring 2>/dev/null || true
+        remove_uwm_monitoring 2>/dev/null || true
+    fi
+    
+    log_success "Monitoring infrastructure removed"
+    echo ""
+}
+
+# Clean up operators (COO and Grafana)
+cleanup_operators() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 4: Removing operators..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Remove COO operator subscription
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        log_info "Removing Cluster Observability Operator subscription..."
+        oc delete subscription cluster-observability-operator -n openshift-operators 2>/dev/null || {
+            log_warn "Failed to delete COO subscription (may require cluster-admin)"
+        }
+        
+        # Wait for CSV to be removed, or delete it directly if stuck
+        log_info "Waiting for COO CSV to be removed..."
+        local max_wait=30
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local csv_info=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | "\(.metadata.name)|\(.metadata.deletionTimestamp // "active")"' | head -1 || echo "")
+            if [[ -z "$csv_info" ]]; then
+                log_success "COO operator removed"
+                break
+            fi
+            
+            # Check if CSV is being deleted (has deletionTimestamp)
+            local csv_name=$(echo "$csv_info" | cut -d'|' -f1)
+            local deletion_status=$(echo "$csv_info" | cut -d'|' -f2)
+            
+            if [[ "$deletion_status" != "active" ]]; then
+                log_info "COO CSV is being deleted (deletionTimestamp: $deletion_status), waiting..."
+            fi
+            
+            sleep 2
+            waited=$((waited + 2))
+        done
+        
+        # If CSV still exists after waiting, try to delete it directly
+        local remaining_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | .metadata.name' | head -1 || echo "")
+        if [[ -n "$remaining_csv" ]]; then
+            log_warn "COO CSV still exists after subscription deletion, deleting CSV directly..."
+            oc delete csv "$remaining_csv" -n openshift-operators --force --grace-period=0 2>/dev/null || {
+                log_warn "Failed to delete COO CSV directly (may require cluster-admin or CSV may be stuck)"
+            }
+            
+            # Remove finalizers if CSV is stuck
+            local csv_finalizers=$(oc get csv "$remaining_csv" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+            if [[ -n "$csv_finalizers" ]]; then
+                log_info "Removing finalizers from COO CSV..."
+                oc patch csv "$remaining_csv" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            fi
+        else
+            log_success "COO operator removed successfully"
+        fi
+    else
+        log_info "COO operator subscription not found"
+    fi
+    
+    # Remove Grafana operator subscription (cluster-scoped)
+    if oc get subscription grafana-operator -n openshift-operators &>/dev/null; then
+        log_info "Removing Grafana Operator subscription (cluster-scoped)..."
+        oc delete subscription grafana-operator -n openshift-operators 2>/dev/null || {
+            log_warn "Failed to delete Grafana operator subscription (may require cluster-admin)"
+        }
+        
+        # Wait for CSV to be removed, or delete it directly if stuck
+        log_info "Waiting for Grafana operator CSV to be removed..."
+        local max_wait=30
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local csv_info=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | "\(.metadata.name)|\(.metadata.deletionTimestamp // "active")"' | head -1 || echo "")
+            if [[ -z "$csv_info" ]]; then
+                log_success "Grafana operator removed"
+                break
+            fi
+            
+            # Check if CSV is being deleted
+            local csv_name=$(echo "$csv_info" | cut -d'|' -f1)
+            local deletion_status=$(echo "$csv_info" | cut -d'|' -f2)
+            
+            if [[ "$deletion_status" != "active" ]]; then
+                log_info "Grafana operator CSV is being deleted (deletionTimestamp: $deletion_status), waiting..."
+            fi
+            
+            sleep 2
+            waited=$((waited + 2))
+        done
+        
+        # If CSV still exists after waiting, try to delete it directly
+        local remaining_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+        if [[ -n "$remaining_csv" ]]; then
+            log_warn "Grafana operator CSV still exists after subscription deletion, deleting CSV directly..."
+            oc delete csv "$remaining_csv" -n openshift-operators --force --grace-period=0 2>/dev/null || {
+                log_warn "Failed to delete Grafana operator CSV directly (may require cluster-admin or CSV may be stuck)"
+            }
+            
+            # Remove finalizers if CSV is stuck
+            local csv_finalizers=$(oc get csv "$remaining_csv" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+            if [[ -n "$csv_finalizers" ]]; then
+                log_info "Removing finalizers from Grafana operator CSV..."
+                oc patch csv "$remaining_csv" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            fi
+        else
+            log_success "Grafana operator removed successfully"
+        fi
+    else
+        log_info "Grafana operator subscription (cluster-scoped) not found"
+    fi
+    
+    # Also check for namespace-scoped Grafana operator
+    if oc get subscription grafana-operator -n "$NAMESPACE" &>/dev/null; then
+        log_info "Removing namespace-scoped Grafana Operator subscription..."
+        oc delete subscription grafana-operator -n "$NAMESPACE" 2>/dev/null || true
+        
+        # Wait for CSV to be removed
+        log_info "Waiting for namespace-scoped Grafana operator CSV to be removed..."
+        local max_wait=30
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            local csv_exists=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+            if [[ -z "$csv_exists" ]]; then
+                log_success "Namespace-scoped Grafana operator removed"
+                break
+            fi
+            sleep 2
+            waited=$((waited + 2))
+        done
+        
+        if [[ $waited -ge $max_wait ]]; then
+            log_warn "Namespace-scoped Grafana operator removal may still be in progress"
+        fi
+    else
+        log_info "Namespace-scoped Grafana operator subscription not found"
+    fi
+    
+    log_success "Operators removed"
+    echo ""
+}
+
+# Complete cleanup (everything)
+cleanup_all() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Complete Cleanup (--all flag)"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    log_warn "This will remove ALL resources related to this project:"
+    log_warn "  • Grafana resources (dashboards, datasources, instances)"
+    log_warn "  • eip-monitor application (deployment, service, RBAC)"
+    log_warn "  • Monitoring infrastructure (COO/UWM)"
+    log_warn "  • Operators (COO and Grafana operator subscriptions)"
+    log_warn "  • Namespace"
+    echo ""
+    
+    # Step 1: Remove Grafana resources
+    cleanup_grafana
+    
+    # Step 2: Remove eip-monitor deployment
+    cleanup_eip_monitor
+    
+    # Step 3: Remove monitoring infrastructure (COO/UWM)
+    cleanup_monitoring
+    
+    # Step 4: Remove operators (COO and Grafana)
+    cleanup_operators
+    
+    # Step 5: Delete namespace if empty (optional, but clean)
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 5: Cleaning up namespace..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     if oc get namespace "$NAMESPACE" &>/dev/null; then
-        oc delete namespace "$NAMESPACE" --wait=true
-        log_success "Cleanup completed"
+        # Check if namespace is empty (only finalizers remaining)
+        local remaining_resources=$(oc get all -n "$NAMESPACE" 2>/dev/null | grep -v "No resources found" | wc -l || echo "0")
+        
+        if [[ "$remaining_resources" -gt 0 ]]; then
+            log_info "Remaining resources in namespace, deleting namespace..."
+            oc delete namespace "$NAMESPACE" 2>/dev/null || true
+            
+            # Wait for namespace deletion
+            local timeout=120
+            local elapsed=0
+            while oc get namespace "$NAMESPACE" &>/dev/null && [[ $elapsed -lt $timeout ]]; do
+                sleep 3
+                elapsed=$((elapsed + 3))
+                if [[ $((elapsed % 15)) -eq 0 ]]; then
+                    log_info "Waiting for namespace deletion... (${elapsed}s elapsed)"
+                fi
+            done
+            
+            if oc get namespace "$NAMESPACE" &>/dev/null; then
+                log_warn "Namespace deletion may still be in progress"
+                log_info "Check with: oc get namespace $NAMESPACE"
+            else
+                log_success "Namespace fully deleted"
+            fi
+        else
+            log_info "Namespace appears empty, deleting..."
+            oc delete namespace "$NAMESPACE" 2>/dev/null || true
+            log_success "Namespace deletion initiated"
+        fi
     else
-        log_warn "Namespace '$NAMESPACE' not found"
+        log_info "Namespace '$NAMESPACE' not found or already deleted"
+    fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "✅ Complete cleanup finished!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    log_info "All resources have been removed:"
+    log_info "  ✓ Grafana resources (dashboards, datasources, instances)"
+    log_info "  ✓ eip-monitor application (deployment, service, RBAC)"
+    log_info "  ✓ Monitoring infrastructure (COO/UWM)"
+    log_info "  ✓ Operators (COO and Grafana operator subscriptions)"
+    log_info "  ✓ Namespace"
+    log_info "  ✓ UWM disabled in cluster-monitoring-config (if it was enabled)"
+    echo ""
+    log_info "Note: If UWM disable failed, you may need cluster-admin permissions:"
+    log_info "  oc -n openshift-monitoring edit configmap cluster-monitoring-config"
+    log_info "  Set: enableUserWorkload: false"
+}
+
+# Clean up deployment (basic cleanup - just eip-monitor and namespace)
+cleanup() {
+    if [[ "$CLEAN_ALL" == "true" ]]; then
+        cleanup_all
+        return
+    fi
+    
+    log_info "Cleaning up EIP Monitor deployment..."
+    
+    # Delete deployment first to stop pods immediately
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_info "Stopping deployment..."
+        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Force kill any remaining pods for faster cleanup
+    if oc get pods -n "$NAMESPACE" -l app=eip-monitor &>/dev/null; then
+        log_info "Force killing any remaining pods..."
+        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Delete the namespace and wait for it to be fully deleted
+    if oc get namespace "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting namespace and waiting for completion..."
+        oc delete namespace "$NAMESPACE" 2>/dev/null
+        
+        # Wait for namespace to be deleted (with timeout)
+        local timeout=60
+        local elapsed=0
+        while oc get namespace "$NAMESPACE" &>/dev/null && [[ $elapsed -lt $timeout ]]; do
+            sleep 2
+            elapsed=$((elapsed + 2))
+            if [[ $((elapsed % 10)) -eq 0 ]]; then
+                log_info "Still waiting for namespace deletion... (${elapsed}s elapsed)"
+            fi
+        done
+        
+        if oc get namespace "$NAMESPACE" &>/dev/null; then
+            log_warn "Namespace deletion timed out after ${timeout} seconds"
+            log_info "Namespace may still be terminating. Check with: oc get namespace $NAMESPACE"
+            return 1
+        else
+            log_success "Namespace fully deleted"
+        fi
+    else
+        log_warn "Namespace '$NAMESPACE' not found or already deleted"
     fi
 }
 
@@ -892,6 +1732,22 @@ parse_args() {
                 ;;
             -n|--namespace)
                 NAMESPACE="$2"
+                shift 2
+                ;;
+            --monitoring-type)
+                MONITORING_TYPE="$2"
+                shift 2
+                ;;
+            --remove-monitoring)
+                REMOVE_MONITORING="true"
+                shift
+                ;;
+            --all)
+                CLEAN_ALL="true"
+                shift
+                ;;
+            --log-level)
+                LOG_LEVEL="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -928,6 +1784,9 @@ main() {
             ;;
         deploy)
             deploy
+            ;;
+        monitoring)
+            deploy_monitoring
             ;;
         all)
             build_image

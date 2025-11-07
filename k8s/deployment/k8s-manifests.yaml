@@ -95,7 +95,7 @@ spec:
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 0
+      maxUnavailable: 1
       maxSurge: 1
   selector:
     matchLabels:
@@ -110,6 +110,7 @@ spec:
         prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
+      terminationGracePeriodSeconds: 10
       serviceAccountName: eip-monitor
       securityContext:
         runAsNonRoot: true
@@ -134,6 +135,11 @@ spec:
             configMapKeyRef:
               name: eip-monitor-config
               key: eip-capacity-per-node
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: eip-monitor-config
+              key: log-level
         - name: PORT
           value: "8080"
         resources:
@@ -162,9 +168,9 @@ spec:
           httpGet:
             path: /health
             port: metrics
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          timeoutSeconds: 5
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
           failureThreshold: 3
         volumeMounts:
         - name: tmp
