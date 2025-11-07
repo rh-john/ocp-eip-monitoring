@@ -7,6 +7,9 @@ A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CP
 - OpenShift 4.18+
 - User Workload Monitoring enabled (or COO monitoring infrastructure)
 - EgressIP feature enabled
+- **Monitoring Option (choose one):**
+  - **User Workload Monitoring (UWM)**: Built-in OpenShift monitoring capability
+  - **Cluster Observability Operator (COO)**: Standalone monitoring operator
 
 ## Development Workflow
 
@@ -53,29 +56,13 @@ Deploy Grafana dashboards for visualization:
 
 **Note:** The monitoring type (COO or UWM) must match between Step 1 and Step 3.
 
-## Development Workflow
-
-This project uses a component-based branching strategy with automated CI/CD:
-
-- **Component Branches**: `dev` (eip-monitor), `coo` (monitoring infrastructure), `grafana` (dashboards)
-- **Integration Branch**: `staging` (auto-versioning, pre-release tags, container builds)
-- **Release Branch**: `main` (production releases)
-
-**Quick Reference:**
-- Work on component branches (`dev`, `coo`, `grafana`) independently
-- Merge to `staging` for integration testing and automated builds
-- Merge `staging` → `main` for production releases
-
-See [docs/BRANCH_STRATEGY.md](docs/BRANCH_STRATEGY.md) and [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for details.
-
-**Container Images:**
-- Pre-releases: `quay.io/<namespace>/eip-monitor:v<version>-rc<number>`
-- Releases: `quay.io/<namespace>/eip-monitor:v<version>` and `latest`
-- Nightly builds: `quay.io/<namespace>/eip-monitor:<branch>-<date>`
-
 ## Architecture
 
-The EIP monitoring solution integrates with OpenShift's User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
+The EIP monitoring solution supports two monitoring backends:
+- **Cluster Observability Operator (COO)**: Namespace-scoped Prometheus and Alertmanager managed by COO
+- **User Workload Monitoring (UWM)**: OpenShift's built-in user workload monitoring with Thanos Querier integration
+
+Both options provide the same metrics and alerting capabilities, allowing you to choose based on your cluster's monitoring strategy.
 
 ```mermaid
 graph TB
@@ -104,7 +91,7 @@ graph TB
         end
     end
     
-    subgraph "User Workload Monitoring"
+    subgraph "Monitoring Backend (COO or UWM)"
         PROM[Prometheus<br/>Scrapes Metrics]
         AM[AlertManager<br/>Fires Alerts]
         RULES[PrometheusRule<br/>Alert Definitions]
@@ -151,42 +138,54 @@ graph TB
 ### Component Overview
 
 - **eip-monitor**: Python Flask application that queries the OpenShift API for EgressIP and CPIC resources and exposes Prometheus metrics
-- **ServiceMonitor**: Configures Prometheus to scrape metrics from the eip-monitor service
-- **PrometheusRule**: Defines alert rules for EIP utilization, assignment status, CPIC errors, and cluster health
-- **Prometheus**: Collects and stores metrics, evaluates alert rules
-- **AlertManager**: Handles alert routing and notifications
+- **ServiceMonitor**: Configures Prometheus to scrape metrics from the eip-monitor service (COO or UWM specific)
+- **PrometheusRule**: Defines alert rules for EIP utilization, assignment status, CPIC errors, and cluster health (COO or UWM specific)
+- **Prometheus**: Collects and stores metrics, evaluates alert rules (managed by COO or UWM)
+- **AlertManager**: Handles alert routing and notifications (managed by COO or UWM)
 
-## User Workload Monitoring Setup
+## Monitoring Backend Options
 
-**Required**: Enable User Workload Monitoring in OpenShift:
+### Option 1: Cluster Observability Operator (COO)
 
+COO provides namespace-scoped Prometheus and Alertmanager instances. The deployment script automatically installs and configures COO.
+
+**Deployment:**
 ```bash
-# Enable user workload monitoring
-oc -n openshift-monitoring edit configmap cluster-monitoring-config
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo
 ```
 
-Add to the ConfigMap:
-```yaml
-data:
-  config.yaml: |
-    enableUserWorkload: true
-```
+**What it does:**
+- Installs COO operator subscription
+- Creates MonitoringStack CR with Prometheus and Alertmanager
+- Applies COO-specific ServiceMonitor and PrometheusRule
+- Configures namespace-scoped RBAC
 
+**Advantages:**
+- Namespace-scoped monitoring (isolated from cluster monitoring)
+- Full control over Prometheus configuration
+- Independent retention and storage policies
+
+### Option 2: User Workload Monitoring (UWM)
+
+UWM is OpenShift's built-in capability for monitoring user-defined projects. The deployment script automatically enables and configures UWM.
+
+**Deployment:**
 ```bash
-# Enable alerting
-oc apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: user-workload-monitoring-config
-  namespace: openshift-user-workload-monitoring
-data:
-  config.yaml: |
-    alertmanager:
-      enabled: true
-      enableAlertmanagerConfig: true
-EOF
+./scripts/build-and-deploy.sh monitoring --monitoring-type uwm
 ```
+
+**What it does:**
+- Enables UWM in `cluster-monitoring-config`
+- Enables AlertManager for user workloads
+- Applies UWM-specific ServiceMonitor and PrometheusRule
+- Configures cluster-scoped RBAC for Thanos Querier access
+
+**Advantages:**
+- Integrated with OpenShift cluster monitoring
+- Access to cluster-scoped metrics via Thanos Querier
+- Managed by OpenShift (no additional operator needed)
+
+**Note:** UWM requires cluster-admin permissions to enable.
 
 ## Installation
 
@@ -338,20 +337,29 @@ oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:808
 
 **No metrics appearing:**
 ```bash
-# Check user workload monitoring
-oc get pods -n openshift-user-workload-monitoring
-
 # Test metrics endpoint
 oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:8080/metrics
+
+# For COO: Check Prometheus pods
+oc get pods -n eip-monitoring -l app.kubernetes.io/name=prometheus
+
+# For UWM: Check user workload monitoring
+oc get pods -n openshift-user-workload-monitoring
+
+# Verify ServiceMonitor
+oc get servicemonitor -n eip-monitoring
 ```
 
 **Alerts not firing:**
 ```bash
-# Check AlertManager is running
+# For COO: Check AlertManager pods
+oc get pods -n eip-monitoring -l app.kubernetes.io/name=alertmanager
+
+# For UWM: Check AlertManager is running
 oc get pods -n openshift-user-workload-monitoring | grep alertmanager
 
 # Verify PrometheusRule
-oc get prometheusrule eip-monitor-alerts -n eip-monitoring
+oc get prometheusrule -n eip-monitoring
 ```
 
 ## Project Structure
