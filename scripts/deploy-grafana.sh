@@ -8,7 +8,10 @@ set -euo pipefail
 
 # Configuration
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
+<<<<<<< Updated upstream
 MONITORING_TYPE="${MONITORING_TYPE:-}"  # Will be auto-detected if not set
+=======
+>>>>>>> Stashed changes
 REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
 
 # Colors for output
@@ -44,19 +47,30 @@ Usage: $0 [options]
 
 Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
+<<<<<<< Updated upstream
   --monitoring-type TYPE    Monitoring type: coo or uwm (auto-detected if not specified)
   --remove-grafana          Remove Grafana resources
+=======
+  --remove-grafana         Remove Grafana datasources and resources
+>>>>>>> Stashed changes
   -h, --help               Show this help message
 
 Environment Variables:
   NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
+<<<<<<< Updated upstream
   MONITORING_TYPE           Monitoring type: coo or uwm (auto-detected if not specified)
+=======
+  REMOVE_GRAFANA            Set to true to remove Grafana resources (default: false)
+>>>>>>> Stashed changes
 
 Examples:
   $0
   $0 -n my-namespace
+<<<<<<< Updated upstream
   $0 --monitoring-type coo
   $0 --monitoring-type uwm
+=======
+>>>>>>> Stashed changes
   $0 --remove-grafana
 
 EOF
@@ -349,6 +363,37 @@ deploy_grafana() {
     log_info "  oc get grafanadashboard -n $NAMESPACE"
 }
 
+# Remove Grafana resources
+remove_grafana() {
+    log_info "Removing Grafana datasources and resources..."
+    
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
+    # Delete COO Grafana datasource
+    if oc get grafanadatasource prometheus-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO GrafanaDatasource..."
+        oc delete grafanadatasource prometheus-coo -n "$NAMESPACE" 2>/dev/null || log_warn "Failed to delete COO GrafanaDatasource"
+    fi
+    
+    # Delete UWM Grafana datasource
+    if oc get grafanadatasource prometheus-uwm -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting UWM GrafanaDatasource..."
+        oc delete grafanadatasource prometheus-uwm -n "$NAMESPACE" 2>/dev/null || log_warn "Failed to delete UWM GrafanaDatasource"
+    fi
+    
+    # Also try deleting via manifest files if they exist
+    if [[ -f "${project_root}/k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml" ]]; then
+        oc delete -f "${project_root}/k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml" 2>/dev/null || true
+    fi
+    
+    if [[ -f "${project_root}/k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml" ]]; then
+        oc delete -f "${project_root}/k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml" 2>/dev/null || true
+    fi
+    
+    log_success "Grafana datasources removed"
+}
+
 # Parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -357,10 +402,13 @@ parse_args() {
                 NAMESPACE="$2"
                 shift 2
                 ;;
+<<<<<<< Updated upstream
             --monitoring-type)
                 MONITORING_TYPE="$2"
                 shift 2
                 ;;
+=======
+>>>>>>> Stashed changes
             --remove-grafana)
                 REMOVE_GRAFANA="true"
                 shift
@@ -400,13 +448,21 @@ main() {
     log_info "Monitoring type: $MONITORING_TYPE"
     
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then
+<<<<<<< Updated upstream
         remove_grafana_resources
+=======
+        remove_grafana
+>>>>>>> Stashed changes
     else
         deploy_grafana
         
         log_success "Grafana deployment completed!"
         log_info "Grafana resources status:"
+<<<<<<< Updated upstream
         oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || log_info "  (Resources may still be initializing)"
+=======
+        oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
+>>>>>>> Stashed changes
     fi
 }
 
