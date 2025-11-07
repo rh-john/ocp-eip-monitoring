@@ -694,25 +694,35 @@ remove_uwm_monitoring() {
     oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null || true
     
     # Disable UWM in cluster-monitoring-config
-    log_info "Disabling User Workload Monitoring..."
+    log_info "Disabling User Workload Monitoring in cluster-monitoring-config..."
     local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
     
     if [[ -n "$cluster_config" ]] && echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
-        # Remove or set to false
+        # Set enableUserWorkload to false
         local temp_config=$(mktemp)
         echo "$cluster_config" > "$temp_config"
-        sed 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config" > "${temp_config}.new"
-        mv "${temp_config}.new" "$temp_config"
+        
+        # Replace enableUserWorkload: true with false
+        sed -i '' 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config" 2>/dev/null || \
+        sed -i 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config"
         
         local updated_config=$(cat "$temp_config")
+        
+        # Escape for JSON
         updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
         updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
         
-        oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
-            -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>/dev/null || {
-            log_warn "Failed to disable UWM in cluster-monitoring-config"
-        }
+        if oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
+            -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>/dev/null; then
+            log_success "Disabled UWM in cluster-monitoring-config"
+        else
+            log_warn "Failed to disable UWM in cluster-monitoring-config (may require cluster-admin)"
+            log_info "You may need to manually edit: oc -n openshift-monitoring edit configmap cluster-monitoring-config"
+        fi
+        
         rm -f "$temp_config"
+    else
+        log_info "UWM not enabled in cluster-monitoring-config (or config doesn't exist)"
     fi
     
     # Delete user-workload-monitoring-config
