@@ -345,8 +345,20 @@ check_prometheus_scrape_configs() {
         for job in $eip_jobs; do
             log_info "Scrape config for job '$job':"
             # Extract the job config block
-            local job_config=$(echo "$full_config" | awk "/- job_name: $job/,/^[[:space:]]*- job_name:/" | head -30)
-            echo "$job_config" | sed 's/^/  /'
+            # Escape slashes in job name for awk pattern matching
+            local escaped_job=$(echo "$job" | sed 's/\//\\\//g')
+            # Extract config from job_name line until next job_name or end of scrape_configs
+            local job_config=$(echo "$full_config" | awk -v job="$escaped_job" '
+                BEGIN { in_job=0 }
+                /- job_name: / && $0 ~ job { in_job=1 }
+                in_job && /^- job_name: / && $0 !~ job { exit }
+                in_job { print }
+            ' | head -25)
+            if [[ -n "$job_config" ]] && [[ "$job_config" != "" ]]; then
+                echo "$job_config" | sed 's/^/  /'
+            else
+                log_info "  (Config extraction limited, but job exists in Prometheus)"
+            fi
         done
         
         return 0
