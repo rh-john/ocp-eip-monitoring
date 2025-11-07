@@ -10,9 +10,12 @@ IMAGE_NAME="eip-monitor"
 IMAGE_TAG="latest"
 NAMESPACE="eip-monitoring"
 REGISTRY=""  # Set this to your container registry
+<<<<<<< Updated upstream
 CLEAN_ALL="${CLEAN_ALL:-false}"  # Flag for cleaning everything
 MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
+=======
+>>>>>>> Stashed changes
 LOG_LEVEL="${LOG_LEVEL:-INFO}"  # Default to INFO, can be DEBUG, INFO, WARNING, ERROR, CRITICAL
 SKIP_BUILD="${SKIP_BUILD:-false}"  # Skip building the image
 QUAY_IMAGE=""  # Full Quay image path (e.g., quay.io/org/eip-monitor:tag)
@@ -53,10 +56,15 @@ Usage: $0 <command> [options]
 Commands:
   build       Build the container image
   push        Push image to registry
+<<<<<<< Updated upstream
   deploy      Deploy eip-monitor application to OpenShift (no monitoring)
   restart     Restart deployment to pull new image (useful after pushing same tag)
   monitoring  Deploy monitoring infrastructure (COO or UWM)
   all         Build, push, and deploy (use --skip-build to use existing image, --with-monitoring to include monitoring)
+=======
+  deploy      Deploy eip-monitor application to OpenShift
+  all         Build, push, and deploy
+>>>>>>> Stashed changes
   clean       Clean up deployment
   test        Test the deployment
   logs        Show container logs
@@ -65,16 +73,19 @@ Options:
   -r, --registry REGISTRY   Container registry URL
   -t, --tag TAG             Image tag (default: latest)
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
+<<<<<<< Updated upstream
   --monitoring-type TYPE    Monitoring type: coo or uwm (for monitoring command)
   --remove-monitoring       Remove monitoring infrastructure
   --all                     Clean up everything (Grafana, eip-monitor, and monitoring)
+=======
+>>>>>>> Stashed changes
   --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
   --skip-build              Skip building the image (use with -r/--registry)
   --quay-image IMAGE        Full Quay image path (e.g., quay.io/org/eip-monitor:tag) - automatically skips build
   --with-monitoring         Deploy monitoring infrastructure with 'all' command
 
 Environment Variables:
-  None required - OpenShift-only monitoring
+  None required
 
 Examples:
   $0 build
@@ -89,6 +100,9 @@ Examples:
   $0 test
   $0 clean
   $0 clean --all              Clean up everything (Grafana, eip-monitor, monitoring)
+
+Note: To deploy monitoring infrastructure, use the separate script:
+  ./scripts/deploy-monitoring.sh
 
 Note: To deploy Grafana dashboards, use the separate script:
   ./scripts/deploy-grafana.sh
@@ -281,7 +295,7 @@ push_image() {
 
 # Environment variables validation
 check_env_vars() {
-    log_info "No additional environment variables required for OpenShift-only monitoring"
+    log_info "No additional environment variables required"
 }
 
 # OpenShift deployment configuration
@@ -328,6 +342,7 @@ update_manifests() {
     echo "$temp_servicemonitor"
 }
 
+<<<<<<< Updated upstream
 # Enable User Workload Monitoring if not already enabled
 enable_user_workload_monitoring() {
     log_info "Checking User Workload Monitoring configuration..."
@@ -828,6 +843,9 @@ deploy_monitoring() {
 }
 
 # Deploy to OpenShift (eip-monitor only, no monitoring)
+=======
+# Deploy to OpenShift
+>>>>>>> Stashed changes
 deploy() {
     # Disable colors for deployment to avoid any command parsing issues
     local old_colors=("$RED" "$GREEN" "$YELLOW" "$BLUE" "$NC")
@@ -841,7 +859,6 @@ deploy() {
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     
-    # EIP Monitor deployment only (no monitoring infrastructure)
     log_info "Deploying EIP Monitor application to OpenShift..."
     
     check_env_vars
@@ -1085,7 +1102,7 @@ deploy() {
     [[ -n "$REGISTRY" ]] && rm -f "$temp_manifest"
     
     log_success "EIP Monitor deployment completed successfully!"
-    log_info "Note: Monitoring infrastructure is deployed separately using: $0 monitoring --monitoring-type <coo|uwm>"
+    log_info "Note: Monitoring infrastructure is deployed separately using: ./scripts/deploy-monitoring.sh"
     
     # Show status
     log_info "Deployment status:"
@@ -1967,6 +1984,7 @@ parse_args() {
                 NAMESPACE="$2"
                 shift 2
                 ;;
+<<<<<<< Updated upstream
             --monitoring-type)
                 MONITORING_TYPE="$2"
                 shift 2
@@ -1979,6 +1997,8 @@ parse_args() {
                 CLEAN_ALL="true"
                 shift
                 ;;
+=======
+>>>>>>> Stashed changes
             --log-level)
                 LOG_LEVEL="$2"
                 shift 2
@@ -2030,12 +2050,15 @@ main() {
         deploy)
             deploy
             ;;
+<<<<<<< Updated upstream
         restart)
             restart_deployment
             ;;
         monitoring)
             deploy_monitoring
             ;;
+=======
+>>>>>>> Stashed changes
         all)
             # Skip build if requested or if using --quay-image (implies using existing image)
             if [[ "$SKIP_BUILD" == "true" ]] || [[ -n "$QUAY_IMAGE" ]]; then
