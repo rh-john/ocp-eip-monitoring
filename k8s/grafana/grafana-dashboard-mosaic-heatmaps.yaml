@@ -17,7 +17,12 @@ spec:
     {
       "id": null,
       "title": "EIP Mosaic Heatmaps",
-      "tags": ["eip", "mosaic", "heatmap", "visualization"],
+      "tags": [
+        "eip",
+        "mosaic",
+        "heatmap",
+        "visualization"
+      ],
       "style": "dark",
       "timezone": "browser",
       "refresh": "30s",
@@ -28,10 +33,15 @@ spec:
           "id": 1,
           "title": "Node EIP Assignment Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 14, "w": 24, "x": 0, "y": 0},
+          "gridPos": {
+            "h": 14,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
           "targets": [
             {
-              "expr": "node_eip_assigned_total",
+              "expr": "sum(node_eip_assigned_total)",
               "legendFormat": "{{node}}",
               "refId": "A",
               "format": "time_series"
@@ -84,10 +94,15 @@ spec:
           "id": 2,
           "title": "Node Utilization Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 14, "w": 12, "x": 0, "y": 14},
+          "gridPos": {
+            "h": 14,
+            "w": 12,
+            "x": 0,
+            "y": 14
+          },
           "targets": [
             {
-              "expr": "node_eip_utilization_percent",
+              "expr": "sum(node_eip_utilization_percent)",
               "legendFormat": "{{node}}",
               "refId": "A",
               "format": "time_series"
@@ -141,22 +156,27 @@ spec:
           "id": 3,
           "title": "CPIC Status Distribution Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 14, "w": 12, "x": 12, "y": 14},
+          "gridPos": {
+            "h": 14,
+            "w": 12,
+            "x": 12,
+            "y": 14
+          },
           "targets": [
             {
-              "expr": "node_cpic_success_total",
+              "expr": "sum(node_cpic_success_total)",
               "legendFormat": "{{node}} - Success",
               "refId": "A",
               "format": "time_series"
             },
             {
-              "expr": "node_cpic_pending_total",
+              "expr": "sum(node_cpic_pending_total)",
               "legendFormat": "{{node}} - Pending",
               "refId": "B",
               "format": "time_series"
             },
             {
-              "expr": "node_cpic_error_total",
+              "expr": "sum(node_cpic_error_total)",
               "legendFormat": "{{node}} - Error",
               "refId": "C",
               "format": "time_series"
@@ -208,10 +228,15 @@ spec:
           "id": 4,
           "title": "EIP Assignment Rate Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 12, "w": 12, "x": 0, "y": 28},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 0,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "eip_assignment_rate_per_minute",
+              "expr": "sum(eip_assignment_rate_per_minute)",
               "legendFormat": "Assignment Rate",
               "refId": "A",
               "format": "time_series"
@@ -263,10 +288,15 @@ spec:
           "id": 5,
           "title": "EIP Unassignment Rate Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 12, "w": 12, "x": 12, "y": 28},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 12,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "eip_unassignment_rate_per_minute",
+              "expr": "sum(eip_unassignment_rate_per_minute)",
               "legendFormat": "Unassignment Rate",
               "refId": "A",
               "format": "time_series"
@@ -318,10 +348,15 @@ spec:
           "id": 6,
           "title": "CPIC Error Duration Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 12, "w": 12, "x": 0, "y": 40},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 0,
+            "y": 40
+          },
           "targets": [
             {
-              "expr": "cpic_error_duration_seconds",
+              "expr": "sum(cpic_error_duration_seconds)",
               "legendFormat": "{{resource_name}}",
               "refId": "A",
               "format": "time_series"
@@ -373,10 +408,15 @@ spec:
           "id": 7,
           "title": "CPIC Pending Duration Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 12, "w": 12, "x": 12, "y": 40},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 12,
+            "y": 40
+          },
           "targets": [
             {
-              "expr": "cpic_pending_duration_seconds",
+              "expr": "sum(cpic_pending_duration_seconds)",
               "legendFormat": "{{resource_name}}",
               "refId": "A",
               "format": "time_series"
@@ -428,10 +468,15 @@ spec:
           "id": 8,
           "title": "Node Capacity Headroom Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 12, "w": 12, "x": 0, "y": 52},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 0,
+            "y": 52
+          },
           "targets": [
             {
-              "expr": "100 - node_eip_utilization_percent",
+              "expr": "100 - sum(node_eip_utilization_percent)",
               "legendFormat": "{{node}} - Headroom",
               "refId": "A",
               "format": "time_series"
@@ -485,10 +530,15 @@ spec:
           "id": 9,
           "title": "CPIC Transitions Heatmap",
           "type": "boazreicher-mosaicplot-panel",
-          "gridPos": {"h": 12, "w": 12, "x": 12, "y": 52},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 12,
+            "y": 52
+          },
           "targets": [
             {
-              "expr": "cpic_transitions_per_minute",
+              "expr": "sum(cpic_transitions_per_minute)",
               "legendFormat": "Transitions",
               "refId": "A",
               "format": "time_series"
@@ -542,7 +592,16 @@ spec:
         "to": "now"
       },
       "timepicker": {
-        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+        "refresh_intervals": [
+          "10s",
+          "30s",
+          "1m",
+          "5m",
+          "15m",
+          "30m",
+          "1h",
+          "2h",
+          "1d"
+        ]
       }
     }
-

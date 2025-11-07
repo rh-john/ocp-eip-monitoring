@@ -29,12 +29,12 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "legendFormat": "Health Score",
               "refId": "A"
             },
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "legendFormat": "Stability Score",
               "refId": "B"
             }
@@ -82,9 +82,10 @@ spec:
           "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "legendFormat": "Health",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -121,9 +122,10 @@ spec:
           "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
           "targets": [
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "legendFormat": "Stability",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -140,6 +142,16 @@ spec:
                 ]
               }
             }
+          },
+          "options": {
+            "orientation": "auto",
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            },
+            "showThresholdLabels": false,
+            "showThresholdMarkers": true
           }
         },
         {
@@ -149,14 +161,16 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -190,19 +204,22 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
           "targets": [
             {
-              "expr": "cpic_success_total",
+              "expr": "sum(cpic_success_total)",
               "legendFormat": "Success",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "cpic_pending_total",
+              "expr": "sum(cpic_pending_total)",
               "legendFormat": "Pending",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "Error",
-              "refId": "C"
+              "refId": "C",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -236,19 +253,22 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "eip_utilization_percent",
+              "expr": "sum(eip_utilization_percent)",
               "legendFormat": "Utilization %",
-              "refId": "C"
+              "refId": "C",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -269,7 +289,12 @@ spec:
           "options": {
             "graphMode": "area",
             "colorMode": "value",
-            "orientation": "auto"
+            "orientation": "auto",
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            }
           }
         },
         {
@@ -279,14 +304,16 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 6, "y": 16},
           "targets": [
             {
-              "expr": "eip_nodes_available_total",
+              "expr": "sum(eip_nodes_available_total)",
               "legendFormat": "Available Nodes",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "eip_nodes_with_errors_total",
+              "expr": "sum(eip_nodes_with_errors_total)",
               "legendFormat": "Nodes with Errors",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -308,7 +335,12 @@ spec:
           },
           "options": {
             "graphMode": "area",
-            "colorMode": "value"
+            "colorMode": "value",
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            }
           }
         },
         {
@@ -318,7 +350,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
           "targets": [
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "CPIC Errors/min",
               "refId": "A"
             }
@@ -344,7 +376,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16},
           "targets": [
             {
-              "expr": "cpic_recoveries_last_hour",
+              "expr": "sum(cpic_recoveries_last_hour)",
               "legendFormat": "Recoveries/min",
               "refId": "A"
             }
@@ -369,19 +401,22 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 20},
           "targets": [
             {
-              "expr": "malfunctioning_eip_objects_count",
+              "expr": "sum(malfunctioning_eip_objects_count)",
               "legendFormat": "Malfunctioning Resources",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "critical_eip_objects_count",
+              "expr": "sum(critical_eip_objects_count)",
               "legendFormat": "Critical Resources",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "overcommitted_eip_objects_count",
+              "expr": "sum(overcommitted_eip_objects_count)",
               "legendFormat": "Overcommitted IPs",
-              "refId": "C"
+              "refId": "C",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -403,7 +438,12 @@ spec:
           },
           "options": {
             "graphMode": "area",
-            "colorMode": "value"
+            "colorMode": "value",
+            "reduceOptions": {
+              "values": false,
+              "calcs": ["lastNotNull"],
+              "fields": ""
+            }
           }
         },
         {
@@ -413,17 +453,17 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 6, "y": 20},
           "targets": [
             {
-              "expr": "eip_cpic_mismatches_total",
+              "expr": "sum(eip_cpic_mismatches_total)",
               "legendFormat": "Total Mismatches",
               "refId": "A"
             },
             {
-              "expr": "eip_cpic_mismatches_node_mismatch",
+              "expr": "sum(eip_cpic_mismatches_node_mismatch)",
               "legendFormat": "Node Mismatches",
               "refId": "B"
             },
             {
-              "expr": "eip_cpic_mismatches_missing_in_eip",
+              "expr": "sum(eip_cpic_mismatches_missing_in_eip)",
               "legendFormat": "Missing in EIP",
               "refId": "C"
             }
@@ -467,24 +507,28 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 0, "y": 28},
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "legendFormat": "Health Score",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "legendFormat": "Stability Score",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "eip_utilization_percent",
+              "expr": "sum(eip_utilization_percent)",
               "legendFormat": "Utilization %",
-              "refId": "C"
+              "refId": "C",
+              "instant": true
             },
             {
-              "expr": "(cpic_success_total / (cpic_success_total + cpic_pending_total + cpic_error_total)) * 100",
+              "expr": "sum((cpic_success_total / (cpic_success_total + cpic_pending_total + cpic_error_total)) * 100)",
               "legendFormat": "CPIC Success Rate %",
-              "refId": "D"
+              "refId": "D",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -524,7 +568,7 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 12, "y": 28},
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "format": "heatmap",
               "refId": "A"
             }
@@ -555,51 +599,59 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 38},
           "targets": [
             {
-              "expr": "cluster_eip_health_score",
+              "expr": "sum(cluster_eip_health_score)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Health Score",
               "refId": "A"
             },
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Stability Score",
               "refId": "B"
             },
             {
-              "expr": "eip_utilization_percent",
+              "expr": "sum(eip_utilization_percent)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Utilization %",
               "refId": "C"
             },
             {
-              "expr": "eip_nodes_available_total",
+              "expr": "sum(eip_nodes_available_total)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Available Nodes",
               "refId": "D"
             },
             {
-              "expr": "eip_nodes_with_errors_total",
+              "expr": "sum(eip_nodes_with_errors_total)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Nodes with Errors",
               "refId": "E"
             },
             {
-              "expr": "malfunctioning_eip_objects_count",
+              "expr": "sum(malfunctioning_eip_objects_count)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Malfunctioning Resources",
               "refId": "F"
             },
             {
-              "expr": "critical_eip_objects_count",
+              "expr": "sum(critical_eip_objects_count)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Critical Resources",
               "refId": "G"
             },
             {
-              "expr": "eip_cpic_mismatches_total",
+              "expr": "sum(eip_cpic_mismatches_total)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Total Mismatches",
               "refId": "H"
             }
           ],
@@ -624,7 +676,32 @@ spec:
           "options": {
             "showHeader": true,
             "sortBy": []
-          }
+          },
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Value #A": "Health Score",
+                  "Value #B": "Stability Score",
+                  "Value #C": "Utilization %",
+                  "Value #D": "Available Nodes",
+                  "Value #E": "Nodes with Errors",
+                  "Value #F": "Malfunctioning Resources",
+                  "Value #G": "Critical Resources",
+                  "Value #H": "Total Mismatches"
+                }
+              }
+            }
+          ]
         }
       ],
       "time": {

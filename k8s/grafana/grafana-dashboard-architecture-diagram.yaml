@@ -15,7 +15,12 @@ spec:
     {
       "id": null,
       "title": "EIP Architecture Diagram",
-      "tags": ["eip", "architecture", "diagram", "flowchart"],
+      "tags": [
+        "eip",
+        "architecture",
+        "diagram",
+        "flowchart"
+      ],
       "style": "dark",
       "timezone": "browser",
       "refresh": "30s",
@@ -26,17 +31,27 @@ spec:
           "id": 1,
           "title": "EIP Assignment Flow",
           "type": "jdbranham-diagram-panel",
-          "gridPos": {"h": 16, "w": 12, "x": 0, "y": 0},
+          "gridPos": {
+            "h": 16,
+            "w": 12,
+            "x": 0,
+            "y": 0
+          },
           "pluginVersion": "1.0.0",
           "options": {
-            "content": "graph TD\n    A[EIP Configured]\n    A --> B{Node Available?}\n    B -->|No| C[Pending State]\n    C --> B\n    B -->|Yes| D[Assign to Node]\n    D --> E[CPIC Created]\n    E --> F{CPIC Success?}\n    F -->|Yes| G[EIP Active ✓]\n    G --> H[Monitor Status]\n    H --> I{Health Check}\n    I -->|Healthy| H\n    F -->|No| J[CPIC Error ✗]\n    J --> K[Redistribute]\n    K --> D\n    I -->|Unhealthy| K\n    \n    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px\n    style G fill:#52c41a,stroke:#389e0d,stroke-width:2px\n    style J fill:#ff4d4f,stroke:#cf1322,stroke-width:2px\n    style C fill:#faad14,stroke:#d48806,stroke-width:2px"
+            "content": "graph TD\n    A[EIP Configured]\n    A --> B{Node Available?}\n    B -->|No| C[Pending State]\n    C --> B\n    B -->|Yes| D[Assign to Node]\n    D --> E[CPIC Created]\n    E --> F{CPIC Success?}\n    F -->|Yes| G[EIP Active \u2713]\n    G --> H[Monitor Status]\n    H --> I{Health Check}\n    I -->|Healthy| H\n    F -->|No| J[CPIC Error \u2717]\n    J --> K[Redistribute]\n    K --> D\n    I -->|Unhealthy| K\n    \n    style A fill:#4a90e2,stroke:#2e5c8a,stroke-width:2px\n    style G fill:#52c41a,stroke:#389e0d,stroke-width:2px\n    style J fill:#ff4d4f,stroke:#cf1322,stroke-width:2px\n    style C fill:#faad14,stroke:#d48806,stroke-width:2px"
           }
         },
         {
           "id": 2,
           "title": "Node EIP Distribution",
           "type": "bargauge",
-          "gridPos": {"h": 12, "w": 12, "x": 0, "y": 12},
+          "gridPos": {
+            "h": 12,
+            "w": 12,
+            "x": 0,
+            "y": 12
+          },
           "targets": [
             {
               "expr": "sum by (node) (node_eip_assigned_total)",
@@ -46,14 +61,28 @@ spec:
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "thresholds"},
+              "color": {
+                "mode": "thresholds"
+              },
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "green"},
-                  {"value": 10, "color": "yellow"},
-                  {"value": 20, "color": "orange"},
-                  {"value": 30, "color": "red"}
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 10,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 20,
+                    "color": "orange"
+                  },
+                  {
+                    "value": 30,
+                    "color": "red"
+                  }
                 ]
               },
               "unit": "short"
@@ -73,21 +102,32 @@ spec:
           "id": 3,
           "title": "EIP Status Summary",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 12},
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 12
+          },
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "thresholds"},
+              "color": {
+                "mode": "thresholds"
+              },
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "blue"}
+                  {
+                    "value": null,
+                    "color": "blue"
+                  }
                 ]
               },
               "unit": "short"
@@ -98,21 +138,32 @@ spec:
           "id": 4,
           "title": "Assigned EIPs",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 12},
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 12
+          },
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "thresholds"},
+              "color": {
+                "mode": "thresholds"
+              },
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "green"}
+                  {
+                    "value": null,
+                    "color": "green"
+                  }
                 ]
               },
               "unit": "short"
@@ -123,21 +174,32 @@ spec:
           "id": 5,
           "title": "Unassigned EIPs",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 16
+          },
           "targets": [
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "thresholds"},
+              "color": {
+                "mode": "thresholds"
+              },
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "red"}
+                  {
+                    "value": null,
+                    "color": "red"
+                  }
                 ]
               },
               "unit": "short"
@@ -148,23 +210,40 @@ spec:
           "id": 6,
           "title": "CPIC Success Rate",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 16},
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 16
+          },
           "targets": [
             {
-              "expr": "(cpic_success_total / (cpic_success_total + cpic_error_total + cpic_pending_total)) * 100",
+              "expr": "(sum(cpic_success_total) / (sum(cpic_success_total) + sum(cpic_error_total) + sum(cpic_pending_total))) * 100",
               "legendFormat": "Success Rate",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "thresholds"},
+              "color": {
+                "mode": "thresholds"
+              },
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "red"},
-                  {"value": 80, "color": "yellow"},
-                  {"value": 95, "color": "green"}
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 80,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 95,
+                    "color": "green"
+                  }
                 ]
               },
               "unit": "percent",
@@ -176,7 +255,12 @@ spec:
           "id": 7,
           "title": "EIP Lifecycle Sequence",
           "type": "jdbranham-diagram-panel",
-          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
           "pluginVersion": "1.0.0",
           "options": {
             "content": "sequenceDiagram\n    participant User\n    participant EIP as EgressIP\n    participant Node\n    participant CPIC as CloudPrivateIPConfig\n    participant Monitor\n    \n    User->>EIP: Create EgressIP\n    EIP->>Node: Check Availability\n    alt Node Available\n        EIP->>Node: Assign EIP\n        Node->>CPIC: Create CPIC\n        CPIC-->>Node: Status\n        alt CPIC Success\n            CPIC->>EIP: Active\n            EIP-->>User: EIP Ready\n            Monitor->>EIP: Health Check\n        else CPIC Error\n            CPIC->>EIP: Error\n            EIP->>Node: Redistribute\n        end\n    else No Node Available\n        EIP->>EIP: Pending\n    end"
@@ -186,37 +270,44 @@ spec:
           "id": 8,
           "title": "EIP Metrics Overview",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
               "refId": "A"
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
               "refId": "B"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
               "refId": "C"
             },
             {
-              "expr": "cpic_success_total",
+              "expr": "sum(cpic_success_total)",
               "legendFormat": "CPIC Success",
               "refId": "D"
             },
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "CPIC Error",
               "refId": "E"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "palette-classic"},
+              "color": {
+                "mode": "palette-classic"
+              },
               "unit": "short"
             }
           },
@@ -232,4 +323,3 @@ spec:
         }
       ]
     }
-

@@ -15,7 +15,12 @@ spec:
     {
       "id": null,
       "title": "EIP Assignment Timeline & Trends",
-      "tags": ["eip", "timeline", "trends", "assignment"],
+      "tags": [
+        "eip",
+        "timeline",
+        "trends",
+        "assignment"
+      ],
       "style": "dark",
       "timezone": "browser",
       "refresh": "30s",
@@ -26,10 +31,15 @@ spec:
           "id": 1,
           "title": "EIP Assignment Rate Heatmap",
           "type": "heatmap",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
           "targets": [
             {
-              "expr": "eip_assignment_rate_per_minute",
+              "expr": "sum(eip_assignment_rate_per_minute)",
               "format": "heatmap",
               "refId": "A"
             }
@@ -54,15 +64,20 @@ spec:
           "id": 2,
           "title": "EIP Assignment/Unassignment Rate",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 10
+          },
           "targets": [
             {
-              "expr": "eip_assignment_rate_per_minute",
+              "expr": "sum(eip_assignment_rate_per_minute)",
               "legendFormat": "Assignment Rate",
               "refId": "A"
             },
             {
-              "expr": "eip_unassignment_rate_per_minute",
+              "expr": "sum(eip_unassignment_rate_per_minute)",
               "legendFormat": "Unassignment Rate",
               "refId": "B"
             }
@@ -97,15 +112,20 @@ spec:
           "id": 3,
           "title": "EIP Changes Over Time",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 10
+          },
           "targets": [
             {
-              "expr": "eip_changes_last_hour",
+              "expr": "sum(eip_changes_last_hour)",
               "legendFormat": "Changes (last hour)",
               "refId": "A"
             },
             {
-              "expr": "cpic_recoveries_last_hour",
+              "expr": "sum(cpic_recoveries_last_hour)",
               "legendFormat": "Recoveries (last hour)",
               "refId": "B"
             }
@@ -128,20 +148,25 @@ spec:
           "id": 4,
           "title": "EIP Status Over Time (Stacked)",
           "type": "timeseries",
-          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 18},
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 18
+          },
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
               "refId": "A"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
               "refId": "B"
             },
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
               "refId": "C"
             }
@@ -178,10 +203,15 @@ spec:
           "id": 5,
           "title": "EIP Utilization Trend",
           "type": "timeseries",
-          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 18},
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 18
+          },
           "targets": [
             {
-              "expr": "eip_utilization_percent",
+              "expr": "sum(eip_utilization_percent)",
               "legendFormat": "Utilization %",
               "refId": "A"
             }
@@ -204,9 +234,18 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "green"},
-                  {"value": 80, "color": "yellow"},
-                  {"value": 90, "color": "red"}
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 80,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 90,
+                    "color": "red"
+                  }
                 ]
               }
             }
@@ -221,12 +260,18 @@ spec:
           "id": 6,
           "title": "EIP Assignment Velocity",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 28},
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "eip_assignment_rate_per_minute",
+              "expr": "sum(eip_assignment_rate_per_minute)",
               "legendFormat": "Assignments/min",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -238,9 +283,18 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "green"},
-                  {"value": 10, "color": "yellow"},
-                  {"value": 50, "color": "red"}
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 10,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 50,
+                    "color": "red"
+                  }
                 ]
               },
               "unit": "ops"
@@ -255,12 +309,18 @@ spec:
           "id": 7,
           "title": "Cluster Stability Score",
           "type": "gauge",
-          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 28},
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "cluster_eip_stability_score",
+              "expr": "sum(cluster_eip_stability_score)",
               "legendFormat": "Stability",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -271,9 +331,18 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "red"},
-                  {"value": 70, "color": "yellow"},
-                  {"value": 90, "color": "green"}
+                  {
+                    "value": null,
+                    "color": "red"
+                  },
+                  {
+                    "value": 70,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 90,
+                    "color": "green"
+                  }
                 ]
               }
             }
@@ -283,10 +352,15 @@ spec:
           "id": 8,
           "title": "EIP Distribution Changes",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "eip_distribution_gini_coefficient",
+              "expr": "sum(eip_distribution_gini_coefficient)",
               "legendFormat": "Gini Coefficient",
               "refId": "A"
             },
@@ -314,30 +388,39 @@ spec:
           "id": 9,
           "title": "EIP Timeline Summary Table",
           "type": "table",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 32
+          },
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Configured",
               "refId": "A"
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Assigned",
               "refId": "B"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Unassigned",
               "refId": "C"
             },
             {
-              "expr": "eip_utilization_percent",
+              "expr": "sum(eip_utilization_percent)",
               "format": "table",
               "instant": true,
+              "legendFormat": "Utilization %",
               "refId": "D"
             }
           ],
@@ -351,14 +434,38 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "green"}
+                  {
+                    "value": null,
+                    "color": "green"
+                  }
                 ]
               }
             }
           },
           "options": {
             "showHeader": true
-          }
+          },
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Value #A": "Configured",
+                  "Value #B": "Assigned",
+                  "Value #C": "Unassigned",
+                  "Value #D": "Utilization %"
+                }
+              }
+            }
+          ]
         }
       ],
       "time": {
@@ -366,7 +473,16 @@ spec:
         "to": "now"
       },
       "timepicker": {
-        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+        "refresh_intervals": [
+          "10s",
+          "30s",
+          "1m",
+          "5m",
+          "15m",
+          "30m",
+          "1h",
+          "2h",
+          "1d"
+        ]
       }
     }
-

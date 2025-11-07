@@ -29,9 +29,10 @@ spec:
           "gridPos": {"h": 6, "w": 6, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -61,9 +62,10 @@ spec:
           "gridPos": {"h": 6, "w": 6, "x": 6, "y": 0},
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -93,9 +95,10 @@ spec:
           "gridPos": {"h": 6, "w": 6, "x": 12, "y": 0},
           "targets": [
             {
-              "expr": "cpic_success_total",
+              "expr": "sum(cpic_success_total)",
               "legendFormat": "Success",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -125,9 +128,10 @@ spec:
           "gridPos": {"h": 6, "w": 6, "x": 18, "y": 0},
           "targets": [
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "Errors",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -157,11 +161,12 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 0, "y": 6},
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "format": "table",
               "instant": true,
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -218,27 +223,30 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 12, "y": 6},
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "legendFormat": "Configured",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
-              "refId": "C"
+              "refId": "C",
+              "instant": true
             },
             {
-              "expr": "cpic_success_total",
+              "expr": "sum(cpic_success_total)",
               "legendFormat": "CPIC Success",
               "refId": "D"
             },
             {
-              "expr": "cpic_error_total",
+              "expr": "sum(cpic_error_total)",
               "legendFormat": "CPIC Error",
               "refId": "E"
             }
@@ -266,9 +274,10 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -285,19 +294,22 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
           "targets": [
             {
-              "expr": "sum by (node) (cpic_success_total)",
+              "expr": "sum by (node) (sum(cpic_success_total))",
               "legendFormat": "{{node}} - Success",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             },
             {
-              "expr": "sum by (node) (cpic_error_total)",
+              "expr": "sum by (node) (sum(cpic_error_total))",
               "legendFormat": "{{node}} - Error",
-              "refId": "B"
+              "refId": "B",
+              "instant": true
             },
             {
-              "expr": "sum by (node) (cpic_pending_total)",
+              "expr": "sum by (node) (sum(cpic_pending_total))",
               "legendFormat": "{{node}} - Pending",
-              "refId": "C"
+              "refId": "C",
+              "instant": true
             }
           ],
           "fieldConfig": {

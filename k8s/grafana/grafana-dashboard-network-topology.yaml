@@ -29,9 +29,10 @@ spec:
           "gridPos": {"h": 14, "w": 24, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -63,10 +64,11 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 0, "y": 14},
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "format": "heatmap",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -122,11 +124,12 @@ spec:
           "gridPos": {"h": 10, "w": 12, "x": 12, "y": 14},
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "format": "table",
               "instant": true,
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -178,9 +181,10 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "legendFormat": "{{node}}",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -203,7 +207,8 @@ spec:
             {
               "expr": "count(count by (node) (node_eip_assigned_total))",
               "legendFormat": "Active Nodes",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -228,7 +233,8 @@ spec:
             {
               "expr": "sum(node_eip_assigned_total)",
               "legendFormat": "Total EIPs",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -253,7 +259,8 @@ spec:
             {
               "expr": "(sum(node_eip_assigned_total) / sum(eips_configured_total)) * 100",
               "legendFormat": "Utilization",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {
@@ -294,7 +301,8 @@ spec:
             {
               "expr": "100 - (stddev_over_time(sum by (node) (node_eip_assigned_total)[5m]) / avg_over_time(sum by (node) (node_eip_assigned_total)[5m])) * 100",
               "legendFormat": "Balance",
-              "refId": "A"
+              "refId": "A",
+              "instant": true
             }
           ],
           "fieldConfig": {

@@ -29,7 +29,7 @@ spec:
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
           "targets": [
             {
-              "expr": "node_eip_assigned_total",
+              "expr": "sum(node_eip_assigned_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "{{node}}",
@@ -101,21 +101,21 @@ spec:
           "gridPos": {"h": 10, "w": 24, "x": 0, "y": 10},
           "targets": [
             {
-              "expr": "sum by (node) (cpic_success_total)",
+              "expr": "sum by (node) (sum(cpic_success_total))",
               "format": "table",
               "instant": true,
               "legendFormat": "Success - {{node}}",
               "refId": "A"
             },
             {
-              "expr": "sum by (node) (cpic_error_total)",
+              "expr": "sum by (node) (sum(cpic_error_total))",
               "format": "table",
               "instant": true,
               "legendFormat": "Error - {{node}}",
               "refId": "B"
             },
             {
-              "expr": "sum by (node) (cpic_pending_total)",
+              "expr": "sum by (node) (sum(cpic_pending_total))",
               "format": "table",
               "instant": true,
               "legendFormat": "Pending - {{node}}",
@@ -176,28 +176,28 @@ spec:
           "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
           "targets": [
             {
-              "expr": "eips_configured_total",
+              "expr": "sum(eips_configured_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "Configured",
               "refId": "A"
             },
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "Assigned",
               "refId": "B"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "format": "table",
               "instant": true,
               "legendFormat": "Unassigned",
               "refId": "C"
             },
             {
-              "expr": "(eips_assigned_total / eips_configured_total) * 100",
+              "expr": "(sum(eips_assigned_total) / sum(eips_configured_total)) * 100",
               "format": "table",
               "instant": true,
               "legendFormat": "Utilization %",

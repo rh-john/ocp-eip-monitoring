@@ -12,10 +12,16 @@ spec:
     matchLabels:
       app: eip-monitor
   json: |
+
     {
       "id": null,
       "title": "EIP Timeline & Events",
-      "tags": ["eip", "timeline", "events", "history"],
+      "tags": [
+        "eip",
+        "timeline",
+        "events",
+        "history"
+      ],
       "style": "dark",
       "timezone": "browser",
       "refresh": "30s",
@@ -24,24 +30,34 @@ spec:
       "panels": [
         {
           "id": 1,
-          "title": "EIP Assignment Timeline",
+          "title": "EIP Assignment Timeline with Node Status",
           "type": "state-timeline",
-          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+          "gridPos": {
+            "h": 10,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assigned",
               "refId": "A"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "sum(eips_unassigned_total)",
               "legendFormat": "Unassigned",
               "refId": "B"
             },
             {
-              "expr": "cpic_pending_total",
+              "expr": "sum(cpic_pending_total)",
               "legendFormat": "Pending",
               "refId": "C"
+            },
+            {
+              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
+              "legendFormat": "Node NotReady - {{node}}",
+              "refId": "D"
             }
           ],
           "fieldConfig": {
@@ -71,10 +87,15 @@ spec:
           "id": 2,
           "title": "Node Assignment Events",
           "type": "state-timeline",
-          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 10},
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 0,
+            "y": 10
+          },
           "targets": [
             {
-              "expr": "sum by (node) (node_eip_assigned_total)",
+              "expr": "sum by (node) (sum(node_eip_assigned_total))",
               "legendFormat": "{{node}}",
               "refId": "A"
             }
@@ -103,20 +124,25 @@ spec:
           "id": 3,
           "title": "CPIC Status Timeline",
           "type": "state-timeline",
-          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 10},
+          "gridPos": {
+            "h": 10,
+            "w": 12,
+            "x": 12,
+            "y": 10
+          },
           "targets": [
             {
-              "expr": "sum by (node) (cpic_success_total)",
+              "expr": "sum by (node) (sum(cpic_success_total))",
               "legendFormat": "{{node}} - Success",
               "refId": "A"
             },
             {
-              "expr": "sum by (node) (cpic_error_total)",
+              "expr": "sum by (node) (sum(cpic_error_total))",
               "legendFormat": "{{node}} - Error",
               "refId": "B"
             },
             {
-              "expr": "sum by (node) (cpic_pending_total)",
+              "expr": "sum by (node) (sum(cpic_pending_total))",
               "legendFormat": "{{node}} - Pending",
               "refId": "C"
             }
@@ -129,9 +155,18 @@ spec:
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
-                  {"value": null, "color": "green"},
-                  {"value": 1, "color": "yellow"},
-                  {"value": 5, "color": "red"}
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 1,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 5,
+                    "color": "red"
+                  }
                 ]
               },
               "custom": {
@@ -151,24 +186,41 @@ spec:
         },
         {
           "id": 4,
-          "title": "EIP Assignment Rate Over Time",
+          "title": "EIP Assignment Rate Over Time vs Node Events",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "rate(eips_assigned_total[5m])",
               "legendFormat": "Assignment Rate",
               "refId": "A"
             },
             {
-              "expr": "eips_unassigned_total",
+              "expr": "rate(eips_unassigned_total[5m])",
               "legendFormat": "Unassignment Rate",
               "refId": "B"
+            },
+            {
+              "expr": "count(changes((kube_node_status_condition{condition=\"Ready\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0)",
+              "legendFormat": "Node Status Changes",
+              "refId": "C"
+            },
+            {
+              "expr": "changes((node_boot_time_seconds and on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable=\"true\"})[10m]) > 0",
+              "legendFormat": "Node Reboots",
+              "refId": "D"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "palette-classic"},
+              "color": {
+                "mode": "palette-classic"
+              },
               "unit": "ops"
             }
           },
@@ -186,17 +238,24 @@ spec:
           "id": 5,
           "title": "Event Frequency",
           "type": "histogram",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "eips_assigned_total",
+              "expr": "sum(eips_assigned_total)",
               "legendFormat": "Assignments",
               "refId": "A"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "color": {"mode": "palette-classic"}
+              "color": {
+                "mode": "palette-classic"
+              }
             }
           },
           "options": {
@@ -206,26 +265,182 @@ spec:
         },
         {
           "id": 6,
-          "title": "CPIC Error Events",
-          "type": "logs",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "title": "CPIC Error Events vs Cluster Events",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 28
+          },
           "targets": [
             {
-              "expr": "cpic_error_total",
+              "expr": "rate(cpic_error_total[5m])",
+              "legendFormat": "CPIC Error Rate",
               "refId": "A"
+            },
+            {
+              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"} * 10",
+              "legendFormat": "OVN Degraded (x10)",
+              "refId": "B"
+            },
+            {
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"} * 10",
+              "legendFormat": "CNCC Degraded (x10)",
+              "refId": "C"
             }
           ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 30,
+                "pointSize": 5
+              },
+              "unit": "ops"
+            }
+          },
           "options": {
-            "dedupStrategy": "none",
-            "enableLogDetails": true,
-            "prettifyLogMessage": false,
-            "showCommonLabels": false,
-            "showLabels": false,
-            "showTime": true,
-            "sortOrder": "Descending",
-            "wrapLogMessage": false
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Node Reboot Detection",
+          "type": "state-timeline",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 36
+          },
+          "targets": [
+            {
+              "expr": "changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0",
+              "legendFormat": "Node Reboot - {{node}}",
+              "refId": "A"
+            },
+            {
+              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
+              "legendFormat": "Node Down - {{node}}",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 1,
+                    "color": "orange"
+                  },
+                  {
+                    "value": 2,
+                    "color": "red"
+                  }
+                ]
+              },
+              "custom": {
+                "fillOpacity": 90
+              }
+            }
+          },
+          "options": {
+            "mergeValues": true,
+            "rowHeight": 0.9,
+            "showValues": "never",
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 8,
+          "title": "OVN & CNCC Status Timeline",
+          "type": "state-timeline",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 36
+          },
+          "targets": [
+            {
+              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
+              "legendFormat": "OVN Degraded",
+              "refId": "A"
+            },
+            {
+              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"}",
+              "legendFormat": "OVN Unavailable",
+              "refId": "B"
+            },
+            {
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
+              "legendFormat": "CNCC Degraded",
+              "refId": "C"
+            },
+            {
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"false\"}",
+              "legendFormat": "CNCC Unavailable",
+              "refId": "D"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "green"
+                  },
+                  {
+                    "value": 1,
+                    "color": "yellow"
+                  },
+                  {
+                    "value": 2,
+                    "color": "red"
+                  }
+                ]
+              },
+              "custom": {
+                "fillOpacity": 85
+              }
+            }
+          },
+          "options": {
+            "mergeValues": true,
+            "rowHeight": 0.9,
+            "showValues": "never",
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
           }
         }
       ]
     }
-
