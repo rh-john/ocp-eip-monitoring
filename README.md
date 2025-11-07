@@ -5,23 +5,36 @@ A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CP
 ## Prerequisites
 
 - OpenShift 4.18+
-- User Workload Monitoring enabled
 - EgressIP feature enabled
+- **Monitoring Option (choose one):**
+  - **User Workload Monitoring (UWM)**: Built-in OpenShift monitoring capability
+  - **Cluster Observability Operator (COO)**: Standalone monitoring operator
 
 ## Quick Start
 
 ```bash
-# Build and deploy
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+# 1. Build and deploy eip-monitor application
+./scripts/build-and-deploy.sh build -r quay.io/your-registry
+./scripts/build-and-deploy.sh deploy
+
+# 2. Deploy monitoring infrastructure (choose COO or UWM)
+# Option A: Deploy with Cluster Observability Operator (COO)
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo
+
+# Option B: Deploy with User Workload Monitoring (UWM)
+./scripts/build-and-deploy.sh monitoring --monitoring-type uwm
 
 # Or deploy with existing image
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+oc apply -f k8s/deployment/k8s-manifests.yaml
 ```
 
 ## Architecture
 
-The EIP monitoring solution integrates with OpenShift's User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
+The EIP monitoring solution supports two monitoring backends:
+- **Cluster Observability Operator (COO)**: Namespace-scoped Prometheus and Alertmanager managed by COO
+- **User Workload Monitoring (UWM)**: OpenShift's built-in user workload monitoring with Thanos Querier integration
+
+Both options provide the same metrics and alerting capabilities, allowing you to choose based on your cluster's monitoring strategy.
 
 ```mermaid
 graph TB
@@ -50,7 +63,7 @@ graph TB
         end
     end
     
-    subgraph "User Workload Monitoring"
+    subgraph "Monitoring Backend (COO or UWM)"
         PROM[Prometheus<br/>Scrapes Metrics]
         AM[AlertManager<br/>Fires Alerts]
         RULES[PrometheusRule<br/>Alert Definitions]
@@ -97,57 +110,115 @@ graph TB
 ### Component Overview
 
 - **eip-monitor**: Python Flask application that queries the OpenShift API for EgressIP and CPIC resources and exposes Prometheus metrics
-- **ServiceMonitor**: Configures Prometheus to scrape metrics from the eip-monitor service
-- **PrometheusRule**: Defines alert rules for EIP utilization, assignment status, CPIC errors, and cluster health
-- **Prometheus**: Collects and stores metrics, evaluates alert rules
-- **AlertManager**: Handles alert routing and notifications
+- **ServiceMonitor**: Configures Prometheus to scrape metrics from the eip-monitor service (COO or UWM specific)
+- **PrometheusRule**: Defines alert rules for EIP utilization, assignment status, CPIC errors, and cluster health (COO or UWM specific)
+- **Prometheus**: Collects and stores metrics, evaluates alert rules (managed by COO or UWM)
+- **AlertManager**: Handles alert routing and notifications (managed by COO or UWM)
 
-## User Workload Monitoring Setup
+## Monitoring Backend Options
 
-**Required**: Enable User Workload Monitoring in OpenShift:
+### Option 1: Cluster Observability Operator (COO)
 
+COO provides namespace-scoped Prometheus and Alertmanager instances. The deployment script automatically installs and configures COO.
+
+**Deployment:**
 ```bash
-# Enable user workload monitoring
-oc -n openshift-monitoring edit configmap cluster-monitoring-config
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo
 ```
 
-Add to the ConfigMap:
-```yaml
-data:
-  config.yaml: |
-    enableUserWorkload: true
-```
+**What it does:**
+- Installs COO operator subscription
+- Creates MonitoringStack CR with Prometheus and Alertmanager
+- Applies COO-specific ServiceMonitor and PrometheusRule
+- Configures namespace-scoped RBAC
 
+**Advantages:**
+- Namespace-scoped monitoring (isolated from cluster monitoring)
+- Full control over Prometheus configuration
+- Independent retention and storage policies
+
+### Option 2: User Workload Monitoring (UWM)
+
+UWM is OpenShift's built-in capability for monitoring user-defined projects. The deployment script automatically enables and configures UWM.
+
+**Deployment:**
 ```bash
-# Enable alerting
-oc apply -f - <<EOF
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: user-workload-monitoring-config
-  namespace: openshift-user-workload-monitoring
-data:
-  config.yaml: |
-    alertmanager:
-      enabled: true
-      enableAlertmanagerConfig: true
-EOF
+./scripts/build-and-deploy.sh monitoring --monitoring-type uwm
 ```
+
+**What it does:**
+- Enables UWM in `cluster-monitoring-config`
+- Enables AlertManager for user workloads
+- Applies UWM-specific ServiceMonitor and PrometheusRule
+- Configures cluster-scoped RBAC for Thanos Querier access
+
+**Advantages:**
+- Integrated with OpenShift cluster monitoring
+- Access to cluster-scoped metrics via Thanos Querier
+- Managed by OpenShift (no additional operator needed)
+
+**Note:** UWM requires cluster-admin permissions to enable.
 
 ## Installation
 
 ### Method 1: Automated Build and Deploy
+
+**Step 1: Build and deploy eip-monitor application**
 ```bash
 git clone https://github.com/rh-john/ocp-eip-monitoring.git
 cd ocp-eip-monitoring
+
+# Build container image
+./scripts/build-and-deploy.sh build -r quay.io/your-registry -t v1.0.0
+
+# Deploy eip-monitor (no monitoring infrastructure)
+./scripts/build-and-deploy.sh deploy
+```
+
+**Step 2: Deploy monitoring infrastructure (choose one)**
+
+**Option A: COO**
+```bash
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo
+```
+
+**Option B: UWM**
+```bash
+./scripts/build-and-deploy.sh monitoring --monitoring-type uwm
+```
+
+**All-in-one (build, push, deploy eip-monitor, then deploy monitoring):**
+```bash
 ./scripts/build-and-deploy.sh all -r quay.io/your-registry
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo  # or uwm
 ```
 
 ### Method 2: Deploy with Pre-built Image
 ```bash
 oc new-project eip-monitoring
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+
+# Deploy eip-monitor application
+oc apply -f k8s/deployment/k8s-manifests.yaml
+
+# Deploy monitoring (choose one)
+# For COO:
+oc apply -f k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml
+oc apply -f k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml
+
+# For UWM:
+oc apply -f k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml
+oc apply -f k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml
+```
+
+### Switching Between Monitoring Types
+
+To switch from one monitoring type to another:
+```bash
+# Remove current monitoring
+./scripts/build-and-deploy.sh monitoring --remove-monitoring
+
+# Deploy new monitoring type
+./scripts/build-and-deploy.sh monitoring --monitoring-type coo  # or uwm
 ```
 
 ## Configuration
@@ -178,10 +249,37 @@ oc apply -f k8s/servicemonitor.yaml
 ## Usage
 
 ### View Metrics
+
+**Direct from pod:**
 ```bash
 # Port-forward to access metrics
 oc port-forward service/eip-monitor 8080:8080 -n eip-monitoring
 curl http://localhost:8080/metrics
+```
+
+**From Prometheus (COO):**
+```bash
+# Port-forward to COO Prometheus
+oc port-forward service/eip-monitoring-stack-prometheus 9090:9090 -n eip-monitoring
+# Access Prometheus UI at http://localhost:9090
+```
+
+**From Prometheus (UWM):**
+```bash
+# Access via Thanos Querier (requires cluster-monitoring-view permissions)
+oc port-forward service/thanos-querier 9091:9091 -n openshift-monitoring
+# Access Thanos Querier at https://localhost:9091
+```
+
+### Deploy Grafana (Optional)
+
+Grafana deployment is handled separately. See the `grafana` branch for Grafana deployment scripts:
+```bash
+# Deploy Grafana for COO
+./scripts/deploy-grafana.sh --monitoring-type coo
+
+# Deploy Grafana for UWM
+./scripts/deploy-grafana.sh --monitoring-type uwm
 ```
 
 ### Testing
@@ -227,20 +325,29 @@ oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:808
 
 **No metrics appearing:**
 ```bash
-# Check user workload monitoring
-oc get pods -n openshift-user-workload-monitoring
-
 # Test metrics endpoint
 oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:8080/metrics
+
+# For COO: Check Prometheus pods
+oc get pods -n eip-monitoring -l app.kubernetes.io/name=prometheus
+
+# For UWM: Check user workload monitoring
+oc get pods -n openshift-user-workload-monitoring
+
+# Verify ServiceMonitor
+oc get servicemonitor -n eip-monitoring
 ```
 
 **Alerts not firing:**
 ```bash
-# Check AlertManager is running
+# For COO: Check AlertManager pods
+oc get pods -n eip-monitoring -l app.kubernetes.io/name=alertmanager
+
+# For UWM: Check AlertManager is running
 oc get pods -n openshift-user-workload-monitoring | grep alertmanager
 
 # Verify PrometheusRule
-oc get prometheusrule eip-monitor-alerts -n eip-monitoring
+oc get prometheusrule -n eip-monitoring
 ```
 
 ## Project Structure
@@ -249,11 +356,26 @@ oc get prometheusrule eip-monitor-alerts -n eip-monitoring
 ocp-eip-monitoring/
 ├── src/metrics_server.py          # Core monitoring application
 ├── k8s/                           # Kubernetes manifests
-│   ├── k8s-manifests.yaml         # Deployment resources
-│   └── servicemonitor.yaml        # Prometheus configuration
+│   ├── deployment/                # Shared deployment resources
+│   │   └── k8s-manifests.yaml    # eip-monitor deployment
+│   ├── grafana/                   # Shared Grafana resources
+│   │   ├── grafana-operator.yaml # Grafana operator subscription
+│   │   ├── grafana-instance.yaml # Grafana instance
+│   │   └── grafana-dashboard-*.yaml  # Dashboard definitions
+│   └── monitoring/                # Monitoring-specific resources
+│       ├── coo/                   # Cluster Observability Operator
+│       │   ├── operator/          # COO operator subscription
+│       │   ├── monitoring/        # ServiceMonitor, PrometheusRule
+│       │   ├── grafana/          # COO-specific datasource
+│       │   └── rbac/             # COO-specific RBAC
+│       └── uwm/                   # User Workload Monitoring
+│           ├── monitoring/        # ServiceMonitor, PrometheusRule
+│           ├── grafana/           # UWM-specific datasource
+│           └── rbac/              # UWM-specific RBAC
 ├── scripts/                       # Operational scripts
-│   ├── build-and-deploy.sh        # Build and deployment
-│   └── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
+│   ├── build-and-deploy.sh       # Build, deploy, and monitoring management
+│   ├── deploy-test-eips.sh       # Test EIP creation and CPIC redistribution
+│   └── test-*.sh                  # End-to-end test scripts
 └── docs/                          # Documentation
     ├── CONTAINER_DEPLOYMENT.md    # Deployment guide
     └── ENHANCED_METRICS_GUIDE.md  # Metrics reference
