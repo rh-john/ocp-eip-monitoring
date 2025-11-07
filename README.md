@@ -19,6 +19,26 @@ oc apply -f k8s/k8s-manifests.yaml
 oc apply -f k8s/servicemonitor.yaml
 ```
 
+## Development Workflow
+
+This project uses a component-based branching strategy with automated CI/CD:
+
+- **Component Branches**: `dev` (eip-monitor), `coo` (monitoring infrastructure), `grafana` (dashboards)
+- **Integration Branch**: `staging` (auto-versioning, pre-release tags, container builds)
+- **Release Branch**: `main` (production releases)
+
+**Quick Reference:**
+- Work on component branches (`dev`, `coo`, `grafana`) independently
+- Merge to `staging` for integration testing and automated builds
+- Merge `staging` → `main` for production releases
+
+See [docs/BRANCH_STRATEGY.md](docs/BRANCH_STRATEGY.md) and [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) for details.
+
+**Container Images:**
+- Pre-releases: `quay.io/<namespace>/eip-monitor:v<version>-rc<number>`
+- Releases: `quay.io/<namespace>/eip-monitor:v<version>` and `latest`
+- Nightly builds: `quay.io/<namespace>/eip-monitor:<branch>-<date>`
+
 ## Architecture
 
 The EIP monitoring solution integrates with OpenShift's User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
