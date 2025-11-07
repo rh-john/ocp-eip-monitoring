@@ -130,7 +130,13 @@ get_target_status() {
 check_servicemonitor() {
     log_info "Checking ServiceMonitor configuration..."
     
-    local sm_name="eip-monitor"
+    # Determine ServiceMonitor name based on monitoring type
+    local sm_name=""
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        sm_name="eip-monitor-coo"
+    else
+        sm_name="eip-monitor-uwm"
+    fi
     
     # Try both CRD versions (COO uses monitoring.rhobs/v1)
     if ! oc get servicemonitor.monitoring.rhobs "$sm_name" -n "$NAMESPACE" &>/dev/null && \
@@ -614,7 +620,7 @@ verify_metrics() {
             log_info "  1. Verify MonitoringStack resourceSelector:"
             log_info "     oc get monitoringstack eip-monitoring-stack -n $NAMESPACE -o yaml | grep -A 3 resourceSelector"
             log_info "  2. Check ServiceMonitor labels match resourceSelector:"
-            log_info "     oc get servicemonitor eip-monitor -n $NAMESPACE -o yaml | grep -A 5 labels"
+            log_info "     oc get servicemonitor $sm_name -n $NAMESPACE -o yaml | grep -A 5 labels"
             log_info "  3. Check Prometheus logs:"
             log_info "     oc logs $prom_pod -n $prom_namespace --tail=200 | grep -i servicemonitor"
         fi

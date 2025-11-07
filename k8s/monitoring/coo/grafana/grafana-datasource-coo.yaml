@@ -20,7 +20,7 @@ spec:
     # Use ThanosQuerier to query across multiple Prometheus replicas
     # ThanosQuerier aggregates queries from all Prometheus instances
     # This provides consistent results when Prometheus has multiple replicas
-    url: http://thanos-querier-eip-monitoring-stack-querier.eip-monitoring.svc.cluster.local:10902
+    url: http://thanos-querier-eip-monitoring-stack-querier-coo.eip-monitoring.svc.cluster.local:10902
     jsonData:
       httpMethod: POST
       queryTimeout: 300s

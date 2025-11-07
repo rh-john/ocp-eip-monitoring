@@ -95,9 +95,9 @@ main() {
     # Check if ServiceMonitor exists
     local sm_name=""
     if [[ "$MONITORING_TYPE" == "coo" ]]; then
-        sm_name="eip-monitor"
+        sm_name="eip-monitor-coo"
     else
-        sm_name="eip-monitor"
+        sm_name="eip-monitor-uwm"
     fi
     
     if ! oc get servicemonitor "$sm_name" -n "$NAMESPACE" &>/dev/null; then

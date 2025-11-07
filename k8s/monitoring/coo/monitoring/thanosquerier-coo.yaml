@@ -4,7 +4,7 @@
 apiVersion: monitoring.rhobs/v1alpha1
 kind: ThanosQuerier
 metadata:
-  name: eip-monitoring-stack-querier
+  name: eip-monitoring-stack-querier-coo
   namespace: eip-monitoring
   labels:
     app: eip-monitor

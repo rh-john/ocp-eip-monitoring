@@ -3,7 +3,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: eip-monitor
+  name: eip-monitor-uwm
   namespace: eip-monitoring
   labels:
     app: eip-monitor
