@@ -1,6 +1,6 @@
 ---
 # PrometheusRule for EIP monitoring alerts (COO)
-apiVersion: monitoring.coreos.com/v1
+apiVersion: monitoring.rhobs/v1
 kind: PrometheusRule
 metadata:
   name: eip-monitor-alerts-coo

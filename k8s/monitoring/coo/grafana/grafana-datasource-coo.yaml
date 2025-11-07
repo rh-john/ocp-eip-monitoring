@@ -17,9 +17,10 @@ spec:
     type: prometheus
     isDefault: true
     access: proxy
-    # Direct connection to COO-managed Prometheus
-    # COO creates Prometheus service in the same namespace as MonitoringStack
-    url: http://eip-monitoring-stack-prometheus.eip-monitoring.svc.cluster.local:9090
+    # Use ThanosQuerier to query across multiple Prometheus replicas
+    # ThanosQuerier aggregates queries from all Prometheus instances
+    # This provides consistent results when Prometheus has multiple replicas
+    url: http://thanos-querier-eip-monitoring-stack-querier.eip-monitoring.svc.cluster.local:10902
     jsonData:
       httpMethod: POST
       queryTimeout: 300s

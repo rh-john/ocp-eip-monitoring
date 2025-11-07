@@ -1,0 +1,27 @@
+---
+# ThanosQuerier for COO Prometheus
+# Aggregates queries across multiple Prometheus replicas
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ThanosQuerier
+metadata:
+  name: eip-monitoring-stack-querier
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    coo: eip-monitoring
+    monitoring: "true"
+spec:
+  # Select Prometheus instances to query
+  # COO creates Prometheus with specific labels
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: eip-monitoring-stack
+  # Optional: configure resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+

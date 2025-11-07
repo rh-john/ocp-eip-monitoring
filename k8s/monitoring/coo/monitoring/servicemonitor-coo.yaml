@@ -1,9 +1,9 @@
 ---
 # ServiceMonitor for COO Prometheus to scrape EIP metrics
-apiVersion: monitoring.coreos.com/v1
+apiVersion: monitoring.rhobs/v1
 kind: ServiceMonitor
 metadata:
-  name: eip-monitor-coo
+  name: eip-monitor
   namespace: eip-monitoring
   labels:
     app: eip-monitor
