@@ -1,0 +1,62 @@
+---
+# NetworkPolicy for EIP monitor with COO (Cluster Observability Operator)
+# Follows OpenShift best practices:
+# - Uses podSelector + namespaceSelector together for specificity (reduces OVS flow rules)
+# - Allows COO Prometheus in same namespace (eip-monitoring)
+# - Allows platform Prometheus in openshift-monitoring namespace (for platform monitoring)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: eip-monitor-coo
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    coo: eip-monitoring
+    monitoring: "true"
+spec:
+  podSelector:
+    matchLabels:
+      app: eip-monitor
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow COO Prometheus in same namespace (Cluster Observability Operator)
+  # Uses podSelector + namespaceSelector together per OpenShift best practices
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+      namespaceSelector:
+        matchLabels:
+          name: eip-monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow platform Prometheus in openshift-monitoring namespace (optional, for platform monitoring)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+      namespaceSelector:
+        matchLabels:
+          name: openshift-monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS (required for service discovery and API access)
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Kubernetes API access (required for EIP and CPIC resource queries)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+

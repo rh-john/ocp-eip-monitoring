@@ -681,6 +681,7 @@ remove_coo_monitoring() {
     log_info "Removing COO manifests..."
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null || true
     
     # Delete COO operator subscription (optional - may want to keep operator)
@@ -701,6 +702,7 @@ remove_uwm_monitoring() {
     log_info "Removing UWM manifests..."
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null || true
     
     # Disable UWM in cluster-monitoring-config
@@ -803,6 +805,7 @@ deploy_monitoring() {
         log_info "Applying COO monitoring manifests..."
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
         oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
         
         log_success "COO monitoring infrastructure deployed!"
@@ -818,6 +821,7 @@ deploy_monitoring() {
         log_info "Applying UWM monitoring manifests..."
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
         oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
         
         log_success "UWM monitoring infrastructure deployed!"
