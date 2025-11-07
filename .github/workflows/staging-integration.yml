@@ -37,7 +37,22 @@ jobs:
           fi
           
           export BUMP_TYPE
-          NEW_VERSION=$(./scripts/bump-version.sh)
+          if [[ -f scripts/bump-version.sh ]]; then
+            NEW_VERSION=$(./scripts/bump-version.sh)
+          else
+            # Fallback: manual version bump
+            if [[ ! -f .version ]]; then
+              echo "0.1.0" > .version
+            fi
+            CURRENT_VERSION=$(cat .version | tr -d '[:space:]')
+            IFS='.' read -r major minor patch <<< "$CURRENT_VERSION"
+            case "$BUMP_TYPE" in
+              major) NEW_VERSION="$((major + 1)).0.0" ;;
+              minor) NEW_VERSION="${major}.$((minor + 1)).0" ;;
+              *) NEW_VERSION="${major}.${minor}.$((patch + 1))" ;;
+            esac
+            echo "$NEW_VERSION" > .version
+          fi
           echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "bump_type=${BUMP_TYPE}" >> $GITHUB_OUTPUT
           
