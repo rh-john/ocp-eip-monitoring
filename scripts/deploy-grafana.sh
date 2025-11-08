@@ -182,7 +182,7 @@ remove_grafana_resources() {
     # Delete RBAC (monitoring-specific)
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
-    local rbac_file="${project_root}/k8s/monitoring/${MONITORING_TYPE}/rbac/grafana-rbac-${MONITORING_TYPE}.yaml"
+    local rbac_file="${project_root}/k8s/grafana/${MONITORING_TYPE}/grafana-rbac-${MONITORING_TYPE}.yaml"
     if [[ -f "$rbac_file" ]]; then
         log_info "  Removing RBAC resources..."
         oc delete -f "$rbac_file" 2>&1 | grep -v "not found\|No resources found" || true
@@ -218,7 +218,7 @@ deploy_grafana() {
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
     local grafana_dir="${project_root}/k8s/grafana"
-    local monitoring_dir="${project_root}/k8s/monitoring/${MONITORING_TYPE}"
+    local grafana_monitoring_dir="${project_root}/k8s/grafana/${MONITORING_TYPE}"
     
     # Check if Grafana operator is already installed
     local csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
@@ -271,7 +271,7 @@ deploy_grafana() {
     
     # Deploy Service Account and RBAC
     log_info "Creating Service Account and RBAC for Grafana..."
-    local rbac_file="${monitoring_dir}/rbac/grafana-rbac-${MONITORING_TYPE}.yaml"
+    local rbac_file="${grafana_monitoring_dir}/grafana-rbac-${MONITORING_TYPE}.yaml"
     if oc apply -f "$rbac_file" &>/dev/null; then
         log_success "Service Account and RBAC created"
     else
@@ -282,7 +282,7 @@ deploy_grafana() {
     
     # Deploy Grafana DataSource
     log_info "Deploying Grafana DataSource (${MONITORING_TYPE})..."
-    local ds_file="${monitoring_dir}/grafana/grafana-datasource-${MONITORING_TYPE}.yaml"
+    local ds_file="${grafana_monitoring_dir}/grafana-datasource-${MONITORING_TYPE}.yaml"
     
     local ds_output=$(oc apply -f "$ds_file" 2>&1)
     local ds_exit=$?
@@ -383,12 +383,12 @@ remove_grafana() {
     fi
     
     # Also try deleting via manifest files if they exist
-    if [[ -f "${project_root}/k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml" ]]; then
-        oc delete -f "${project_root}/k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml" 2>/dev/null || true
+    if [[ -f "${project_root}/k8s/grafana/coo/grafana-datasource-coo.yaml" ]]; then
+        oc delete -f "${project_root}/k8s/grafana/coo/grafana-datasource-coo.yaml" 2>/dev/null || true
     fi
     
-    if [[ -f "${project_root}/k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml" ]]; then
-        oc delete -f "${project_root}/k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml" 2>/dev/null || true
+    if [[ -f "${project_root}/k8s/grafana/uwm/grafana-datasource-uwm.yaml" ]]; then
+        oc delete -f "${project_root}/k8s/grafana/uwm/grafana-datasource-uwm.yaml" 2>/dev/null || true
     fi
     
     log_success "Grafana datasources removed"
