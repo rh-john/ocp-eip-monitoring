@@ -710,7 +710,7 @@ remove_coo_monitoring() {
     log_info "Removing COO manifests..."
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null || true
     
     # Delete COO operator subscription (optional - may want to keep operator)
     log_warn "COO operator subscription will not be removed automatically"
@@ -730,7 +730,7 @@ remove_uwm_monitoring() {
     log_info "Removing UWM manifests..."
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null || true
+    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null || true
     
     # Disable UWM in cluster-monitoring-config
     log_info "Disabling User Workload Monitoring in cluster-monitoring-config..."
@@ -832,7 +832,7 @@ deploy_monitoring() {
         log_info "Applying COO monitoring manifests..."
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
         
         log_success "COO monitoring infrastructure deployed!"
         
@@ -847,7 +847,7 @@ deploy_monitoring() {
         log_info "Applying UWM monitoring manifests..."
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
         
         log_success "UWM monitoring infrastructure deployed!"
     fi
@@ -1700,24 +1700,6 @@ cleanup_grafana() {
     oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     
-    # Delete Grafana RBAC (monitoring-specific)
-    # Try to detect monitoring type and remove appropriate RBAC
-    local current_type=$(detect_current_monitoring_type)
-    if [[ "$current_type" != "none" ]]; then
-        local rbac_file="${project_root}/k8s/monitoring/${current_type}/rbac/grafana-rbac-${current_type}.yaml"
-        if [[ -f "$rbac_file" ]]; then
-            log_info "Removing Grafana RBAC for ${current_type}..."
-            oc delete -f "$rbac_file" 2>/dev/null || true
-        fi
-    else
-        # Try both types if we can't detect
-        log_info "Monitoring type unknown, trying both COO and UWM RBAC cleanup..."
-        local coo_rbac="${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
-        local uwm_rbac="${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
-        [[ -f "$coo_rbac" ]] && oc delete -f "$coo_rbac" 2>/dev/null || true
-        [[ -f "$uwm_rbac" ]] && oc delete -f "$uwm_rbac" 2>/dev/null || true
-    fi
-    
     log_success "Grafana resources removed"
     echo ""
 }
@@ -1955,6 +1937,19 @@ cleanup_all() {
     log_info "🗑️  Step 5: Cleaning up namespace..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
+    # Delete deployment first to stop pods immediately
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_info "Stopping deployment..."
+        oc delete deployment eip-monitor -n "$NAMESPACE" --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Force kill any remaining pods for faster cleanup
+    if oc get pods -n "$NAMESPACE" -l app=eip-monitor &>/dev/null; then
+        log_info "Force killing any remaining pods..."
+        oc delete pods -n "$NAMESPACE" -l app=eip-monitor --grace-period=0 --force 2>/dev/null || true
+    fi
+    
+    # Delete the namespace and wait for it to be fully deleted
     if oc get namespace "$NAMESPACE" &>/dev/null; then
         # Check if namespace is empty (only finalizers remaining)
         local remaining_resources=$(oc get all -n "$NAMESPACE" 2>/dev/null | grep -v "No resources found" | wc -l | tr -d '\n' || echo "0")
