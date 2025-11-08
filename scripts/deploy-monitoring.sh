@@ -714,6 +714,39 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null
         fi
         
+        # Add COO monitoring labels to deployment and service for service discovery
+        log_info "Adding COO monitoring labels to eip-monitor deployment and service..."
+        if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+            # Add labels to deployment metadata and pod template
+            # Ensure pods have: app=eip-monitor, service=eip-monitor (required by ServiceMonitor)
+            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
+                {"op": "add", "path": "/metadata/labels/monitoring-coo", "value": "true"},
+                {"op": "add", "path": "/spec/template/metadata/labels/monitoring-coo", "value": "true"},
+                {"op": "add", "path": "/spec/template/metadata/labels/service", "value": "eip-monitor"}
+            ]' 2>/dev/null || {
+                # Fallback: use oc label
+                oc label deployment eip-monitor -n "$NAMESPACE" monitoring-coo="true" --overwrite &>/dev/null || true
+            }
+            log_success "COO monitoring labels added to deployment"
+        else
+            log_warn "Deployment eip-monitor not found, skipping label update"
+        fi
+        
+        # Ensure service has correct labels for ServiceMonitor discovery
+        if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
+            oc patch service eip-monitor -n "$NAMESPACE" --type json -p '[
+                {"op": "add", "path": "/metadata/labels/app", "value": "eip-monitor"},
+                {"op": "add", "path": "/metadata/labels/service", "value": "eip-monitor"},
+                {"op": "add", "path": "/metadata/labels/monitoring-coo", "value": "true"},
+                {"op": "replace", "path": "/spec/selector/app", "value": "eip-monitor"}
+            ]' 2>/dev/null || {
+                # Fallback: use oc label and patch
+                oc label service eip-monitor -n "$NAMESPACE" app=eip-monitor service=eip-monitor monitoring-coo="true" --overwrite &>/dev/null || true
+                oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' &>/dev/null || true
+            }
+            log_success "Service labels updated for COO"
+        fi
+        
         log_success "COO monitoring infrastructure deployed!"
         
     elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
@@ -733,6 +766,39 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null
+        fi
+        
+        # Add UWM monitoring labels to deployment and service for service discovery
+        log_info "Adding UWM monitoring labels to eip-monitor deployment and service..."
+        if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+            # Add labels to deployment metadata and pod template
+            # Ensure pods have: app=eip-monitor, service=eip-monitor (required by ServiceMonitor)
+            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
+                {"op": "add", "path": "/metadata/labels/monitoring-uwm", "value": "true"},
+                {"op": "add", "path": "/spec/template/metadata/labels/monitoring-uwm", "value": "true"},
+                {"op": "add", "path": "/spec/template/metadata/labels/service", "value": "eip-monitor"}
+            ]' 2>/dev/null || {
+                # Fallback: use oc label
+                oc label deployment eip-monitor -n "$NAMESPACE" monitoring-uwm="true" --overwrite &>/dev/null || true
+            }
+            log_success "UWM monitoring labels added to deployment"
+        else
+            log_warn "Deployment eip-monitor not found, skipping label update"
+        fi
+        
+        # Ensure service has correct labels for ServiceMonitor discovery
+        if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
+            oc patch service eip-monitor -n "$NAMESPACE" --type json -p '[
+                {"op": "add", "path": "/metadata/labels/app", "value": "eip-monitor"},
+                {"op": "add", "path": "/metadata/labels/service", "value": "eip-monitor"},
+                {"op": "add", "path": "/metadata/labels/monitoring-uwm", "value": "true"},
+                {"op": "replace", "path": "/spec/selector/app", "value": "eip-monitor"}
+            ]' 2>/dev/null || {
+                # Fallback: use oc label and patch
+                oc label service eip-monitor -n "$NAMESPACE" app=eip-monitor service=eip-monitor monitoring-uwm="true" --overwrite &>/dev/null || true
+                oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' &>/dev/null || true
+            }
+            log_success "Service labels updated for UWM"
         fi
         
         log_success "UWM monitoring infrastructure deployed!"
