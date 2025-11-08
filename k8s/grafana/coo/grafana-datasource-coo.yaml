@@ -1,0 +1,34 @@
+---
+# Grafana DataSource for COO Prometheus
+# Direct connection to COO-managed Prometheus instance
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: prometheus-coo
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  name: Prometheus-COO
+  datasource:
+    name: Prometheus-COO
+    type: prometheus
+    isDefault: true
+    access: proxy
+    # Use ThanosQuerier to query across multiple Prometheus replicas
+    # ThanosQuerier aggregates queries from all Prometheus instances
+    # This provides consistent results when Prometheus has multiple replicas
+    url: http://thanos-querier-eip-monitoring-stack-querier-coo.eip-monitoring.svc.cluster.local:10902
+    jsonData:
+      httpMethod: POST
+      queryTimeout: 300s
+      timeInterval: 15s
+      tlsSkipVerify: true
+    uid: prometheus-coo-eip-monitoring
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+
+
