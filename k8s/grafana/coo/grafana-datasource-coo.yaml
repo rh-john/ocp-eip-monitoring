@@ -17,8 +17,9 @@ spec:
     type: prometheus
     isDefault: true
     access: proxy
-    # Use Prometheus service directly (COO doesn't create ThanosQuerier by default)
+    # Use Prometheus service directly (ThanosQuerier not discovering stores yet)
     # For multiple replicas, queries will be load-balanced across Prometheus instances
+    # TODO: Switch to ThanosQuerier once it's discovering Prometheus stores
     url: http://eip-monitoring-stack-prometheus.eip-monitoring.svc.cluster.local:9090
     jsonData:
       httpMethod: POST
