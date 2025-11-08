@@ -59,6 +59,28 @@ run_test() {
         return 0
     else
         log_error "❌ $test_name"
+        
+        # Provide specific diagnostics for service endpoints failure
+        if [[ "$test_name" == "Service endpoints available" ]]; then
+            local service_selector=$(oc get service "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.spec.selector}' 2>/dev/null || echo "{}")
+            local pod_labels=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.labels}' 2>/dev/null || echo "{}")
+            local endpoints_subsets=$(oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets}' 2>/dev/null || echo "")
+            
+            log_info "    Service selector: $service_selector"
+            log_info "    Pod labels: $pod_labels"
+            if [[ -z "$endpoints_subsets" ]] || [[ "$endpoints_subsets" == "null" ]]; then
+                log_warn "    ⚠️  No pods match the service selector!"
+                log_info "    To fix: Update service selector or pod labels to match"
+                log_info "    Run: ./scripts/fix-service-labels.sh"
+            else
+                local not_ready=$(oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[0].notReadyAddresses[0].ip}' 2>/dev/null || echo "")
+                if [[ -n "$not_ready" ]]; then
+                    log_warn "    ⚠️  Pods exist but are not ready yet"
+                    log_info "    Check pod status: oc get pods -n $NAMESPACE -l app=eip-monitor"
+                fi
+            fi
+        fi
+        
         ((TESTS_FAILED++))
         return 1
     fi
@@ -89,7 +111,37 @@ test_pods_ready() {
 }
 
 test_service_endpoints() {
+    # First check if service exists
+    if ! oc get service "$SERVICE_NAME" -n "$NAMESPACE" &>/dev/null; then
+        return 1
+    fi
+    
+    # Check if endpoints resource exists
+    if ! oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" &>/dev/null; then
+        return 1
+    fi
+    
+    # Check if endpoints object has any subsets (even empty subsets array means no matching pods)
+    local has_subsets=$(oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets}' 2>/dev/null || echo "")
+    if [[ -z "$has_subsets" ]] || [[ "$has_subsets" == "null" ]]; then
+        # No subsets means no pods match the service selector
+        return 1
+    fi
+    
+    # Check for ready endpoints (addresses, not notReadyAddresses)
     local endpoints=$(oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || echo "")
+    
+    # If no ready endpoints, check if there are notReadyAddresses (pods exist but not ready)
+    if [[ -z "$endpoints" ]]; then
+        local not_ready=$(oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[0].notReadyAddresses[0].ip}' 2>/dev/null || echo "")
+        if [[ -n "$not_ready" ]]; then
+            # Pods exist but not ready - this is a different issue
+            return 1
+        fi
+        # No ready endpoints and no not-ready endpoints means no matching pods
+        return 1
+    fi
+    
     [[ -n "$endpoints" ]]
 }
 

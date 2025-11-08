@@ -104,6 +104,7 @@ spec:
     metadata:
       labels:
         app: eip-monitor
+        service: eip-monitor
         version: v1
       annotations:
         prometheus.io/scrape: "true"
