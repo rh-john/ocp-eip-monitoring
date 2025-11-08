@@ -12,6 +12,7 @@ metadata:
     app: eip-monitor
     coo: eip-monitoring
     monitoring: "true"
+    monitoring-type: "coo"  # Specific label for selective deletion
 spec:
   selector:
     matchLabels:

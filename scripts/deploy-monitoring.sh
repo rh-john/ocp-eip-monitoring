@@ -80,6 +80,12 @@ Examples:
   $0 --remove-monitoring
   $0 --remove-monitoring --verbose
 
+Note: To deploy both COO and UWM simultaneously:
+  1. Deploy COO: $0 --monitoring-type coo
+  2. Deploy UWM: $0 --monitoring-type uwm
+  3. Apply combined NetworkPolicy: oc apply -f k8s/monitoring/networkpolicy-combined.yaml
+     (This replaces the individual NetworkPolicies to avoid conflicts)
+
 EOF
 }
 
@@ -482,18 +488,29 @@ remove_coo_monitoring() {
         fi
     fi
     
-    # Delete COO manifests
-    log_info "Removing COO manifests..."
+    # Delete COO manifests using label selector (safer - only deletes COO resources)
+    log_info "Removing COO manifests (using label selector: monitoring-type=coo)..."
+    
+    # Use label selector to ensure we only delete COO resources
+    # This prevents accidental deletion of UWM resources if both are deployed
     if [[ "$VERBOSE" == "true" ]]; then
-        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" || true
-        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" || true
-        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" || true
+        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo || true
         oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" || true
     else
-        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" &>/dev/null || true
-        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" &>/dev/null || true
-        oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" &>/dev/null || true
+        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo &>/dev/null || true
         oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" &>/dev/null || true
+    fi
+    
+    # Also delete by name as fallback (in case labels weren't applied)
+    log_info "Removing COO manifests (by name, as fallback)..."
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    else
+        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
     fi
     
     # Delete COO operator subscription
@@ -510,6 +527,22 @@ remove_coo_monitoring() {
     if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
         log_info "Deleting COO ThanosQuerier..."
         oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" 2>/dev/null || true
+    fi
+    
+    # Check if combined NetworkPolicy exists and handle it
+    # Only delete combined NetworkPolicy if UWM is not also deployed
+    if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
+        # Check if UWM resources still exist
+        if ! oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            log_info "Deleting combined NetworkPolicy (UWM not detected)..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" || true
+            else
+                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null || true
+            fi
+        else
+            log_info "Keeping combined NetworkPolicy (UWM still deployed)..."
+        fi
     fi
     
     log_success "COO monitoring infrastructure removed"
@@ -535,18 +568,29 @@ remove_uwm_monitoring() {
         return 0
     fi
     
-    # Delete UWM manifests
-    log_info "Removing UWM manifests..."
+    # Delete UWM manifests using label selector (safer - only deletes UWM resources)
+    log_info "Removing UWM manifests (using label selector: monitoring-type=uwm)..."
+    
+    # Use label selector to ensure we only delete UWM resources
+    # This prevents accidental deletion of COO resources if both are deployed
     if [[ "$VERBOSE" == "true" ]]; then
-        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" || true
-        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" || true
-        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" || true
+        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm || true
         oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" || true
     else
-        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" &>/dev/null || true
-        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" &>/dev/null || true
-        oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" &>/dev/null || true
+        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
         oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" &>/dev/null || true
+    fi
+    
+    # Also delete by name as fallback (in case labels weren't applied)
+    log_info "Removing UWM manifests (by name, as fallback)..."
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+        oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+    else
+        oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+        oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
     fi
     
     # Disable UWM in cluster-monitoring-config
@@ -583,6 +627,22 @@ remove_uwm_monitoring() {
         oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring || true
     else
         oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring &>/dev/null || true
+    fi
+    
+    # Check if combined NetworkPolicy exists and handle it
+    # Only delete combined NetworkPolicy if COO is not also deployed
+    if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
+        # Check if COO resources still exist
+        if ! oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+            log_info "Deleting combined NetworkPolicy (COO not detected)..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" || true
+            else
+                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null || true
+            fi
+        else
+            log_info "Keeping combined NetworkPolicy (COO still deployed)..."
+        fi
     fi
     
     log_success "UWM monitoring infrastructure removed"

@@ -1,18 +1,17 @@
 ---
-# NetworkPolicy for EIP monitor with UWM (User Workload Monitoring)
-# Follows OpenShift best practices:
-# - Uses podSelector + namespaceSelector together for specificity (reduces OVS flow rules)
-# - Allows UWM Prometheus in openshift-user-workload-monitoring namespace
-# - Allows platform Prometheus in openshift-monitoring namespace (for platform monitoring)
+# Combined NetworkPolicy for EIP monitor supporting both COO and UWM
+# This policy allows both monitoring stacks to scrape metrics simultaneously
+# Use this when deploying both COO and UWM, or use the individual policies
+# (networkpolicy-coo.yaml or networkpolicy-uwm.yaml) for single-stack deployments
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: eip-monitor-uwm
+  name: eip-monitor-combined
   namespace: eip-monitoring
   labels:
     app: eip-monitor
     monitoring: "true"
-    monitoring-type: "uwm"  # Specific label for selective deletion
+    monitoring-type: "both"
 spec:
   podSelector:
     matchLabels:
@@ -21,6 +20,13 @@ spec:
   - Ingress
   - Egress
   ingress:
+  # Allow COO Prometheus in same namespace (eip-monitoring)
+  # COO Prometheus runs in the same namespace as the monitored pods
+  - from:
+    - podSelector: {}  # Allow all pods in same namespace (required for COO)
+    ports:
+    - protocol: TCP
+      port: 8080
   # Allow UWM Prometheus in openshift-user-workload-monitoring namespace
   # Uses podSelector + namespaceSelector together per OpenShift best practices
   - from:

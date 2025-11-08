@@ -12,6 +12,7 @@ metadata:
   labels:
     app: eip-monitor
     monitoring: "true"
+    monitoring-type: "uwm"  # Specific label for selective deletion
 spec:
   selector:
     matchLabels:
