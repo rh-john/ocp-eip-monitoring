@@ -1,4 +1,3 @@
----
 # ServiceMonitor for COO Prometheus to scrape EIP metrics
 <<<<<<< HEAD
 apiVersion: monitoring.rhobs/v1
@@ -28,4 +27,3 @@ spec:
   namespaceSelector:
     matchNames:
     - eip-monitoring
-
