@@ -1,0 +1,15 @@
+---
+# Cluster Observability Operator Subscription
+# Note: COO is typically cluster-scoped and installed in openshift-operators namespace
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: cluster-observability-operator
+  namespace: openshift-operators
+spec:
+  channel: stable
+  name: cluster-observability-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+  installPlanApproval: Automatic
+

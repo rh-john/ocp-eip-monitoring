@@ -1,0 +1,31 @@
+---
+# ServiceMonitor for Prometheus to scrape EIP metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+<<<<<<< HEAD
+  name: eip-monitor-uwm
+=======
+  name: eip-monitor
+>>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: "true"
+    monitoring-type: "uwm"  # Specific label for selective deletion
+spec:
+  selector:
+    matchLabels:
+      app: eip-monitor
+      service: eip-monitor
+  endpoints:
+  - port: metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+    honorLabels: true
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - eip-monitoring
+
