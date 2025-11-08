@@ -44,12 +44,12 @@ spec:
           },
           "targets": [
             {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total)",
+              "expr": "(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total)",
               "legendFormat": "Node NotReady - {{node}}",
               "refId": "C"
             },
             {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total)",
+              "expr": "(kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) node_eip_assigned_total)",
               "legendFormat": "Node Ready - {{node}}",
               "refId": "D"
             }
@@ -99,7 +99,7 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total)",
+              "expr": "(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total)",
               "legendFormat": "Node NotReady - {{node}}",
               "refId": "C"
             }
@@ -153,17 +153,17 @@ spec:
           },
           "targets": [
             {
-              "expr": "changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))[5m]) > 0",
+              "expr": "changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0 or changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total)[5m]) > 0",
               "legendFormat": "Node Reboot Detected - {{node}}",
               "refId": "A"
             },
             {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total)",
+              "expr": "(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total)",
               "legendFormat": "Node Down - {{node}}",
               "refId": "B"
             },
             {
-              "expr": "node_boot_time_seconds and on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable=\"true\"}",
+              "expr": "node_boot_time_seconds * on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable=\"true\"}",
               "legendFormat": "Boot Time - {{node}}",
               "refId": "C"
             }
@@ -227,7 +227,7 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "count(changes((kube_node_status_condition{condition=\"Ready\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))[5m]) > 0)",
+              "expr": "count(changes((kube_node_status_condition{condition=\"Ready\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0 or changes((kube_node_status_condition{condition=\"Ready\"} and on(node) node_eip_assigned_total)[5m]) > 0)",
               "legendFormat": "Node Status Changes",
               "refId": "C"
             }
@@ -273,17 +273,17 @@ spec:
               "refId": "A"
             },
             {
-              "expr": "sum(kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
+              "expr": "sum((kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} and on(node) node_eip_assigned_total))",
               "legendFormat": "Nodes with Memory Pressure",
               "refId": "B"
             },
             {
-              "expr": "sum(kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
+              "expr": "sum((kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} and on(node) node_eip_assigned_total))",
               "legendFormat": "Nodes with Disk Pressure",
               "refId": "C"
             },
             {
-              "expr": "sum(kube_node_status_condition{condition=\"NetworkUnavailable\",status=\"true\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
+              "expr": "sum((kube_node_status_condition{condition=\"NetworkUnavailable\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"NetworkUnavailable\",status=\"true\"} and on(node) node_eip_assigned_total))",
               "legendFormat": "Nodes with Network Issues",
               "refId": "D"
             }
@@ -324,22 +324,22 @@ spec:
           },
           "targets": [
             {
-              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"})",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\"} == 1)",
               "legendFormat": "OVN Available",
               "refId": "A"
             },
             {
-              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Progressing\",status=\"true\"})",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Progressing\"} == 1)",
               "legendFormat": "OVN Progressing",
               "refId": "B"
             },
             {
-              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"})",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\"} == 1)",
               "legendFormat": "OVN Degraded",
               "refId": "C"
             },
             {
-              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"})",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\"} == 0)",
               "legendFormat": "Network Operator Unavailable",
               "refId": "D"
             }
@@ -393,23 +393,23 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"true\"}",
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\"} == 1",
               "legendFormat": "CNCC Available",
               "refId": "A",
               "instant": true
             },
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\"} == 1",
               "legendFormat": "CNCC Degraded",
               "refId": "B"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Progressing\",status=\"true\"}",
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Progressing\"} == 1",
               "legendFormat": "CNCC Progressing",
               "refId": "C"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Upgradeable\",status=\"false\"}",
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Upgradeable\"} == 0",
               "legendFormat": "CNCC Not Upgradeable",
               "refId": "D"
             }
@@ -463,7 +463,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"} * 10",
+              "expr": "(cluster_operator_conditions{name=\"network\",condition=\"Degraded\"} == 1) * 10",
               "legendFormat": "OVN Degraded (x10)",
               "refId": "C"
             }
@@ -504,7 +504,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"} * 10",
+              "expr": "(cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\"} == 1) * 10",
               "legendFormat": "CNCC Degraded (x10)",
               "refId": "C"
             }
@@ -545,7 +545,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
+              "expr": "count((kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) node_eip_assigned_total))",
               "legendFormat": "Ready Nodes",
               "refId": "A",
               "instant": true
@@ -585,7 +585,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
+              "expr": "count((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total))",
               "legendFormat": "Not Ready",
               "refId": "A",
               "instant": true
@@ -633,7 +633,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"})",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\"} == 1)",
               "legendFormat": "OVN Available",
               "refId": "A",
               "instant": true
@@ -677,7 +677,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"true\"}",
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\"} == 1",
               "legendFormat": "CNCC Available",
               "refId": "A",
               "instant": true
@@ -721,21 +721,21 @@ spec:
           },
           "targets": [
             {
-              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
+              "expr": "count((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}) or (kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total))",
               "format": "table",
               "instant": true,
               "legendFormat": "Not Ready Nodes",
               "refId": "C"
             },
             {
-              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"})",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\"} == 1)",
               "format": "table",
               "instant": true,
               "legendFormat": "Network Degraded",
               "refId": "D"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
+              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\"} == 1",
               "format": "table",
               "instant": true,
               "legendFormat": "CNCC Degraded",
