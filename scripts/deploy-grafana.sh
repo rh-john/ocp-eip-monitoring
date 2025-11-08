@@ -8,11 +8,7 @@ set -euo pipefail
 
 # Configuration
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
-<<<<<<< Updated upstream
-MONITORING_TYPE="${MONITORING_TYPE:-}"  # Will be auto-detected if not set
-=======
->>>>>>> Stashed changes
-REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
+MONITORING_TYPE="${MONITORING_TYPE:-}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,81 +43,18 @@ Usage: $0 [options]
 
 Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
-<<<<<<< Updated upstream
-  --monitoring-type TYPE    Monitoring type: coo or uwm (auto-detected if not specified)
-  --remove-grafana          Remove Grafana resources
-=======
-  --remove-grafana         Remove Grafana datasources and resources
->>>>>>> Stashed changes
+  -t, --monitoring-type TYPE Monitoring type: coo or uwm (required)
   -h, --help               Show this help message
 
 Environment Variables:
   NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
-<<<<<<< Updated upstream
-  MONITORING_TYPE           Monitoring type: coo or uwm (auto-detected if not specified)
-=======
-  REMOVE_GRAFANA            Set to true to remove Grafana resources (default: false)
->>>>>>> Stashed changes
+  MONITORING_TYPE           Monitoring type: coo or uwm
 
 Examples:
-  $0
-  $0 -n my-namespace
-<<<<<<< Updated upstream
   $0 --monitoring-type coo
-  $0 --monitoring-type uwm
-=======
->>>>>>> Stashed changes
-  $0 --remove-grafana
+  $0 --monitoring-type uwm -n my-namespace
 
 EOF
-}
-
-# Auto-detect monitoring type
-detect_monitoring_type() {
-    # Check for COO (Cluster Observability Operator)
-    # COO uses MonitoringStack CRD
-    if oc get crd monitoringstacks.monitoring.rhobs &>/dev/null; then
-        # Check if there are any MonitoringStack resources
-        local monitoring_stacks=$(oc get monitoringstack --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
-        if [[ "$monitoring_stacks" =~ ^[0-9]+$ ]] && [[ "$monitoring_stacks" -gt 0 ]]; then
-            log_info "Detected Cluster Observability Operator (COO) - found $monitoring_stacks MonitoringStack resource(s)" >&2
-            echo "coo"
-            return 0
-        fi
-    fi
-    
-    # Check for UWM (User Workload Monitoring)
-    # UWM uses openshift-user-workload-monitoring namespace
-    if oc get namespace openshift-user-workload-monitoring &>/dev/null; then
-        # Verify it's actually active by checking for Prometheus pods
-        local prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null | tr -d '[:space:]' || echo "0")
-        if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
-            log_info "Detected User Workload Monitoring (UWM) - found $prom_pods Prometheus pod(s) in openshift-user-workload-monitoring" >&2
-            echo "uwm"
-            return 0
-        fi
-    fi
-    
-    # If neither is clearly detected, check for UWM namespace existence (even without pods)
-    if oc get namespace openshift-user-workload-monitoring &>/dev/null; then
-        log_warn "Found openshift-user-workload-monitoring namespace but no running Prometheus pods" >&2
-        log_info "Assuming UWM (User Workload Monitoring)" >&2
-        echo "uwm"
-        return 0
-    fi
-    
-    # Default fallback - could not detect
-    log_warn "Could not auto-detect monitoring type" >&2
-    log_info "Checking for COO MonitoringStack CRD..." >&2
-    if oc get crd monitoringstacks.monitoring.rhobs &>/dev/null; then
-        log_info "COO CRD found but no MonitoringStack resources detected" >&2
-    fi
-    log_info "Checking for UWM namespace..." >&2
-    if ! oc get namespace openshift-user-workload-monitoring &>/dev/null; then
-        log_info "UWM namespace not found" >&2
-    fi
-    log_error "Please specify --monitoring-type coo or --monitoring-type uwm" >&2
-    return 1
 }
 
 # Check prerequisites
@@ -149,62 +82,9 @@ check_prerequisites() {
     fi
 }
 
-# Remove Grafana resources
-remove_grafana_resources() {
-    log_info "Removing Grafana resources..."
-    
-    local resources_found=false
-    
-    # Delete dashboards
-    if oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
-        oc delete grafanadashboard -n "$NAMESPACE" --all 2>&1 | grep -v "No resources found" || true
-        resources_found=true
-    else
-        log_info "  No GrafanaDashboards found"
-    fi
-    
-    # Delete datasources
-    if oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
-        oc delete grafanadatasource -n "$NAMESPACE" --all 2>&1 | grep -v "No resources found" || true
-        resources_found=true
-    else
-        log_info "  No GrafanaDataSources found"
-    fi
-    
-    # Delete Grafana instance
-    if oc get grafana -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
-        oc delete grafana -n "$NAMESPACE" --all 2>&1 | grep -v "No resources found" || true
-        resources_found=true
-    else
-        log_info "  No Grafana instances found"
-    fi
-    
-    # Delete RBAC (monitoring-specific)
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
-    local rbac_file="${project_root}/k8s/grafana/${MONITORING_TYPE}/grafana-rbac-${MONITORING_TYPE}.yaml"
-    if [[ -f "$rbac_file" ]]; then
-        log_info "  Removing RBAC resources..."
-        oc delete -f "$rbac_file" 2>&1 | grep -v "not found\|No resources found" || true
-        resources_found=true
-    fi
-    
-    if [[ "$resources_found" == "true" ]]; then
-        log_success "Grafana resources removed"
-    else
-        log_info "No Grafana resources found to remove"
-    fi
-}
-
 # Deploy Grafana resources
 deploy_grafana() {
-    # Validate monitoring type
-    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]]; then
-        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo' or 'uwm'"
-        exit 1
-    fi
-    
-    log_info "Deploying Grafana for EIP monitoring (${MONITORING_TYPE})..."
+    log_info "Deploying Grafana for EIP monitoring..."
     
     # Ensure namespace exists first
     if ! oc get namespace "$NAMESPACE" &>/dev/null; then
@@ -215,11 +95,6 @@ deploy_grafana() {
         }
     fi
     
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
-    local grafana_dir="${project_root}/k8s/grafana"
-    local grafana_monitoring_dir="${project_root}/k8s/grafana/${MONITORING_TYPE}"
-    
     # Check if Grafana operator is already installed
     local csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
     
@@ -229,12 +104,7 @@ deploy_grafana() {
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
-        local operator_file="${grafana_dir}/grafana-operator.yaml"
-        if [[ ! -f "$operator_file" ]]; then
-            log_error "Grafana operator file not found: $operator_file"
-            return 1
-        fi
-        if oc apply -f "$operator_file" &>/dev/null; then
+        if oc apply -f k8s/grafana/grafana-operator.yaml &>/dev/null; then
             log_success "Grafana Operator subscription and OperatorGroup created"
             log_info "Waiting for Grafana Operator to be installed (this may take a few minutes)..."
             
@@ -269,43 +139,88 @@ deploy_grafana() {
         fi
     fi
     
+    # Determine RBAC and datasource files based on monitoring type
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    local rbac_file=""
+    local datasource_file=""
+    local service_account_name=""
+    local datasource_name=""
+    
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        rbac_file="${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
+        datasource_file="${project_root}/k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml"
+        service_account_name="grafana-prometheus-coo"
+        datasource_name="prometheus-coo"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        rbac_file="${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
+        datasource_file="${project_root}/k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml"
+        service_account_name="grafana-prometheus"
+        datasource_name="prometheus-uwm"
+    else
+        log_error "Invalid or missing monitoring type: $MONITORING_TYPE"
+        log_error "Must specify --monitoring-type coo or --monitoring-type uwm"
+        return 1
+    fi
+    
+    # Check if RBAC file exists
+    if [[ ! -f "$rbac_file" ]]; then
+        log_error "RBAC file not found: $rbac_file"
+        return 1
+    fi
+    
+    # Check if datasource file exists
+    if [[ ! -f "$datasource_file" ]]; then
+        log_error "Datasource file not found: $datasource_file"
+        return 1
+    fi
+    
     # Deploy Service Account and RBAC
-    log_info "Creating Service Account and RBAC for Grafana..."
-    local rbac_file="${grafana_monitoring_dir}/grafana-rbac-${MONITORING_TYPE}.yaml"
+    log_info "Creating Service Account and RBAC for Grafana ($MONITORING_TYPE)..."
     if oc apply -f "$rbac_file" &>/dev/null; then
         log_success "Service Account and RBAC created"
     else
         log_error "Failed to create Service Account and RBAC"
-        log_error "This requires cluster-admin permissions for ClusterRoleBinding"
+        if [[ "$MONITORING_TYPE" == "uwm" ]]; then
+            log_error "This requires cluster-admin permissions for ClusterRoleBinding"
+        fi
         return 1
     fi
     
-    # Deploy Grafana DataSource
-    log_info "Deploying Grafana DataSource (${MONITORING_TYPE})..."
-    local ds_file="${grafana_monitoring_dir}/grafana-datasource-${MONITORING_TYPE}.yaml"
+    # Create a long-lived token for the service account (only needed for UWM)
+    local token=""
+    if [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        log_info "Creating service account token for Thanos Querier authentication..."
+        local token_output=$(oc create token "$service_account_name" -n "$NAMESPACE" --duration=8760h 2>&1)
+        local token_exit=$?
+        if [[ $token_exit -eq 0 ]] && [[ -n "$token_output" ]]; then
+            token="$token_output"
+            log_success "Service account token created"
+        else
+            log_warn "Failed to create token, will use placeholder (datasource may not work)"
+            log_info "You can manually create a token with:"
+            log_info "  oc create token $service_account_name -n $NAMESPACE --duration=8760h"
+            log_info "Then patch the datasource:"
+            log_info "  oc patch grafanadatasource $datasource_name -n $NAMESPACE --type=json -p='[{\"op\": \"replace\", \"path\": \"/spec/datasource/secureJsonData/httpHeaderValue1\", \"value\": \"Bearer <TOKEN>\"}]'"
+            token="PLACEHOLDER_TOKEN"
+        fi
+    fi
     
-    local ds_output=$(oc apply -f "$ds_file" 2>&1)
+    # Deploy Grafana DataSource
+    log_info "Deploying Grafana DataSource ($MONITORING_TYPE)..."
+    local ds_output=$(oc apply -f "$datasource_file" 2>&1)
     local ds_exit=$?
     if [[ $ds_exit -eq 0 ]]; then
         log_success "Grafana DataSource deployed"
         
-        # For UWM, create and patch token for Thanos Querier
-        if [[ "$MONITORING_TYPE" == "uwm" ]]; then
-            log_info "Creating service account token for Thanos Querier authentication..."
-            local token=""
-            local token_output=$(oc create token grafana-prometheus -n "$NAMESPACE" --duration=8760h 2>&1)
-            local token_exit=$?
-            if [[ $token_exit -eq 0 ]] && [[ -n "$token_output" ]]; then
-                token="$token_output"
-                log_info "Updating Grafana DataSource with service account token..."
-                if oc patch grafanadatasource prometheus-uwm -n "$NAMESPACE" --type=json \
-                    -p="[{\"op\": \"replace\", \"path\": \"/spec/datasource/secureJsonData/httpHeaderValue1\", \"value\": \"Bearer $token\"}]" &>/dev/null; then
-                    log_success "Grafana DataSource token updated"
-                else
-                    log_warn "Failed to update datasource token (may need manual update)"
-                fi
+        # Patch the datasource with the actual token if we have one (UWM only)
+        if [[ "$MONITORING_TYPE" == "uwm" ]] && [[ -n "$token" ]] && [[ "$token" != "PLACEHOLDER_TOKEN" ]]; then
+            log_info "Updating Grafana DataSource with service account token..."
+            if oc patch grafanadatasource "$datasource_name" -n "$NAMESPACE" --type=json \
+                -p="[{\"op\": \"replace\", \"path\": \"/spec/datasource/secureJsonData/httpHeaderValue1\", \"value\": \"Bearer $token\"}]" &>/dev/null; then
+                log_success "Grafana DataSource token updated"
             else
-                log_warn "Failed to create token, datasource may not work until token is manually added"
+                log_warn "Failed to update datasource token (may need manual update)"
             fi
         fi
     else
@@ -316,8 +231,7 @@ deploy_grafana() {
     
     # Deploy Grafana Instance
     log_info "Deploying Grafana Instance..."
-    local instance_file="${grafana_dir}/grafana-instance.yaml"
-    local instance_output=$(oc apply -f "$instance_file" 2>&1)
+    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
     local instance_exit=$?
     if [[ $instance_exit -eq 0 ]]; then
         log_success "Grafana Instance deployed"
@@ -327,26 +241,44 @@ deploy_grafana() {
         return 1
     fi
     
+    # Plugins are configured in grafana-instance.yaml via spec.plugins
+    # The Grafana Operator will automatically install them during deployment
     log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
-    
     # Deploy Grafana Dashboards
     log_info "Deploying Grafana Dashboards..."
+    local dashboard_files=(
+        # Original dashboards
+        "k8s/grafana/grafana-dashboard.yaml"
+        "k8s/grafana/grafana-dashboard-eip-distribution.yaml"
+        "k8s/grafana/grafana-dashboard-cpic-health.yaml"
+        "k8s/grafana/grafana-dashboard-node-performance.yaml"
+        "k8s/grafana/grafana-dashboard-eip-timeline.yaml"
+        "k8s/grafana/grafana-dashboard-cluster-health.yaml"
+        # New advanced plugin dashboards
+        "k8s/grafana/grafana-dashboard-state-visualization.yaml"
+        "k8s/grafana/grafana-dashboard-enhanced-tables.yaml"
+        "k8s/grafana/grafana-dashboard-architecture-diagram.yaml"
+        "k8s/grafana/grafana-dashboard-custom-gauges.yaml"
+        "k8s/grafana/grafana-dashboard-timeline-events.yaml"
+        "k8s/grafana/grafana-dashboard-node-health-grid.yaml"
+        "k8s/grafana/grafana-dashboard-network-topology.yaml"
+        "k8s/grafana/grafana-dashboard-interactive-drilldown.yaml"
+    )
+    
     local dashboards_deployed=0
     local dashboards_failed=0
     
-    for dashboard_file in "${grafana_dir}"/grafana-dashboard*.yaml; do
-        if [[ -f "$dashboard_file" ]]; then
-            local dashboard_name=$(basename "$dashboard_file" .yaml)
-            local dashboard_output=$(oc apply -f "$dashboard_file" 2>&1)
-            local dashboard_exit=$?
-            if [[ $dashboard_exit -eq 0 ]]; then
-                log_success "  ✓ $dashboard_name deployed"
-                ((dashboards_deployed++))
-            else
-                log_error "  ✗ Failed to deploy $dashboard_name"
-                echo "$dashboard_output" | sed 's/^/    /'
-                ((dashboards_failed++))
-            fi
+    for dashboard_file in "${dashboard_files[@]}"; do
+        local dashboard_name=$(basename "$dashboard_file" .yaml)
+        local dashboard_output=$(oc apply -f "$dashboard_file" 2>&1)
+        local dashboard_exit=$?
+        if [[ $dashboard_exit -eq 0 ]]; then
+            log_success "  ✓ $dashboard_name deployed"
+            ((dashboards_deployed++))
+        else
+            log_error "  ✗ Failed to deploy $dashboard_name"
+            echo "$dashboard_output" | sed 's/^/    /'
+            ((dashboards_failed++))
         fi
     done
     
@@ -363,37 +295,6 @@ deploy_grafana() {
     log_info "  oc get grafanadashboard -n $NAMESPACE"
 }
 
-# Remove Grafana resources
-remove_grafana() {
-    log_info "Removing Grafana datasources and resources..."
-    
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
-    
-    # Delete COO Grafana datasource
-    if oc get grafanadatasource prometheus-coo -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO GrafanaDatasource..."
-        oc delete grafanadatasource prometheus-coo -n "$NAMESPACE" 2>/dev/null || log_warn "Failed to delete COO GrafanaDatasource"
-    fi
-    
-    # Delete UWM Grafana datasource
-    if oc get grafanadatasource prometheus-uwm -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting UWM GrafanaDatasource..."
-        oc delete grafanadatasource prometheus-uwm -n "$NAMESPACE" 2>/dev/null || log_warn "Failed to delete UWM GrafanaDatasource"
-    fi
-    
-    # Also try deleting via manifest files if they exist
-    if [[ -f "${project_root}/k8s/grafana/coo/grafana-datasource-coo.yaml" ]]; then
-        oc delete -f "${project_root}/k8s/grafana/coo/grafana-datasource-coo.yaml" 2>/dev/null || true
-    fi
-    
-    if [[ -f "${project_root}/k8s/grafana/uwm/grafana-datasource-uwm.yaml" ]]; then
-        oc delete -f "${project_root}/k8s/grafana/uwm/grafana-datasource-uwm.yaml" 2>/dev/null || true
-    fi
-    
-    log_success "Grafana datasources removed"
-}
-
 # Parse command line arguments
 parse_args() {
     while [[ $# -gt 0 ]]; do
@@ -402,16 +303,9 @@ parse_args() {
                 NAMESPACE="$2"
                 shift 2
                 ;;
-<<<<<<< Updated upstream
-            --monitoring-type)
+            -t|--monitoring-type)
                 MONITORING_TYPE="$2"
                 shift 2
-                ;;
-=======
->>>>>>> Stashed changes
-            --remove-grafana)
-                REMOVE_GRAFANA="true"
-                shift
                 ;;
             -h|--help)
                 show_usage
@@ -430,40 +324,30 @@ parse_args() {
 main() {
     parse_args "$@"
     
-    check_prerequisites
-    
-    # Auto-detect monitoring type if not explicitly set
+    # Validate monitoring type
     if [[ -z "$MONITORING_TYPE" ]]; then
-        log_info "Auto-detecting monitoring type..."
-        local detected_type
-        detected_type=$(detect_monitoring_type)
-        if [[ -z "$detected_type" ]]; then
-            exit 1
-        fi
-        MONITORING_TYPE="$detected_type"
+        log_error "Monitoring type is required. Use --monitoring-type coo or --monitoring-type uwm"
+        show_usage
+        exit 1
     fi
+    
+    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]]; then
+        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo' or 'uwm'"
+        show_usage
+        exit 1
+    fi
+    
+    check_prerequisites
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     log_info "Deploying to namespace: $NAMESPACE"
     log_info "Monitoring type: $MONITORING_TYPE"
     
-    if [[ "$REMOVE_GRAFANA" == "true" ]]; then
-<<<<<<< Updated upstream
-        remove_grafana_resources
-=======
-        remove_grafana
->>>>>>> Stashed changes
-    else
-        deploy_grafana
-        
-        log_success "Grafana deployment completed!"
-        log_info "Grafana resources status:"
-<<<<<<< Updated upstream
-        oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || log_info "  (Resources may still be initializing)"
-=======
-        oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
->>>>>>> Stashed changes
-    fi
+    deploy_grafana
+    
+    log_success "Grafana deployment completed!"
+    log_info "Grafana resources status:"
+    oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
 }
 
 # Run main function
