@@ -79,12 +79,15 @@ Environment Variables:
 Examples:
   $0 build
   $0 build -r quay.io/myorg -t v1.0.0
+  $0 build -r quay.io/myorg/eip-monitor -t v1.0.0  # Registry can include image name
   $0 deploy
   $0 deploy --log-level DEBUG
   $0 all -r quay.io/myorg
+  $0 all -r quay.io/myorg/eip-monitor -t v1.0.0  # Registry can include image name
   $0 all -r quay.io/myorg --log-level DEBUG
   $0 all --quay-image quay.io/myorg/eip-monitor:v1.2.3 --with-monitoring
-  $0 all --skip-build -r quay.io/myorg -t v1.2.3 --with-monitoring
+  $0 all -r quay.io/myorg/eip-monitor -t v1.2.3 --with-monitoring coo  # Shorthand: coo/uwm after --with-monitoring
+  $0 all --skip-build -r quay.io/myorg -t v1.2.3 --with-monitoring --monitoring-type uwm
   $0 restart                  Restart deployment to pull new image with same tag
   $0 test
   $0 clean
@@ -223,7 +226,14 @@ build_image() {
     local full_image_name="${IMAGE_NAME}:${IMAGE_TAG}"
     
     if [[ -n "$REGISTRY" ]]; then
-        full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        # Check if registry already ends with the image name to avoid duplication
+        if [[ "$REGISTRY" == */${IMAGE_NAME} ]]; then
+            # Registry already includes image name (e.g., quay.io/org/eip-monitor)
+            full_image_name="${REGISTRY}:${IMAGE_TAG}"
+        else
+            # Registry is just the base (e.g., quay.io/org)
+            full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        fi
     fi
     
     log_info "Building image: $full_image_name"
@@ -272,7 +282,15 @@ push_image() {
         exit 1
     fi
     
-    local full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+    # Check if registry already ends with the image name to avoid duplication
+    local full_image_name
+    if [[ "$REGISTRY" == */${IMAGE_NAME} ]]; then
+        # Registry already includes image name (e.g., quay.io/org/eip-monitor)
+        full_image_name="${REGISTRY}:${IMAGE_TAG}"
+    else
+        # Registry is just the base (e.g., quay.io/org)
+        full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+    fi
     
     log_info "Pushing image to registry..."
     log_info "Image: $full_image_name"
@@ -305,7 +323,15 @@ update_manifests() {
     
     # Update image name only if registry is specified
     if [[ -n "$REGISTRY" ]]; then
-        local full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        # Check if registry already ends with the image name to avoid duplication
+        local full_image_name
+        if [[ "$REGISTRY" == */${IMAGE_NAME} ]]; then
+            # Registry already includes image name (e.g., quay.io/org/eip-monitor)
+            full_image_name="${REGISTRY}:${IMAGE_TAG}"
+        else
+            # Registry is just the base (e.g., quay.io/org)
+            full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        fi
         sed -i "" "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$temp_manifest"
         log_info "Updated image to: $full_image_name" >&2
     else
@@ -866,7 +892,14 @@ deploy() {
         manifest_file="$temp_manifest"
         log_info "Using Quay image: $full_image_name"
     elif [[ -n "$REGISTRY" ]]; then
-        full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        # Check if registry already ends with the image name to avoid duplication
+        if [[ "$REGISTRY" == */${IMAGE_NAME} ]]; then
+            # Registry already includes image name (e.g., quay.io/org/eip-monitor)
+            full_image_name="${REGISTRY}:${IMAGE_TAG}"
+        else
+            # Registry is just the base (e.g., quay.io/org)
+            full_image_name="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+        fi
         local temp_manifest=$(mktemp)
         sed "s|image: \"eip-monitor:latest\"|image: \"$full_image_name\"|g" "$manifest_file" > "$temp_manifest"
         manifest_file="$temp_manifest"
@@ -2084,13 +2117,24 @@ parse_args() {
             --with-monitoring)
                 WITH_MONITORING="true"
                 shift
+                # Check if next argument is a monitoring type (coo or uwm)
+                if [[ $# -gt 0 ]] && [[ "$1" == "coo" || "$1" == "uwm" ]]; then
+                    MONITORING_TYPE="$1"
+                    shift
+                fi
                 ;;
             -h|--help)
                 show_usage
                 exit 0
                 ;;
             *)
-                break
+                # Check if it's a monitoring type as positional argument
+                if [[ "$1" == "coo" || "$1" == "uwm" ]]; then
+                    MONITORING_TYPE="$1"
+                    shift
+                else
+                    break
+                fi
                 ;;
         esac
     done

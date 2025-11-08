@@ -19,21 +19,11 @@ from flask import Flask, Response
 from prometheus_client import Counter, Gauge, Info, generate_latest
 
 # Configure logging
-log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
-# Map string to logging level
-log_level_map = {
-    'DEBUG': logging.DEBUG,
-    'INFO': logging.INFO,
-    'WARNING': logging.WARNING,
-    'ERROR': logging.ERROR,
-    'CRITICAL': logging.CRITICAL
-}
 logging.basicConfig(
-    level=log_level_map.get(log_level, logging.INFO),
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-logger.info(f"Logging level set to: {log_level}")
 
 # Flask app
 app = Flask(__name__)
@@ -63,6 +53,8 @@ node_cpic_success = Gauge('node_cpic_success_total', 'CPIC success count per nod
 node_cpic_pending = Gauge('node_cpic_pending_total', 'CPIC pending count per node', ['node'])
 node_cpic_error = Gauge('node_cpic_error_total', 'CPIC error count per node', ['node'])
 node_eip_assigned = Gauge('node_eip_assigned_total', 'EIP assigned count per node', ['node'])
+node_eip_primary = Gauge('node_eip_primary_total', 'Primary EIP count per node (first IP from each resource)', ['node'])
+node_eip_secondary = Gauge('node_eip_secondary_total', 'Secondary EIP count per node (remaining IPs)', ['node'])
 
 # Node capacity and distribution metrics
 node_eip_capacity = Gauge('node_eip_capacity_total', 'Maximum EIP capacity per node', ['node'])
@@ -88,6 +80,14 @@ cpic_recoveries_last_hour = Gauge('cpic_recoveries_last_hour', 'Number of CPIC e
 # Resource health indicators
 cluster_eip_health_score = Gauge('cluster_eip_health_score', 'Overall EIP cluster health score (0-100)')
 cluster_eip_stability_score = Gauge('cluster_eip_stability_score', 'EIP stability score based on change frequency')
+
+# Health status metrics
+malfunctioning_eip_objects_count = Gauge('malfunctioning_eip_objects_count', 'Number of EIP resources with EIP-CPIC mismatches')
+overcommitted_eip_objects_count = Gauge('overcommitted_eip_objects_count', 'Total overcommitted IPs (when configured > available nodes)')
+critical_eip_objects_count = Gauge('critical_eip_objects_count', 'Number of EIP resources with no working assignments')
+eip_cpic_mismatches_total = Gauge('eip_cpic_mismatches_total', 'Total count of all EIP-CPIC mismatches')
+eip_cpic_mismatches_node_mismatch = Gauge('eip_cpic_mismatches_node_mismatch', 'IPs with different node assignments in EIP vs CPIC')
+eip_cpic_mismatches_missing_in_eip = Gauge('eip_cpic_mismatches_missing_in_eip', 'IPs in CPIC but missing from EIP status.items')
 
 # Monitoring system metrics
 monitoring_info = Info('eip_monitoring', 'EIP monitoring information')
@@ -204,12 +204,6 @@ class EIPMetricsCollector:
     
     def collect_all_data_optimized(self) -> tuple:
         """Optimized single-pass data collection - reduces API calls from 5+ to 2"""
-        # Initialize with default empty values to ensure we always return valid data
-        eip_data = {'items': []}
-        cpic_data = {'items': []}
-        
-        logger.debug("collect_all_data_optimized: Starting data collection")
-        
         try:
             # Get EIP nodes (cached if recent)
             cached_nodes = self.get_cached_data('eip_nodes')
@@ -217,96 +211,32 @@ class EIPMetricsCollector:
                 self.eip_nodes = cached_nodes
                 logger.debug("Using cached EIP nodes")
             else:
-                # get_eip_nodes() always returns True now (even with empty nodes or command failures)
+                # Try to get nodes, but continue even if none found (valid state)
                 self.get_eip_nodes()
                 self.set_cached_data('eip_nodes', self.eip_nodes)
             
-            # Ensure eip_nodes is always a list
-            if self.eip_nodes is None:
-                self.eip_nodes = []
-            
             # Get all EIP and CPIC data in optimized calls
+            # Continue even if no nodes found - EIP/CPIC resources might still exist
             eip_output = self.run_oc_command(['oc', 'get', 'eip', '-o', 'json'], operation='eip_get')
             if eip_output is None:
-                # If command failed, try to continue with empty data (might be permissions or transient error)
-                logger.warning("Failed to get EIP resources - command returned None, using empty items list")
-                eip_data = {'items': []}
-            elif not eip_output.strip():
-                logger.info("No EIP resources found - using empty items list")
-                eip_data = {'items': []}
-            else:
-                try:
-                    eip_data = json.loads(eip_output)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse EIP JSON output: {e}")
-                    logger.debug(f"EIP output: {eip_output[:200]}...")
-                    # Continue with empty data rather than failing completely
-                    logger.warning("Using empty items list due to JSON parse error")
-                    eip_data = {'items': []}
+                return None, None, None
                 
             cpic_output = self.run_oc_command(['oc', 'get', 'cloudprivateipconfig', '-o', 'json'], operation='cpic_get')
             if cpic_output is None:
-                # If command failed, try to continue with empty data (might be permissions or transient error)
-                logger.warning("Failed to get CPIC resources - command returned None, using empty items list")
-                cpic_data = {'items': []}
-            elif not cpic_output.strip():
-                logger.info("No CPIC resources found - using empty items list")
-                cpic_data = {'items': []}
-            else:
-                try:
-                    cpic_data = json.loads(cpic_output)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse CPIC JSON output: {e}")
-                    logger.debug(f"CPIC output: {cpic_output[:200]}...")
-                    # Continue with empty data rather than failing completely
-                    logger.warning("Using empty items list due to JSON parse error")
-                    cpic_data = {'items': []}
+                return None, None, None
             
-            # Ensure data structures have items field
-            if 'items' not in eip_data:
-                eip_data['items'] = []
-            if 'items' not in cpic_data:
-                cpic_data['items'] = []
+            # Parse JSON once
+            eip_data = json.loads(eip_output)
+            cpic_data = json.loads(cpic_output)
             
-            # Ensure eip_nodes is a list (never None)
-            if not hasattr(self, 'eip_nodes') or self.eip_nodes is None:
-                self.eip_nodes = []
+            return eip_data, cpic_data, self.eip_nodes
             
-            # Final validation before return - ensure we never return None
-            if eip_data is None:
-                logger.warning("eip_data was None, using empty dict")
-                eip_data = {'items': []}
-            if cpic_data is None:
-                logger.warning("cpic_data was None, using empty dict")
-                cpic_data = {'items': []}
-            if self.eip_nodes is None:
-                logger.warning("eip_nodes was None, using empty list")
-                self.eip_nodes = []
-            
-            logger.debug(f"Returning data - eip_items={len(eip_data.get('items', []))}, cpic_items={len(cpic_data.get('items', []))}, nodes={len(self.eip_nodes)}")
-            # Final safety check - ensure we never return None
-            result = (eip_data, cpic_data, self.eip_nodes)
-            if any(x is None for x in result):
-                logger.error(f"CRITICAL: About to return None! eip_data={eip_data is not None}, cpic_data={cpic_data is not None}, eip_nodes={self.eip_nodes is not None}")
-                # Replace any None values
-                result = (
-                    eip_data if eip_data is not None else {'items': []},
-                    cpic_data if cpic_data is not None else {'items': []},
-                    self.eip_nodes if self.eip_nodes is not None else []
-                )
-            logger.debug("collect_all_data_optimized: Successfully returning data")
-            return result
-            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JSON output: {e}")
+            return None, None, None
         except Exception as e:
-            logger.error(f"EXCEPTION in collect_all_data_optimized: {type(e).__name__}: {e}", exc_info=True)
-            # Even on exception, return valid empty data structures to allow metrics collection to continue
-            logger.warning("Returning empty data structures due to exception to allow metrics collection to continue")
-            # Ensure eip_nodes exists
-            if not hasattr(self, 'eip_nodes') or self.eip_nodes is None:
-                self.eip_nodes = []
-            result = ({'items': []}, {'items': []}, self.eip_nodes)
-            logger.debug(f"collect_all_data_optimized: Returning fallback data after exception")
-            return result
+            logger.error(f"Failed to collect optimized data: {e}")
+            return None, None, None
     
     # OpenShift EIP metrics collection
     
@@ -319,26 +249,26 @@ class EIPMetricsCollector:
         ], operation='nodes_get')
         
         if output is None:
-            # Command failed, but continue with empty nodes list (might be permissions or transient error)
-            logger.warning("Failed to get EIP-enabled nodes - command failed, continuing with empty nodes list")
+            logger.error("Failed to get EIP-enabled nodes - command failed")
             self.eip_nodes = []
+            # Update node availability metrics even when command fails
             node_available.set(0)
-            return True  # Return True to allow metrics collection to continue
+            return False
         
         if not output.strip():
-            logger.warning("No EIP-enabled nodes found in cluster - this is a valid state")
+            logger.warning("No EIP-enabled nodes found in cluster")
             self.eip_nodes = []
-            # Still return True - no nodes is a valid state, not an error
+            # Update node availability metrics
             node_available.set(0)
-            return True
+            return False
             
         self.eip_nodes = [node.replace('node/', '') for node in output.split('\n') if node.strip()]
         
         if len(self.eip_nodes) == 0:
-            logger.warning("No valid EIP-enabled nodes found after parsing - this is a valid state")
-            self.eip_nodes = []
+            logger.warning("No valid EIP-enabled nodes found after parsing")
+            # Update node availability metrics
             node_available.set(0)
-            return True
+            return False
             
         logger.info(f"Found {len(self.eip_nodes)} EIP-enabled nodes: {self.eip_nodes}")
         
@@ -366,9 +296,21 @@ class EIPMetricsCollector:
                 logger.error("Invalid EIP data structure - missing 'items' field")
                 return False
             
-            configured_count = len(eip_data['items'])
-            assigned_count = sum(1 for item in eip_data['items'] 
-                               if len(item.get('status', {}).get('items', [])) > 0)
+            # Count IP addresses, not resources
+            configured_count = 0
+            assigned_count = 0
+            
+            for item in eip_data['items']:
+                # Count configured IPs from spec.egressIPs[]
+                egress_ips = item.get('spec', {}).get('egressIPs', [])
+                configured_count += len(egress_ips)
+                
+                # Count assigned IPs from status.items[] where node exists and is not nil
+                status_items = item.get('status', {}).get('items', [])
+                for status_item in status_items:
+                    if status_item.get('node') is not None and status_item.get('node') != '':
+                        assigned_count += 1
+            
             unassigned_count = configured_count - assigned_count
             
             # Set basic EIP metrics
@@ -721,13 +663,203 @@ class EIPMetricsCollector:
         
         node_with_errors.set(len(nodes_with_errors))
     
+    def detect_mismatches(self, eip_data: dict, cpic_data: dict, available_nodes: int) -> dict:
+        """
+        Detect mismatches between EIP and CPIC assignments.
+        Returns dict with mismatch counts and details.
+        """
+        mismatches = {
+            'total': 0,
+            'node_mismatch': 0,
+            'missing_in_eip': 0,
+            'missing_in_cpic': 0,
+            'mismatch_by_resource': {},  # resource_name -> set of IPs with mismatches
+            'mismatch_by_ip': {}  # ip -> mismatch_type
+        }
+        
+        # Build CPIC IP -> node mapping (priority: status.node > spec.node)
+        cpic_ip_to_node = {}
+        for item in cpic_data.get('items', []):
+            ip = item.get('metadata', {}).get('name', '')
+            if ip:
+                # Prefer status.node over spec.node
+                node = item.get('status', {}).get('node') or item.get('spec', {}).get('node', '')
+                if node:
+                    cpic_ip_to_node[ip] = node
+        
+        # Build EIP IP -> node mapping from status.items
+        eip_ip_to_node = {}
+        eip_ip_to_resource = {}
+        resource_assigned_counts = {}  # Track assigned IP count per resource
+        
+        for item in eip_data.get('items', []):
+            resource_name = f"{item.get('metadata', {}).get('namespace', '')}/{item.get('metadata', {}).get('name', '')}"
+            status_items = item.get('status', {}).get('items', [])
+            assigned_count = 0
+            
+            for status_item in status_items:
+                ip = status_item.get('egressIP') or status_item.get('ip', '')
+                node = status_item.get('node', '')
+                if ip and node:
+                    eip_ip_to_node[ip] = node
+                    eip_ip_to_resource[ip] = resource_name
+                    assigned_count += 1
+            
+            resource_assigned_counts[resource_name] = assigned_count
+        
+        # Build IP -> resource mapping from spec.egressIPs (for finding resource when IP is missing from status.items)
+        ip_to_resource_from_spec = {}
+        for item in eip_data.get('items', []):
+            resource_name = f"{item.get('metadata', {}).get('namespace', '')}/{item.get('metadata', {}).get('name', '')}"
+            egress_ips = item.get('spec', {}).get('egressIPs', [])
+            for ip in egress_ips:
+                ip_to_resource_from_spec[ip] = resource_name
+        
+        # Detect mismatches
+        for ip, cpic_node in cpic_ip_to_node.items():
+            eip_node = eip_ip_to_node.get(ip)
+            resource_name = eip_ip_to_resource.get(ip)
+            
+            # If not found in status.items, try to find resource from spec.egressIPs
+            if not resource_name:
+                resource_name = ip_to_resource_from_spec.get(ip, 'unknown')
+            
+            if eip_node:
+                if eip_node != cpic_node:
+                    # Node mismatch
+                    mismatches['total'] += 1
+                    mismatches['node_mismatch'] += 1
+                    mismatches['mismatch_by_ip'][ip] = 'node_mismatch'
+                    if resource_name not in mismatches['mismatch_by_resource']:
+                        mismatches['mismatch_by_resource'][resource_name] = set()
+                    mismatches['mismatch_by_resource'][resource_name].add(ip)
+            else:
+                # IP in CPIC but not in EIP status.items
+                # Check if resource is at capacity
+                if resource_name != 'unknown':
+                    assigned_count = resource_assigned_counts.get(resource_name, 0)
+                    if assigned_count < available_nodes:
+                        # Not at capacity, so this is a mismatch
+                        mismatches['total'] += 1
+                        mismatches['missing_in_eip'] += 1
+                        mismatches['mismatch_by_ip'][ip] = 'missing_in_eip'
+                        if resource_name not in mismatches['mismatch_by_resource']:
+                            mismatches['mismatch_by_resource'][resource_name] = set()
+                        mismatches['mismatch_by_resource'][resource_name].add(ip)
+        
+        # Check for IPs in EIP but not in CPIC
+        for ip, eip_node in eip_ip_to_node.items():
+            if ip not in cpic_ip_to_node:
+                mismatches['total'] += 1
+                mismatches['missing_in_cpic'] += 1
+                mismatches['mismatch_by_ip'][ip] = 'missing_in_cpic'
+                resource_name = eip_ip_to_resource.get(ip, 'unknown')
+                if resource_name not in mismatches['mismatch_by_resource']:
+                    mismatches['mismatch_by_resource'][resource_name] = set()
+                mismatches['mismatch_by_resource'][resource_name].add(ip)
+        
+        return mismatches
+    
+    def calculate_overcommitted(self, eip_data: dict, available_nodes: int) -> int:
+        """Calculate total overcommitted IPs across all EIP resources"""
+        overcommitted_ips = 0
+        
+        for item in eip_data.get('items', []):
+            egress_ips = item.get('spec', {}).get('egressIPs', [])
+            configured_count = len(egress_ips)
+            
+            if configured_count > available_nodes:
+                overcommitted_ips += (configured_count - available_nodes)
+        
+        return overcommitted_ips
+    
+    def detect_critical_eips(self, eip_data: dict, mismatches: dict) -> int:
+        """
+        Count EIP resources with no working assignments.
+        A resource is critical if:
+        1. status.items is empty or has no items with node assignments
+        2. All IPs in status.items have mismatches
+        """
+        critical_count = 0
+        
+        for item in eip_data.get('items', []):
+            resource_name = f"{item.get('metadata', {}).get('namespace', '')}/{item.get('metadata', {}).get('name', '')}"
+            status_items = item.get('status', {}).get('items', [])
+            
+            if not status_items:
+                # No assignments at all
+                critical_count += 1
+                continue
+            
+            # Check if all assigned IPs have mismatches
+            all_have_mismatches = True
+            has_any_assignment = False
+            
+            for status_item in status_items:
+                node = status_item.get('node', '')
+                ip = status_item.get('egressIP') or status_item.get('ip', '')
+                
+                if node:  # Has a node assignment
+                    has_any_assignment = True
+                    # Check if this IP has a mismatch
+                    if ip not in mismatches.get('mismatch_by_ip', {}):
+                        all_have_mismatches = False
+                        break
+            
+            if has_any_assignment and all_have_mismatches:
+                critical_count += 1
+            elif not has_any_assignment:
+                # No assignments with nodes
+                critical_count += 1
+        
+        return critical_count
+    
+    def calculate_primary_secondary_eips(self, eip_data: dict, eip_nodes: list) -> tuple:
+        """
+        Calculate primary and secondary EIPs per node.
+        Returns: (primary_by_node, secondary_by_node)
+        """
+        primary_by_node = {node: 0 for node in eip_nodes}
+        secondary_by_node = {node: 0 for node in eip_nodes}
+        
+        for item in eip_data.get('items', []):
+            status_items = item.get('status', {}).get('items', [])
+            
+            if not status_items:
+                continue
+            
+            # Primary EIP is the first item (status.items[0])
+            first_item = status_items[0]
+            primary_node = first_item.get('node', '')
+            if primary_node and primary_node in primary_by_node:
+                primary_by_node[primary_node] += 1
+            
+            # Secondary EIPs are all remaining items (status.items[1..n])
+            for status_item in status_items[1:]:
+                node = status_item.get('node', '')
+                if node and node in secondary_by_node:
+                    secondary_by_node[node] += 1
+        
+        return primary_by_node, secondary_by_node
+    
     def process_all_metrics_optimized(self, eip_data: dict, cpic_data: dict, eip_nodes: list):
         """Single-pass optimized processing of all metrics"""
         try:
-            # Global EIP metrics
-            configured_count = len(eip_data.get('items', []))
-            assigned_count = sum(1 for item in eip_data.get('items', []) 
-                               if len(item.get('status', {}).get('items', [])) > 0)
+            # Global EIP metrics - count IP addresses, not resources
+            configured_count = 0
+            assigned_count = 0
+            
+            for item in eip_data.get('items', []):
+                # Count configured IPs from spec.egressIPs[]
+                egress_ips = item.get('spec', {}).get('egressIPs', [])
+                configured_count += len(egress_ips)
+                
+                # Count assigned IPs from status.items[] where node exists and is not nil
+                status_items = item.get('status', {}).get('items', [])
+                for status_item in status_items:
+                    if status_item.get('node') is not None and status_item.get('node') != '':
+                        assigned_count += 1
+            
             unassigned_count = configured_count - assigned_count
             
             # Set basic EIP metrics
@@ -841,6 +973,33 @@ class EIPMetricsCollector:
             # Update error node count
             self.update_error_node_count(cpic_data)
             
+            # Calculate mismatch detection, overcommitted, critical, and primary/secondary metrics
+            available_nodes = len(eip_nodes)
+            
+            # Detect mismatches
+            mismatches = self.detect_mismatches(eip_data, cpic_data, available_nodes)
+            eip_cpic_mismatches_total.set(mismatches['total'])
+            eip_cpic_mismatches_node_mismatch.set(mismatches['node_mismatch'])
+            eip_cpic_mismatches_missing_in_eip.set(mismatches['missing_in_eip'])
+            
+            # Count malfunctioning EIP objects (unique resources with mismatches)
+            malfunctioning_count = len(mismatches['mismatch_by_resource'])
+            malfunctioning_eip_objects_count.set(malfunctioning_count)
+            
+            # Calculate overcommitted IPs
+            overcommitted_ips = self.calculate_overcommitted(eip_data, available_nodes)
+            overcommitted_eip_objects_count.set(overcommitted_ips)
+            
+            # Detect critical EIP resources
+            critical_count = self.detect_critical_eips(eip_data, mismatches)
+            critical_eip_objects_count.set(critical_count)
+            
+            # Calculate primary and secondary EIPs per node
+            primary_by_node, secondary_by_node = self.calculate_primary_secondary_eips(eip_data, eip_nodes)
+            for node in eip_nodes:
+                node_eip_primary.labels(node=node).set(primary_by_node[node])
+                node_eip_secondary.labels(node=node).set(secondary_by_node[node])
+            
             # Calculate health scores
             self.calculate_health_scores(configured_count, assigned_count, 
                                       success_count, error_count, pending_count)
@@ -902,30 +1061,18 @@ class EIPMetricsCollector:
             self.cleanup_old_data()
             
             # Get all data in optimized single pass (2 API calls instead of 5+)
-            try:
-                eip_data, cpic_data, eip_nodes = self.collect_all_data_optimized()
-            except Exception as e:
-                logger.error(f"Exception calling collect_all_data_optimized: {type(e).__name__}: {e}", exc_info=True)
-                # Use empty defaults
-                eip_data = {'items': []}
-                cpic_data = {'items': []}
-                eip_nodes = getattr(self, 'eip_nodes', [])
+            eip_data, cpic_data, eip_nodes = self.collect_all_data_optimized()
+            if eip_data is None or cpic_data is None:
+                logger.error("Failed to collect optimized data - API calls failed")
                 scrape_errors.inc()
+                return False
             
-            # Allow empty eip_nodes list (valid state when no EIP-enabled nodes exist)
-            # This check should never fail now since collect_all_data_optimized always returns valid data
-            if eip_data is None or cpic_data is None or eip_nodes is None:
-                logger.error(f"CRITICAL: collect_all_data_optimized returned None! eip_data={eip_data is not None}, cpic_data={cpic_data is not None}, eip_nodes={eip_nodes is not None}")
-                logger.error(f"Type check - eip_data type: {type(eip_data)}, cpic_data type: {type(cpic_data)}, eip_nodes type: {type(eip_nodes)}")
-                # Use empty defaults as fallback
-                eip_data = eip_data if eip_data is not None else {'items': []}
-                cpic_data = cpic_data if cpic_data is not None else {'items': []}
-                eip_nodes = eip_nodes if eip_nodes is not None else []
-                logger.warning("Using fallback empty data structures to continue")
-                scrape_errors.inc()
-                # Continue instead of returning False - we have valid data now
+            # eip_nodes can be empty list (valid state when no EIP-enabled nodes exist)
+            if eip_nodes is None:
+                eip_nodes = []
+                self.eip_nodes = []
             
-            # Process all metrics in single pass
+            # Process all metrics in single pass (works with empty node list)
             self.process_all_metrics_optimized(eip_data, cpic_data, eip_nodes)
             
             # Calculate API success rates
@@ -935,9 +1082,9 @@ class EIPMetricsCollector:
             scrape_duration = time.time() - start_time
             monitoring_info.info({
                 'version': '1.0.0',
-                'nodes': ','.join(self.eip_nodes),
+                'nodes': ','.join(self.eip_nodes) if self.eip_nodes else 'none',
                 'node_count': str(len(self.eip_nodes)),
-                'metrics_count': '40+',
+                'metrics_count': '50+',
                 'last_update': datetime.now().isoformat(),
                 'scrape_duration': f"{scrape_duration:.2f}s",
                 'optimization': 'enabled'
@@ -949,20 +1096,18 @@ class EIPMetricsCollector:
             self.last_update = datetime.now()
             
             logger.info(f"Optimized metrics collection completed in {scrape_duration:.2f}s")
-            logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
+            if len(self.eip_nodes) > 0:
+                logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
+            else:
+                logger.info("Collected metrics (no EIP-enabled nodes found in cluster)")
             
             return True
             
         except Exception as e:
             scrape_duration = time.time() - start_time
             scrape_duration_seconds.set(scrape_duration)
-            logger.error(f"Optimized metrics collection failed after {scrape_duration:.2f}s: {e}", exc_info=True)
+            logger.error(f"Optimized metrics collection failed after {scrape_duration:.2f}s: {e}")
             scrape_errors.inc()
-            # Set last_update even on failure so health check can pass
-            # This allows the pod to become ready even if metrics collection has issues
-            if not hasattr(self, 'last_update') or self.last_update is None:
-                self.last_update = datetime.now()
-                logger.warning("Set last_update on failure to allow health check to pass")
             return False
 
 # Global collector instance
@@ -974,21 +1119,11 @@ def metrics_worker():
     
     while True:
         try:
-            result = collector.collect_metrics()
-            if not result:
-                logger.warning("Metrics collection returned False, but continuing anyway")
-                # Ensure last_update is set even if collection failed
-                if not hasattr(collector, 'last_update') or collector.last_update is None:
-                    collector.last_update = datetime.now()
-                    logger.info("Set last_update after failed collection to allow health check")
+            collector.collect_metrics()
             time.sleep(collector.scrape_interval)
         except Exception as e:
-            logger.error(f"Metrics worker error: {e}", exc_info=True)
+            logger.error(f"Metrics worker error: {e}")
             scrape_errors.inc()
-            # Ensure last_update is set even on exception
-            if not hasattr(collector, 'last_update') or collector.last_update is None:
-                collector.last_update = datetime.now()
-                logger.info("Set last_update after worker exception to allow health check")
             time.sleep(collector.scrape_interval)
 
 @app.route('/metrics')
@@ -999,24 +1134,10 @@ def metrics():
 @app.route('/health')
 def health():
     """Health check endpoint"""
-    # During initial startup (before first metrics collection), return healthy
-    # to allow readiness probe to pass
-    last_update = getattr(collector, 'last_update', None)
-    if last_update is None:
-        return {'status': 'starting', 'message': 'Initializing metrics collection'}, 200
-    
-    # Check if metrics are being updated regularly
-    try:
-        time_since_update = (datetime.now() - last_update).total_seconds()
-        if time_since_update < 300:  # Updated within last 5 minutes
-            return {'status': 'healthy', 'last_update': last_update.isoformat()}, 200
-        else:
-            # Metrics collection has stopped - return unhealthy
-            return {'status': 'unhealthy', 'message': f'Metrics not updated recently ({int(time_since_update)}s ago)'}, 503
-    except Exception as e:
-        # If there's any error checking the time, assume starting state
-        logger.warning(f"Error checking health status: {e}")
-        return {'status': 'starting', 'message': 'Initializing metrics collection'}, 200
+    if collector.last_update and (datetime.now() - collector.last_update).total_seconds() < 300:
+        return {'status': 'healthy', 'last_update': collector.last_update.isoformat()}, 200
+    else:
+        return {'status': 'unhealthy', 'message': 'Metrics not updated recently'}, 503
 
 @app.route('/')
 def root():
