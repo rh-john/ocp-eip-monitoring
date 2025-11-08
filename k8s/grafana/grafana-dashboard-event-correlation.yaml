@@ -12,778 +12,777 @@ spec:
     matchLabels:
       app: eip-monitor
   json: |
-
+{
+  "id": null,
+  "title": "EIP/CPIC Event Correlation with Cluster Events",
+  "tags": [
+    "eip",
+    "cpic",
+    "correlation",
+    "cluster",
+    "events",
+    "nodes",
+    "ovn",
+    "cncc"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 16,
+  "version": 1,
+  "panels": [
     {
-      "id": null,
-      "title": "EIP/CPIC Event Correlation with Cluster Events",
-      "tags": [
-        "eip",
-        "cpic",
-        "correlation",
-        "cluster",
-        "events",
-        "nodes",
-        "ovn",
-        "cncc"
-      ],
-      "style": "dark",
-      "timezone": "browser",
-      "refresh": "30s",
-      "schemaVersion": 16,
-      "version": 1,
-      "panels": [
+      "id": 1,
+      "title": "Node Status Timeline",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
         {
-          "id": 1,
-          "title": "Node Status Timeline",
-          "type": "state-timeline",
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 0
-          },
-          "targets": [
-            {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
-              "legendFormat": "Node NotReady - {{node}}",
-              "refId": "C"
-            },
-            {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
-              "legendFormat": "Node Ready - {{node}}",
-              "refId": "D"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "fillOpacity": 90,
-                "lineWidth": 0
-              },
-              "mappings": []
-            }
-          },
-          "options": {
-            "mergeValues": true,
-            "rowHeight": 0.9,
-            "showValues": "never",
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": []
-            }
-          }
+          "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
+          "legendFormat": "Node NotReady - {{node}}",
+          "refId": "C"
         },
         {
-          "id": 2,
-          "title": "CPIC Events vs Node Status",
-          "type": "state-timeline",
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 0,
-            "y": 10
-          },
-          "targets": [
-            {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
-              "legendFormat": "Node NotReady - {{node}}",
-              "refId": "C"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  },
-                  {
-                    "value": 1,
-                    "color": "yellow"
-                  },
-                  {
-                    "value": 5,
-                    "color": "red"
-                  }
-                ]
-              },
-              "custom": {
-                "fillOpacity": 85
-              }
-            }
-          },
-          "options": {
-            "mergeValues": true,
-            "rowHeight": 0.9,
-            "showValues": "never",
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            }
-          }
-        },
-        {
-          "id": 3,
-          "title": "Node Reboot Detection",
-          "type": "state-timeline",
-          "gridPos": {
-            "h": 10,
-            "w": 12,
-            "x": 12,
-            "y": 10
-          },
-          "targets": [
-            {
-              "expr": "changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0",
-              "legendFormat": "Node Reboot Detected - {{node}}",
-              "refId": "A",
-              "instant": true
-            },
-            {
-              "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
-              "legendFormat": "Node Down - {{node}}",
-              "refId": "B"
-            },
-            {
-              "expr": "node_boot_time_seconds and on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable=\"true\"}",
-              "legendFormat": "Boot Time - {{node}}",
-              "refId": "C"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  },
-                  {
-                    "value": 1,
-                    "color": "orange"
-                  },
-                  {
-                    "value": 2,
-                    "color": "red"
-                  }
-                ]
-              },
-              "custom": {
-                "fillOpacity": 90
-              }
-            }
-          },
-          "options": {
-            "mergeValues": true,
-            "rowHeight": 0.9,
-            "showValues": "never",
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            }
-          }
-        },
-        {
-          "id": 4,
-          "title": "EIP Assignment Rate vs Node Status Changes",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 20
-          },
-          "targets": [
-            {
-              "expr": "count(changes((kube_node_status_condition{condition=\"Ready\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0)",
-              "legendFormat": "Node Status Changes",
-              "refId": "C"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "smooth",
-                "fillOpacity": 30,
-                "pointSize": 5
-              },
-              "unit": "ops"
-            }
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            },
-            "tooltip": {
-              "mode": "multi"
-            }
-          }
-        },
-        {
-          "id": 5,
-          "title": "CPIC Error Rate vs Node Conditions",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 20
-          },
-          "targets": [
-            {
-              "expr": "sum(kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
-              "legendFormat": "Nodes with Memory Pressure",
-              "refId": "B"
-            },
-            {
-              "expr": "sum(kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
-              "legendFormat": "Nodes with Disk Pressure",
-              "refId": "C"
-            },
-            {
-              "expr": "sum(kube_node_status_condition{condition=\"NetworkUnavailable\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
-              "legendFormat": "Nodes with Network Issues",
-              "refId": "D"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "smooth",
-                "fillOpacity": 30,
-                "pointSize": 5
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            },
-            "tooltip": {
-              "mode": "multi"
-            }
-          }
-        },
-        {
-          "id": 6,
-          "title": "OVN Network Events Timeline",
-          "type": "state-timeline",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 28
-          },
-          "targets": [
-            {
-              "expr": "ovn_cluster_version{phase=\"Available\"}",
-              "legendFormat": "OVN Available",
-              "refId": "A",
-              "instant": true
-            },
-            {
-              "expr": "ovn_cluster_version{phase=\"Progressing\"}",
-              "legendFormat": "OVN Progressing",
-              "refId": "B"
-            },
-            {
-              "expr": "ovn_cluster_version{phase=\"Degraded\"}",
-              "legendFormat": "OVN Degraded",
-              "refId": "C"
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
-              "legendFormat": "Network Operator Degraded",
-              "refId": "D"
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"}",
-              "legendFormat": "Network Operator Unavailable",
-              "refId": "E"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  },
-                  {
-                    "value": 1,
-                    "color": "yellow"
-                  },
-                  {
-                    "value": 2,
-                    "color": "red"
-                  }
-                ]
-              },
-              "custom": {
-                "fillOpacity": 85
-              }
-            }
-          },
-          "options": {
-            "mergeValues": true,
-            "rowHeight": 0.9,
-            "showValues": "never",
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            }
-          }
-        },
-        {
-          "id": 7,
-          "title": "CNCC Events Timeline",
-          "type": "state-timeline",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 28
-          },
-          "targets": [
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"true\"}",
-              "legendFormat": "CNCC Available",
-              "refId": "A",
-              "instant": true
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
-              "legendFormat": "CNCC Degraded",
-              "refId": "B"
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Progressing\",status=\"true\"}",
-              "legendFormat": "CNCC Progressing",
-              "refId": "C"
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Upgradeable\",status=\"false\"}",
-              "legendFormat": "CNCC Not Upgradeable",
-              "refId": "D"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  },
-                  {
-                    "value": 1,
-                    "color": "yellow"
-                  },
-                  {
-                    "value": 2,
-                    "color": "red"
-                  }
-                ]
-              },
-              "custom": {
-                "fillOpacity": 85
-              }
-            }
-          },
-          "options": {
-            "mergeValues": true,
-            "rowHeight": 0.9,
-            "showValues": "never",
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            }
-          }
-        },
-        {
-          "id": 8,
-          "title": "OVN Network Status",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 36
-          },
-          "targets": [
-            {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"} * 10",
-              "legendFormat": "OVN Degraded (x10)",
-              "refId": "C"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "smooth",
-                "fillOpacity": 30,
-                "pointSize": 5
-              },
-              "unit": "ops"
-            }
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            },
-            "tooltip": {
-              "mode": "multi"
-            }
-          }
-        },
-        {
-          "id": 9,
-          "title": "CNCC Status",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 36
-          },
-          "targets": [
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"} * 10",
-              "legendFormat": "CNCC Degraded (x10)",
-              "refId": "C"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "lineInterpolation": "smooth",
-                "fillOpacity": 30,
-                "pointSize": 5
-              },
-              "unit": "ops"
-            }
-          },
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom"
-            },
-            "tooltip": {
-              "mode": "multi"
-            }
-          }
-        },
-        {
-          "id": 10,
-          "title": "Node Status Summary",
-          "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 0,
-            "y": 44
-          },
-          "targets": [
-            {
-              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
-              "legendFormat": "Ready Nodes",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "graphMode": "area",
-            "colorMode": "value"
-          }
-        },
-        {
-          "id": 11,
-          "title": "Not Ready Nodes",
-          "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 6,
-            "y": 44
-          },
-          "targets": [
-            {
-              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
-              "legendFormat": "Not Ready",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  },
-                  {
-                    "value": 1,
-                    "color": "yellow"
-                  },
-                  {
-                    "value": 2,
-                    "color": "red"
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "graphMode": "area",
-            "colorMode": "value"
-          }
-        },
-        {
-          "id": 12,
-          "title": "OVN Status",
-          "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 12,
-            "y": 44
-          },
-          "targets": [
-            {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"}",
-              "legendFormat": "OVN Available",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "red"
-                  },
-                  {
-                    "value": 1,
-                    "color": "green"
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "graphMode": "area",
-            "colorMode": "value"
-          }
-        },
-        {
-          "id": 13,
-          "title": "CNCC Status",
-          "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 18,
-            "y": 44
-          },
-          "targets": [
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"true\"}",
-              "legendFormat": "CNCC Available",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "red"
-                  },
-                  {
-                    "value": 1,
-                    "color": "green"
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "graphMode": "area",
-            "colorMode": "value"
-          }
-        },
-        {
-          "id": 14,
-          "title": "Event Correlation Table",
-          "type": "table",
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 48
-          },
-          "targets": [
-            {
-              "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "Not Ready Nodes",
-              "refId": "C"
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "Network Degraded",
-              "refId": "D"
-            },
-            {
-              "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "CNCC Degraded",
-              "refId": "E"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "align": "auto",
-                "displayMode": "color-background"
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "green"
-                  }
-                ]
-              }
-            }
-          },
-          "options": {
-            "showHeader": true
-          },
-          "transformations": [
-            {
-              "id": "merge",
-              "options": {}
-            },
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "Time": true
-                },
-                "indexByName": {},
-                "renameByName": {
-                  "Value #A": "EIPs Assigned",
-                  "Value #B": "CPIC Errors",
-                  "Value #C": "Not Ready Nodes",
-                  "Value #D": "Network Degraded",
-                  "Value #E": "CNCC Degraded"
-                }
-              }
-            }
-          ]
+          "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
+          "legendFormat": "Node Ready - {{node}}",
+          "refId": "D"
         }
       ],
-      "time": {
-        "from": "now-6h",
-        "to": "now"
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 90,
+            "lineWidth": 0
+          },
+          "mappings": []
+        }
       },
-      "timepicker": {
-        "refresh_intervals": [
-          "10s",
-          "30s",
-          "1m",
-          "5m",
-          "15m",
-          "30m",
-          "1h",
-          "2h",
-          "1d"
-        ]
+      "options": {
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValues": "never",
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": []
+        }
       }
+    },
+    {
+      "id": 2,
+      "title": "CPIC Events vs Node Status",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "targets": [
+        {
+          "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
+          "legendFormat": "Node NotReady - {{node}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "yellow"
+              },
+              {
+                "value": 5,
+                "color": "red"
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 85
+          }
+        }
+      },
+      "options": {
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValues": "never",
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Node Reboot Detection",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "targets": [
+        {
+          "expr": "changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0",
+          "legendFormat": "Node Reboot Detected - {{node}}",
+          "refId": "A",
+          "instant": false
+        },
+        {
+          "expr": "kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"}",
+          "legendFormat": "Node Down - {{node}}",
+          "refId": "B"
+        },
+        {
+          "expr": "node_boot_time_seconds and on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable=\"true\"}",
+          "legendFormat": "Boot Time - {{node}}",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "orange"
+              },
+              {
+                "value": 2,
+                "color": "red"
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 90
+          }
+        }
+      },
+      "options": {
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValues": "never",
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "EIP Assignment Rate vs Node Status Changes",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "count(changes((kube_node_status_condition{condition=\"Ready\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0)",
+          "legendFormat": "Node Status Changes",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 30,
+            "pointSize": 5
+          },
+          "unit": "ops"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "CPIC Error Rate vs Node Conditions",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "targets": [
+        {
+          "expr": "sum(kube_node_status_condition{condition=\"MemoryPressure\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
+          "legendFormat": "Nodes with Memory Pressure",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(kube_node_status_condition{condition=\"DiskPressure\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
+          "legendFormat": "Nodes with Disk Pressure",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(kube_node_status_condition{condition=\"NetworkUnavailable\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
+          "legendFormat": "Nodes with Network Issues",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 30,
+            "pointSize": 5
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "OVN Network Events Timeline",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "expr": "ovn_cluster_version{phase=\"Available\"}",
+          "legendFormat": "OVN Available",
+          "refId": "A",
+          "instant": false
+        },
+        {
+          "expr": "ovn_cluster_version{phase=\"Progressing\"}",
+          "legendFormat": "OVN Progressing",
+          "refId": "B"
+        },
+        {
+          "expr": "ovn_cluster_version{phase=\"Degraded\"}",
+          "legendFormat": "OVN Degraded",
+          "refId": "C"
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
+          "legendFormat": "Network Operator Degraded",
+          "refId": "D"
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"}",
+          "legendFormat": "Network Operator Unavailable",
+          "refId": "E"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "yellow"
+              },
+              {
+                "value": 2,
+                "color": "red"
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 85
+          }
+        }
+      },
+      "options": {
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValues": "never",
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "CNCC Events Timeline",
+      "type": "state-timeline",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "targets": [
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"true\"}",
+          "legendFormat": "CNCC Available",
+          "refId": "A",
+          "instant": false
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
+          "legendFormat": "CNCC Degraded",
+          "refId": "B"
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Progressing\",status=\"true\"}",
+          "legendFormat": "CNCC Progressing",
+          "refId": "C"
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Upgradeable\",status=\"false\"}",
+          "legendFormat": "CNCC Not Upgradeable",
+          "refId": "D"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "yellow"
+              },
+              {
+                "value": 2,
+                "color": "red"
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 85
+          }
+        }
+      },
+      "options": {
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValues": "never",
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "OVN Network Status",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "targets": [
+        {
+          "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"} * 10",
+          "legendFormat": "OVN Degraded (x10)",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 30,
+            "pointSize": 5
+          },
+          "unit": "ops"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "CNCC Status",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "targets": [
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"} * 10",
+          "legendFormat": "CNCC Degraded (x10)",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 30,
+            "pointSize": 5
+          },
+          "unit": "ops"
+        }
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "Node Status Summary",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 44
+      },
+      "targets": [
+        {
+          "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"true\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
+          "legendFormat": "Ready Nodes",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 11,
+      "title": "Not Ready Nodes",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 44
+      },
+      "targets": [
+        {
+          "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
+          "legendFormat": "Not Ready",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "yellow"
+              },
+              {
+                "value": 2,
+                "color": "red"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 12,
+      "title": "OVN Status",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 44
+      },
+      "targets": [
+        {
+          "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"}",
+          "legendFormat": "OVN Available",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 1,
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 13,
+      "title": "CNCC Status",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 44
+      },
+      "targets": [
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Available\",status=\"true\"}",
+          "legendFormat": "CNCC Available",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              },
+              {
+                "value": 1,
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "graphMode": "area",
+        "colorMode": "value"
+      }
+    },
+    {
+      "id": 14,
+      "title": "Event Correlation Table",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "targets": [
+        {
+          "expr": "count(kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Not Ready Nodes",
+          "refId": "C"
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Network Degraded",
+          "refId": "D"
+        },
+        {
+          "expr": "cluster_operator_conditions{name=\"cloud-controller-manager\",condition=\"Degraded\",status=\"true\"}",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "CNCC Degraded",
+          "refId": "E"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "color-background"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "showHeader": true
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Value #A": "EIPs Assigned",
+              "Value #B": "CPIC Errors",
+              "Value #C": "Not Ready Nodes",
+              "Value #D": "Network Degraded",
+              "Value #E": "CNCC Degraded"
+            }
+          }
+        }
+      ]
     }
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  }
+}

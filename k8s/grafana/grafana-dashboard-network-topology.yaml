@@ -12,315 +12,409 @@ spec:
     matchLabels:
       app: eip-monitor
   json: |
-    {
-      "id": null,
-      "title": "Network Topology & Distribution",
-      "tags": ["eip", "network", "topology", "distribution"],
-      "style": "dark",
-      "timezone": "browser",
-      "refresh": "30s",
-      "schemaVersion": 16,
-      "version": 1,
-      "panels": [
-        {
-          "id": 1,
-          "title": "Node Network Graph",
-          "type": "nodeGraph",
-          "gridPos": {"h": 14, "w": 24, "x": 0, "y": 0},
-          "targets": [
-            {
-              "expr": "sum by (node) (sum(node_eip_assigned_total))",
-              "legendFormat": "{{node}}",
-              "refId": "A",
-              "instant": true
+  {
+    "id": null,
+    "title": "Network Topology & Distribution",
+    "tags": [
+      "eip",
+      "network",
+      "topology",
+      "distribution"
+    ],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "schemaVersion": 16,
+    "version": 1,
+    "panels": [
+      {
+        "id": 1,
+        "title": "Node Network Graph",
+        "type": "nodeGraph",
+        "gridPos": {
+          "h": 14,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum by (node) (sum(node_eip_assigned_total))",
+            "legendFormat": "{{node}}",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "continuous-GrYlRd"
             }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "continuous-GrYlRd"}
-            }
+          }
+        },
+        "options": {
+          "node": {
+            "mainStatUnit": "short",
+            "secondaryStatUnit": "short",
+            "arcs": [
+              {
+                "field": "node_eip_assigned_total",
+                "id": "eips"
+              }
+            ]
           },
-          "options": {
-            "node": {
-              "mainStatUnit": "short",
-              "secondaryStatUnit": "short",
-              "arcs": [
+          "edges": {
+            "mainStatUnit": "short",
+            "secondaryStatUnit": "short"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "EIP Distribution Heatmap",
+        "type": "heatmap",
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 0,
+          "y": 14
+        },
+        "targets": [
+          {
+            "expr": "sum by (node) (sum(node_eip_assigned_total))",
+            "format": "heatmap",
+            "legendFormat": "{{node}}",
+            "refId": "A",
+            "instant": false
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "spectrum"
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "calculate": true,
+          "cellGap": 2,
+          "cellValues": {
+            "unit": "short"
+          },
+          "color": {
+            "exponent": 0.5,
+            "fill": "dark-orange",
+            "mode": "spectrum",
+            "reverse": false,
+            "scale": "exponential",
+            "scheme": "Spectral",
+            "steps": 64
+          },
+          "exemplars": {
+            "color": "rgba(255,0,255,0.7)"
+          },
+          "filterValues": {
+            "le": 1e-09
+          },
+          "legend": {
+            "show": true
+          },
+          "rowsFrame": {
+            "layout": "auto"
+          },
+          "tooltip": {
+            "show": true,
+            "yHistogram": false
+          },
+          "yAxis": {
+            "axisPlacement": "left",
+            "reverse": false,
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Node Connection Matrix",
+        "type": "table",
+        "gridPos": {
+          "h": 10,
+          "w": 12,
+          "x": 12,
+          "y": 14
+        },
+        "targets": [
+          {
+            "expr": "sum by (node) (sum(node_eip_assigned_total))",
+            "format": "table",
+            "instant": true,
+            "legendFormat": "{{node}}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "center",
+              "displayMode": "color-background"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
                 {
-                  "field": "node_eip_assigned_total",
-                  "id": "eips"
+                  "value": null,
+                  "color": "blue"
+                },
+                {
+                  "value": 10,
+                  "color": "green"
+                },
+                {
+                  "value": 20,
+                  "color": "yellow"
+                },
+                {
+                  "value": 30,
+                  "color": "orange"
+                },
+                {
+                  "value": 40,
+                  "color": "red"
                 }
               ]
             },
-            "edges": {
-              "mainStatUnit": "short",
-              "secondaryStatUnit": "short"
-            }
-          }
-        },
-        {
-          "id": 2,
-          "title": "EIP Distribution Heatmap",
-          "type": "heatmap",
-          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 14},
-          "targets": [
-            {
-              "expr": "sum by (node) (sum(node_eip_assigned_total))",
-              "format": "heatmap",
-              "legendFormat": "{{node}}",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "spectrum"
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "calculate": true,
-            "cellGap": 2,
-            "cellValues": {
-              "unit": "short"
-            },
             "color": {
-              "exponent": 0.5,
-              "fill": "dark-orange",
-              "mode": "spectrum",
-              "reverse": false,
-              "scale": "exponential",
-              "scheme": "Spectral",
-              "steps": 64
+              "mode": "thresholds"
             },
-            "exemplars": {
-              "color": "rgba(255,0,255,0.7)"
-            },
-            "filterValues": {
-              "le": 1e-9
-            },
-            "legend": {
-              "show": true
-            },
-            "rowsFrame": {
-              "layout": "auto"
-            },
-            "tooltip": {
-              "show": true,
-              "yHistogram": false
-            },
-            "yAxis": {
-              "axisPlacement": "left",
-              "reverse": false,
-              "unit": "short"
-            }
+            "unit": "short"
           }
         },
-        {
-          "id": 3,
-          "title": "Node Connection Matrix",
-          "type": "table",
-          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 14},
-          "targets": [
-            {
-              "expr": "sum by (node) (sum(node_eip_assigned_total))",
-              "format": "table",
-              "instant": true,
-              "legendFormat": "{{node}}",
-              "refId": "A",
-              "instant": true
+        "options": {
+          "showHeader": true
+        },
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {
+                "Time": true
+              },
+              "indexByName": {},
+              "renameByName": {
+                "Value": "EIPs",
+                "node": "Node"
+              }
             }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "align": "center",
-                "displayMode": "color-background"
-              },
-              "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"value": null, "color": "blue"},
-                  {"value": 10, "color": "green"},
-                  {"value": 20, "color": "yellow"},
-                  {"value": 30, "color": "orange"},
-                  {"value": 40, "color": "red"}
-                ]
-              },
-              "color": {
-                "mode": "thresholds"
-              },
-              "unit": "short"
-            }
-          },
-          "options": {
-            "showHeader": true
-          },
-          "transformations": [
-            {
-              "id": "organize",
-              "options": {
-                "excludeByName": {
-                  "Time": true
-                },
-                "indexByName": {},
-                "renameByName": {
-                  "Value": "EIPs",
-                  "node": "Node"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Load Balance Visualization",
+        "type": "histogram",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "sum by (node) (sum(node_eip_assigned_total))",
+            "legendFormat": "{{node}}",
+            "refId": "A",
+            "instant": false
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "unit": "short"
+          }
+        },
+        "options": {
+          "bucketOffset": 0,
+          "bucketSize": 5
+        }
+      },
+      {
+        "id": 5,
+        "title": "Network Topology Summary",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "count(count by (node) (node_eip_assigned_total))",
+            "legendFormat": "Active Nodes",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "blue"
                 }
-              }
-            }
-          ]
-        },
-        {
-          "id": 4,
-          "title": "Load Balance Visualization",
-          "type": "histogram",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-          "targets": [
-            {
-              "expr": "sum by (node) (sum(node_eip_assigned_total))",
-              "legendFormat": "{{node}}",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "palette-classic"},
-              "unit": "short"
-            }
-          },
-          "options": {
-            "bucketOffset": 0,
-            "bucketSize": 5
-          }
-        },
-        {
-          "id": 5,
-          "title": "Network Topology Summary",
-          "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 24},
-          "targets": [
-            {
-              "expr": "count(count by (node) (node_eip_assigned_total))",
-              "legendFormat": "Active Nodes",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"value": null, "color": "blue"}
-                ]
-              },
-              "unit": "short"
-            }
-          }
-        },
-        {
-          "id": 6,
-          "title": "Total EIPs in Network",
-          "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 24},
-          "targets": [
-            {
-              "expr": "sum(node_eip_assigned_total)",
-              "legendFormat": "Total EIPs",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"value": null, "color": "green"}
-                ]
-              },
-              "unit": "short"
-            }
-          }
-        },
-        {
-          "id": 7,
-          "title": "Network Utilization",
-          "type": "gauge",
-          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 28},
-          "targets": [
-            {
-              "expr": "(sum(node_eip_assigned_total) / sum(eips_configured_total)) * 100",
-              "legendFormat": "Utilization",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "min": 0,
-              "max": 100,
-              "unit": "percent",
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"value": null, "color": "green"},
-                  {"value": 70, "color": "yellow"},
-                  {"value": 85, "color": "red"}
-                ]
-              },
-              "color": {
-                "mode": "thresholds"
-              }
-            }
-          },
-          "options": {
-            "orientation": "auto",
-            "reduceOptions": {
-              "values": false,
-              "calcs": ["lastNotNull"],
-              "fields": ""
+              ]
             },
-            "showThresholdLabels": true,
-            "showThresholdMarkers": true
-          }
-        },
-        {
-          "id": 8,
-          "title": "Balance Score",
-          "type": "stat",
-          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 28},
-          "targets": [
-            {
-              "expr": "100 - (stddev_over_time(sum by (node) (node_eip_assigned_total)[5m]) / avg_over_time(sum by (node) (node_eip_assigned_total)[5m])) * 100",
-              "legendFormat": "Balance",
-              "refId": "A",
-              "instant": true
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "color": {"mode": "thresholds"},
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {"value": null, "color": "red"},
-                  {"value": 70, "color": "yellow"},
-                  {"value": 85, "color": "green"}
-                ]
-              },
-              "unit": "percent",
-              "decimals": 1
-            }
+            "unit": "short"
           }
         }
-      ]
-    }
-
+      },
+      {
+        "id": 6,
+        "title": "Total EIPs in Network",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 24
+        },
+        "targets": [
+          {
+            "expr": "sum(node_eip_assigned_total)",
+            "legendFormat": "Total EIPs",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "green"
+                }
+              ]
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "Network Utilization",
+        "type": "gauge",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "(sum(node_eip_assigned_total) / sum(eips_configured_total)) * 100",
+            "legendFormat": "Utilization",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 100,
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "green"
+                },
+                {
+                  "value": 70,
+                  "color": "yellow"
+                },
+                {
+                  "value": 85,
+                  "color": "red"
+                }
+              ]
+            },
+            "color": {
+              "mode": "thresholds"
+            }
+          }
+        },
+        "options": {
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": [
+              "lastNotNull"
+            ],
+            "fields": ""
+          },
+          "showThresholdLabels": true,
+          "showThresholdMarkers": true
+        }
+      },
+      {
+        "id": 8,
+        "title": "Balance Score",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "100 - (stddev_over_time(sum by (node) (node_eip_assigned_total)[5m]) / avg_over_time(sum by (node) (node_eip_assigned_total)[5m])) * 100",
+            "legendFormat": "Balance",
+            "refId": "A",
+            "instant": true
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "value": null,
+                  "color": "red"
+                },
+                {
+                  "value": 70,
+                  "color": "yellow"
+                },
+                {
+                  "value": 85,
+                  "color": "green"
+                }
+              ]
+            },
+            "unit": "percent",
+            "decimals": 1
+          }
+        }
+      }
+    ]
+  }
