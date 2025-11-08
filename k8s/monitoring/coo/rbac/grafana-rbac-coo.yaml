@@ -10,6 +10,7 @@ metadata:
   labels:
     app: eip-monitor
     coo: eip-monitoring
+    monitoring-type: "coo"  # Specific label for selective deletion
 
 ---
 # RoleBinding for Grafana to access COO Prometheus (namespace-scoped)
@@ -23,6 +24,7 @@ metadata:
     app: eip-monitor
     monitoring: coo
     coo: eip-monitoring
+    monitoring-type: "coo"  # Specific label for selective deletion
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

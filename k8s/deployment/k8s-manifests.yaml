@@ -91,6 +91,8 @@ metadata:
     app: eip-monitor
     version: v1
 spec:
+  # Set to 1 or 2 replicas based on your HA requirements
+  # With 2 replicas, both COO and UWM can scrape different pod instances for redundancy
   replicas: 1
   strategy:
     type: RollingUpdate
@@ -214,6 +216,10 @@ metadata:
   labels:
     app: eip-monitor
     service: eip-monitor
+    monitoring: "true"
+    # Supports both COO and UWM monitoring simultaneously
+    monitoring-coo: "true"
+    monitoring-uwm: "true"
   annotations:
     prometheus.io/scrape: "true"
     prometheus.io/port: "8080"
