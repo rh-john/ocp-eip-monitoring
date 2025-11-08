@@ -1,0 +1,49 @@
+---
+# Grafana DataSource for Prometheus (User Workload Monitoring)
+# Uses Thanos Querier for cluster-scoped metrics (includes federated user-workload Prometheus)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: prometheus-uwm
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: uwm
+    uwm: eip-monitoring
+spec:
+  name: Prometheus
+  datasource:
+    name: Prometheus
+    type: prometheus
+    isDefault: true
+    access: proxy
+    # Use Thanos Querier port 9091 (cluster-scoped, includes federated user-workload metrics)
+    # According to OpenShift 4.19 monitoring documentation:
+    # - Port 9091: Cluster-scoped metrics (includes federated user-workload Prometheus)
+    # - Requires 'cluster-monitoring-view' ClusterRole (configured via ClusterRoleBinding)
+    # - Service account token provides authentication
+    # - Verified: Data exists in Prometheus user-workload, Thanos Querier should federate it
+    url: https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+    jsonData:
+      httpMethod: POST
+      queryTimeout: 300s
+      timeInterval: 15s
+      # Strip Prometheus scraping labels to prevent multiple series
+      customQueryParameters: ""
+      # Thanos Querier requires authentication via Bearer token
+      # Token from grafana-prometheus service account is used
+      httpHeaderName1: "Authorization"
+      tlsSkipVerify: true
+    secureJsonData:
+      # Service account token for authentication (long-lived: 1 year / 8760h)
+      # Note: Grafana Operator CRD limitation requires explicit token here
+      # Cannot reference pod's auto-mounted token file (/var/run/secrets/kubernetes.io/serviceaccount/token)
+      # RBAC is properly configured via ClusterRoleBinding, but Thanos requires explicit Bearer token
+      # Token is created once during deployment with: oc create token grafana-prometheus -n $NAMESPACE --duration=8760h
+      # Replace PLACEHOLDER_TOKEN below with actual token during deployment
+      httpHeaderValue1: "Bearer PLACEHOLDER_TOKEN"
+    uid: prometheus-eip-monitoring
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+
