@@ -239,25 +239,33 @@ test_resource_limits() {
 }
 
 test_servicemonitor_exists() {
-    # Check for ServiceMonitor with -coo suffix (COO monitoring stack)
+    # Check for ServiceMonitor with -coo suffix (COO monitoring stack - uses monitoring.rhobs API)
+    oc get servicemonitor.monitoring.rhobs "${SERVICE_NAME}-coo" -n "$NAMESPACE" &>/dev/null || \
     oc get servicemonitor "${SERVICE_NAME}-coo" -n "$NAMESPACE" &>/dev/null || \
-    # Check for ServiceMonitor with -uwm suffix (UWM monitoring stack)
+    # Check for ServiceMonitor with -uwm suffix (UWM monitoring stack - uses monitoring.coreos.com API)
+    oc get servicemonitor.monitoring.coreos.com "${SERVICE_NAME}-uwm" -n "$NAMESPACE" &>/dev/null || \
     oc get servicemonitor "${SERVICE_NAME}-uwm" -n "$NAMESPACE" &>/dev/null || \
     # Fallback to base name if neither -coo nor -uwm exist
     oc get servicemonitor "$SERVICE_NAME" -n "$NAMESPACE" &>/dev/null
 }
 
 test_prometheusrule_exists() {
-    # First check if PrometheusRule CRD exists
-    if ! oc get crd prometheusrules.monitoring.coreos.com &>/dev/null; then
+    # First check if PrometheusRule CRD exists (either API version)
+    if ! oc get crd prometheusrules.monitoring.coreos.com &>/dev/null && \
+       ! oc get crd prometheusrules.monitoring.rhobs &>/dev/null; then
         # CRD doesn't exist, skip test
         return 0
     fi
     
-    # Try multiple naming patterns
+    # Try multiple naming patterns and API versions
+    # Check for PrometheusRule with -alerts-coo suffix (COO monitoring stack)
+    oc get prometheusrule.monitoring.rhobs "${SERVICE_NAME}-alerts-coo" -n "$NAMESPACE" &>/dev/null && return 0
+    oc get prometheusrule "${SERVICE_NAME}-alerts-coo" -n "$NAMESPACE" &>/dev/null && return 0
     # Check for PrometheusRule with -coo suffix (COO monitoring stack)
+    oc get prometheusrule.monitoring.rhobs "${SERVICE_NAME}-coo" -n "$NAMESPACE" &>/dev/null && return 0
     oc get prometheusrule "${SERVICE_NAME}-coo" -n "$NAMESPACE" &>/dev/null && return 0
     # Check for PrometheusRule with -uwm suffix (UWM monitoring stack)
+    oc get prometheusrule.monitoring.coreos.com "${SERVICE_NAME}-uwm" -n "$NAMESPACE" &>/dev/null && return 0
     oc get prometheusrule "${SERVICE_NAME}-uwm" -n "$NAMESPACE" &>/dev/null && return 0
     # Check for common alert name pattern
     oc get prometheusrule "${SERVICE_NAME}-alerts" -n "$NAMESPACE" &>/dev/null && return 0
