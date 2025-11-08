@@ -153,7 +153,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0 or changes((kube_node_status_condition{condition=\"Ready\",status=\"false\"} and on(node) node_eip_assigned_total)[5m]) > 0",
+              "expr": "changes(kube_node_status_condition{condition=\"Ready\",status=\"false\"}[5m]) > 0 and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total)",
               "legendFormat": "Node Reboot Detected - {{node}}",
               "refId": "A"
             },
@@ -227,7 +227,7 @@ spec:
               "refId": "B"
             },
             {
-              "expr": "count(changes((kube_node_status_condition{condition=\"Ready\"} and on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"})[5m]) > 0 or changes((kube_node_status_condition{condition=\"Ready\"} and on(node) node_eip_assigned_total)[5m]) > 0)",
+              "expr": "count(changes(kube_node_status_condition{condition=\"Ready\"}[5m]) > 0 and on(node) (kube_node_labels{label_k8s_ovn_org_egress_assignable=\"true\"} or node_eip_assigned_total))",
               "legendFormat": "Node Status Changes",
               "refId": "C"
             }
