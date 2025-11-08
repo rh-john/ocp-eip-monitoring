@@ -9,6 +9,7 @@ metadata:
   labels:
     app: eip-monitor
     coo: eip-monitoring
+    app.kubernetes.io/part-of: eip-monitoring-stack
 spec:
   logLevel: info
   retention: 15d
