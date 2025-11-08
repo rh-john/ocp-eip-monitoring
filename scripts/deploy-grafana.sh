@@ -277,6 +277,8 @@ deploy_grafana() {
         "k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
         "k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
         "k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
+        # Event correlation dashboard (node/cluster metrics with EIP metrics)
+        "k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
         # New advanced plugin dashboards
         "k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
         "k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
