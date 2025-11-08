@@ -33,13 +33,18 @@ spec:
     'match[]':
       - '{__name__=~"kube_node_.*"}'
       - '{__name__=~"cluster_operator_.*"}'
-      - '{__name__=~"node_.*"}'
+      - '{__name__=~"node_boot_time.*"}'
+      - '{__name__=~"node_eip.*"}'
   scrapeInterval: 30s
   scrapeTimeout: 10s
   scheme: HTTPS
   tlsConfig:
     insecureSkipVerify: true
-  bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+  authorization:
+    type: Bearer
+    credentials:
+      name: eip-monitoring-stack-prometheus-token
+      key: token
   honorLabels: true
   relabelConfigs:
     # Add source label to distinguish federated metrics
