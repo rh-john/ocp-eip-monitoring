@@ -40,13 +40,19 @@ for dashboard_file in "${DASHBOARD_FILES[@]}"; do
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
     # Extract JSON from YAML
-    if ! python3 << 'PYEOF'
+    DASHBOARD_FILE="$dashboard_file" python3 << 'PYEOF' > /tmp/dashboard_validation.txt 2>&1
 import sys
+import os
 import json
 import re
 
 try:
-    with open(sys.argv[1], 'r') as f:
+    dashboard_file = os.environ.get('DASHBOARD_FILE')
+    if not dashboard_file:
+        print("ERROR: No file path provided")
+        sys.exit(1)
+    
+    with open(dashboard_file, 'r') as f:
         content = f.read()
     
     # Extract JSON from YAML
@@ -136,14 +142,26 @@ try:
     
 except Exception as e:
     print(f"ERROR: {e}")
+    import traceback
+    traceback.print_exc()
     sys.exit(1)
 PYEOF
-    "$dashboard_file" > /tmp/dashboard_validation.txt; then
+    
+    if [[ $? -eq 0 ]]; then
         
-        ISSUES_COUNT=$(grep "^ISSUES_FOUND:" /tmp/dashboard_validation.txt | cut -d' ' -f2)
-        FIXES_COUNT=$(grep "^FIXES_NEEDED:" /tmp/dashboard_validation.txt | cut -d' ' -f2)
-        PANEL_COUNT=$(grep "^PANELS:" /tmp/dashboard_validation.txt | cut -d' ' -f2)
-        TITLE=$(grep "^TITLE:" /tmp/dashboard_validation.txt | cut -d' ' -f2-)
+        # Safely extract values with defaults
+        ISSUES_COUNT=$(grep "^ISSUES_FOUND:" /tmp/dashboard_validation.txt | cut -d' ' -f2 2>/dev/null || echo "0")
+        FIXES_COUNT=$(grep "^FIXES_NEEDED:" /tmp/dashboard_validation.txt | cut -d' ' -f2 2>/dev/null || echo "0")
+        PANEL_COUNT=$(grep "^PANELS:" /tmp/dashboard_validation.txt | cut -d' ' -f2 2>/dev/null || echo "0")
+        TITLE=$(grep "^TITLE:" /tmp/dashboard_validation.txt | cut -d' ' -f2- 2>/dev/null || echo "Unknown")
+        
+        # Check if there was an error in the Python script
+        if grep -q "^ERROR:" /tmp/dashboard_validation.txt; then
+            log_error "Python script error:"
+            grep "^ERROR:" /tmp/dashboard_validation.txt | sed 's/^ERROR: /  /'
+            ISSUES_FOUND=$((ISSUES_FOUND + 1))
+            continue
+        fi
         
         if [[ "$ISSUES_COUNT" -gt 0 ]]; then
             log_warn "Found $ISSUES_COUNT issue(s), $FIXES_COUNT fix(es) needed"
