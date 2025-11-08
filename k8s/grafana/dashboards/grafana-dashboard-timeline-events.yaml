@@ -385,12 +385,12 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"})",
               "legendFormat": "OVN Degraded",
               "refId": "A"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"})",
               "legendFormat": "OVN Unavailable",
               "refId": "B"
             },

@@ -102,7 +102,7 @@ spec:
           "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
           "targets": [
             {
-              "expr": "(api_response_time_seconds - api_response_time_seconds offset 1h) / api_response_time_seconds offset 1h * 100",
+              "expr": "(sum(api_response_time_seconds) - sum(api_response_time_seconds offset 1h)) / sum(api_response_time_seconds offset 1h) * 100",
               "legendFormat": "{{operation}} - Change %",
               "refId": "A"
             }
@@ -150,7 +150,7 @@ spec:
               "refId": "A"
             },
             {
-              "expr": "api_success_rate_percent < 95",
+              "expr": "sum(api_success_rate_percent) < 95",
               "legendFormat": "API Success < 95%",
               "refId": "B"
             },

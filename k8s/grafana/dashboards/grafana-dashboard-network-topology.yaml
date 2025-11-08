@@ -299,7 +299,7 @@ spec:
           "gridPos": {"h": 4, "w": 6, "x": 18, "y": 28},
           "targets": [
             {
-              "expr": "100 - (stddev_over_time(sum by (node) (node_eip_assigned_total)[5m]) / avg_over_time(sum by (node) (node_eip_assigned_total)[5m])) * 100",
+              "expr": "sum(100 - (stddev_over_time(sum by (node) (node_eip_assigned_total)[5m]) / avg_over_time(sum by (node) (node_eip_assigned_total)[5m])) * 100)",
               "legendFormat": "Balance",
               "refId": "A",
               "instant": true
