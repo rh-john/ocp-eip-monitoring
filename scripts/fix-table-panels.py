@@ -59,11 +59,11 @@ def fix_table_panel(filepath, panel_id):
 
 # Fix all identified panels
 panels_to_fix = [
-    ('k8s/grafana/grafana-dashboard-eip-distribution.yaml', 8),
-    ('k8s/grafana/grafana-dashboard-cpic-health.yaml', 8),
-    ('k8s/grafana/grafana-dashboard-eip-timeline.yaml', 9),
-    ('k8s/grafana/grafana-dashboard-event-correlation.yaml', 14),
-    ('k8s/grafana/grafana-dashboard-node-performance.yaml', 8),
+    ('k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml', 8),
+    ('k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml', 8),
+    ('k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml', 9),
+    ('k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml', 14),
+    ('k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml', 8),
 ]
 
 print("=== Fixing Table Panels with Multiple Targets ===\n")

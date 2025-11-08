@@ -150,7 +150,7 @@ def fix_dashboard(filepath):
 def main():
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
-    dashboard_dir = project_root / 'k8s' / 'grafana'
+    dashboard_dir = project_root / 'k8s' / 'grafana' / 'dashboards'
     
     dashboard_files = sorted(glob.glob(str(dashboard_dir / 'grafana-dashboard*.yaml')))
     

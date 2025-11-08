@@ -422,7 +422,7 @@ Deploy all dashboards with a single command:
 Or deploy individual dashboards:
 
 ```bash
-oc apply -f k8s/grafana/grafana-dashboard-state-visualization.yaml
+oc apply -f k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml
 ```
 
 ### Accessing Dashboards

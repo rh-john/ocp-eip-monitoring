@@ -24,7 +24,7 @@ echo "=== Comprehensive Dashboard Validation ==="
 echo ""
 
 # Find all dashboard files
-DASHBOARD_FILES=("$PROJECT_ROOT/k8s/grafana/grafana-dashboard"*.yaml)
+DASHBOARD_FILES=("$PROJECT_ROOT/k8s/grafana/dashboards/grafana-dashboard"*.yaml)
 TOTAL_DASHBOARDS=${#DASHBOARD_FILES[@]}
 
 log_info "Found $TOTAL_DASHBOARDS dashboard files"
