@@ -1,9 +1,5 @@
 # ServiceMonitor for COO Prometheus to scrape EIP metrics
-<<<<<<< HEAD
 apiVersion: monitoring.rhobs/v1
-=======
-apiVersion: monitoring.coreos.com/v1
->>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
 kind: ServiceMonitor
 metadata:
   name: eip-monitor-coo
