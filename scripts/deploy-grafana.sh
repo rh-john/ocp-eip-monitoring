@@ -148,13 +148,13 @@ deploy_grafana() {
     local datasource_name=""
     
     if [[ "$MONITORING_TYPE" == "coo" ]]; then
-        rbac_file="${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
-        datasource_file="${project_root}/k8s/monitoring/coo/grafana/grafana-datasource-coo.yaml"
+        rbac_file="${project_root}/k8s/grafana/coo/grafana-rbac-coo.yaml"
+        datasource_file="${project_root}/k8s/grafana/coo/grafana-datasource-coo.yaml"
         service_account_name="grafana-prometheus-coo"
         datasource_name="prometheus-coo"
     elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
-        rbac_file="${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
-        datasource_file="${project_root}/k8s/monitoring/uwm/grafana/grafana-datasource-uwm.yaml"
+        rbac_file="${project_root}/k8s/grafana/uwm/grafana-rbac-uwm.yaml"
+        datasource_file="${project_root}/k8s/grafana/uwm/grafana-datasource-uwm.yaml"
         service_account_name="grafana-prometheus"
         datasource_name="prometheus-uwm"
     else

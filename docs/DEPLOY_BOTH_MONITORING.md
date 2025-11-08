@@ -59,7 +59,7 @@ oc apply -f k8s/monitoring/coo/operator/coo-operator-subscription.yaml
 oc apply -f k8s/monitoring/coo/monitoring/coo-monitoringstack.yaml
 oc apply -f k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml
 oc apply -f k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml
-oc apply -f k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml
+oc apply -f k8s/grafana/coo/grafana-rbac-coo.yaml
 ```
 
 ### 3. Deploy UWM Monitoring Stack
@@ -72,7 +72,7 @@ oc apply -f k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml
 # Deploy UWM monitoring resources
 oc apply -f k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml
 oc apply -f k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml
-oc apply -f k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml
+oc apply -f k8s/grafana/uwm/grafana-rbac-uwm.yaml
 ```
 
 ### 4. Deploy Combined NetworkPolicy
