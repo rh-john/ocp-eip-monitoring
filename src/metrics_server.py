@@ -1113,6 +1113,9 @@ class EIPMetricsCollector:
 # Global collector instance
 collector = EIPMetricsCollector()
 
+# Track server start time for health check grace period
+server_start_time = time.time()
+
 def metrics_worker():
     """Background worker for collecting metrics"""
     logger.info(f"Starting metrics worker with {collector.scrape_interval}s interval")
@@ -1134,10 +1137,38 @@ def metrics():
 @app.route('/health')
 def health():
     """Health check endpoint"""
-    if collector.last_update and (datetime.now() - collector.last_update).total_seconds() < 300:
+    current_time = time.time()
+    server_uptime = current_time - server_start_time
+    
+    # Allow grace period during startup (first 90 seconds)
+    # This gives time for initial metrics collection to complete
+    startup_grace_period = 90
+    
+    # After grace period, require metrics updated within 300 seconds
+    max_staleness = 300
+    
+    # During startup grace period, return healthy if server is running
+    if server_uptime < startup_grace_period:
+        if collector.last_update:
+            # Metrics have been collected, check staleness
+            time_since_update = (datetime.now() - collector.last_update).total_seconds()
+            if time_since_update < max_staleness:
+                return {'status': 'healthy', 'last_update': collector.last_update.isoformat(), 'uptime': f'{server_uptime:.1f}s'}, 200
+            else:
+                return {'status': 'unhealthy', 'message': f'Metrics not updated recently ({time_since_update:.0f}s ago)', 'uptime': f'{server_uptime:.1f}s'}, 503
+        else:
+            # Still in startup, server is running but metrics not collected yet
+            return {'status': 'healthy', 'message': 'Server starting up, metrics collection in progress', 'uptime': f'{server_uptime:.1f}s'}, 200
+    
+    # After grace period, require metrics to be collected
+    if collector.last_update and (datetime.now() - collector.last_update).total_seconds() < max_staleness:
         return {'status': 'healthy', 'last_update': collector.last_update.isoformat()}, 200
     else:
-        return {'status': 'unhealthy', 'message': 'Metrics not updated recently'}, 503
+        if collector.last_update:
+            time_since_update = (datetime.now() - collector.last_update).total_seconds()
+            return {'status': 'unhealthy', 'message': f'Metrics not updated recently ({time_since_update:.0f}s ago)'}, 503
+        else:
+            return {'status': 'unhealthy', 'message': 'Metrics not collected yet'}, 503
 
 @app.route('/')
 def root():
