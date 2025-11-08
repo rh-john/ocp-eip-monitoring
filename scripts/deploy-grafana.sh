@@ -271,21 +271,21 @@ deploy_grafana() {
     log_info "Deploying Grafana Dashboards..."
     local dashboard_files=(
         # Original dashboards
-        "k8s/grafana/grafana-dashboard.yaml"
-        "k8s/grafana/grafana-dashboard-eip-distribution.yaml"
-        "k8s/grafana/grafana-dashboard-cpic-health.yaml"
-        "k8s/grafana/grafana-dashboard-node-performance.yaml"
-        "k8s/grafana/grafana-dashboard-eip-timeline.yaml"
-        "k8s/grafana/grafana-dashboard-cluster-health.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
         # New advanced plugin dashboards
-        "k8s/grafana/grafana-dashboard-state-visualization.yaml"
-        "k8s/grafana/grafana-dashboard-enhanced-tables.yaml"
-        "k8s/grafana/grafana-dashboard-architecture-diagram.yaml"
-        "k8s/grafana/grafana-dashboard-custom-gauges.yaml"
-        "k8s/grafana/grafana-dashboard-timeline-events.yaml"
-        "k8s/grafana/grafana-dashboard-node-health-grid.yaml"
-        "k8s/grafana/grafana-dashboard-network-topology.yaml"
-        "k8s/grafana/grafana-dashboard-interactive-drilldown.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
+        "k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
     )
     
     local dashboards_deployed=0
