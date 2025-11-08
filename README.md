@@ -15,8 +15,7 @@ A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CP
 ./scripts/build-and-deploy.sh all -r quay.io/your-registry
 
 # Or deploy with existing image
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+oc apply -f k8s/deployment/k8s-manifests.yaml
 ```
 
 ## Architecture
@@ -146,8 +145,7 @@ cd ocp-eip-monitoring
 ### Method 2: Deploy with Pre-built Image
 ```bash
 oc new-project eip-monitoring
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+oc apply -f k8s/deployment/k8s-manifests.yaml
 ```
 
 ## Configuration
@@ -157,9 +155,13 @@ oc apply -f k8s/servicemonitor.yaml
 | `SCRAPE_INTERVAL` | Metrics collection interval (seconds) | `30` |
 | `PORT` | HTTP server port | `8080` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+| `EIP_CAPACITY_PER_NODE` | Maximum EIPs per node for capacity calculations | `75` |
 
 ## Key Metrics
 
+The monitoring solution exposes **50+ metrics** for comprehensive EIP and CPIC monitoring. Key metrics include:
+
+**Core Metrics:**
 - `eips_configured_total` - Total configured EIPs
 - `eips_assigned_total` - Total assigned EIPs  
 - `eips_unassigned_total` - Total unassigned EIPs
@@ -168,12 +170,34 @@ oc apply -f k8s/servicemonitor.yaml
 - `cpic_error_total` - Error CPIC resources
 - `node_eip_assigned_total` - EIPs assigned per node
 
+**Advanced Metrics:**
+- Distribution fairness (Gini coefficient, standard deviation)
+- Health scores (cluster health, stability)
+- API performance metrics
+- Mismatch detection metrics
+- Historical trend analysis
+
+📊 **See [Enhanced Metrics Guide](docs/ENHANCED_METRICS_GUIDE.md) for the complete metrics catalog (50+ metrics) and advanced usage examples.**
+
 ## Key Alerts
 
+The monitoring solution includes **30+ intelligent alerts** for proactive issue detection. Key alerts include:
+
+**Core Alerts:**
 - **EIPUtilizationCritical**: EIP utilization > 95%
 - **EIPNotAssigned**: Unassigned EIPs detected
 - **CPICErrors**: CPIC resources in error state
 - **ClusterEIPHealthCritical**: Cluster health score < 50
+
+**Additional Alert Categories:**
+- Distribution & capacity alerts
+- API performance alerts
+- Node & infrastructure alerts
+- Trend & pattern alerts
+- Duration-based alerts
+- Monitoring system alerts
+
+🚨 **See [Enhanced Metrics Guide](docs/ENHANCED_METRICS_GUIDE.md) for the complete alert catalog (30+ alerts) with detailed conditions and severity levels.**
 
 ## Usage
 
@@ -249,14 +273,14 @@ oc get prometheusrule eip-monitor-alerts -n eip-monitoring
 ocp-eip-monitoring/
 ├── src/metrics_server.py          # Core monitoring application
 ├── k8s/                           # Kubernetes manifests
-│   ├── k8s-manifests.yaml         # Deployment resources
-│   └── servicemonitor.yaml        # Prometheus configuration
+│   └── deployment/
+│       └── k8s-manifests.yaml     # Deployment resources (includes Service, Deployment, RBAC, etc.)
 ├── scripts/                       # Operational scripts
 │   ├── build-and-deploy.sh        # Build and deployment
 │   └── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
 └── docs/                          # Documentation
     ├── CONTAINER_DEPLOYMENT.md    # Deployment guide
-    └── ENHANCED_METRICS_GUIDE.md  # Metrics reference
+    └── ENHANCED_METRICS_GUIDE.md  # Complete metrics and alerts reference (50+ metrics, 30+ alerts)
 ```
 
 ## Documentation

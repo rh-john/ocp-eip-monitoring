@@ -207,15 +207,16 @@ class EIPMetricsCollector:
         try:
             # Get EIP nodes (cached if recent)
             cached_nodes = self.get_cached_data('eip_nodes')
-            if cached_nodes:
+            if cached_nodes is not None:
                 self.eip_nodes = cached_nodes
                 logger.debug("Using cached EIP nodes")
             else:
-                if not self.get_eip_nodes():
-                    return None, None, None
+                # Try to get nodes, but continue even if none found (valid state)
+                self.get_eip_nodes()
                 self.set_cached_data('eip_nodes', self.eip_nodes)
             
             # Get all EIP and CPIC data in optimized calls
+            # Continue even if no nodes found - EIP/CPIC resources might still exist
             eip_output = self.run_oc_command(['oc', 'get', 'eip', '-o', 'json'], operation='eip_get')
             if eip_output is None:
                 return None, None, None
@@ -249,17 +250,24 @@ class EIPMetricsCollector:
         
         if output is None:
             logger.error("Failed to get EIP-enabled nodes - command failed")
+            self.eip_nodes = []
+            # Update node availability metrics even when command fails
+            node_available.set(0)
             return False
         
         if not output.strip():
             logger.warning("No EIP-enabled nodes found in cluster")
             self.eip_nodes = []
+            # Update node availability metrics
+            node_available.set(0)
             return False
             
         self.eip_nodes = [node.replace('node/', '') for node in output.split('\n') if node.strip()]
         
         if len(self.eip_nodes) == 0:
             logger.warning("No valid EIP-enabled nodes found after parsing")
+            # Update node availability metrics
+            node_available.set(0)
             return False
             
         logger.info(f"Found {len(self.eip_nodes)} EIP-enabled nodes: {self.eip_nodes}")
@@ -1054,12 +1062,17 @@ class EIPMetricsCollector:
             
             # Get all data in optimized single pass (2 API calls instead of 5+)
             eip_data, cpic_data, eip_nodes = self.collect_all_data_optimized()
-            if not all([eip_data, cpic_data, eip_nodes]):
-                logger.error("Failed to collect optimized data")
+            if eip_data is None or cpic_data is None:
+                logger.error("Failed to collect optimized data - API calls failed")
                 scrape_errors.inc()
                 return False
             
-            # Process all metrics in single pass
+            # eip_nodes can be empty list (valid state when no EIP-enabled nodes exist)
+            if eip_nodes is None:
+                eip_nodes = []
+                self.eip_nodes = []
+            
+            # Process all metrics in single pass (works with empty node list)
             self.process_all_metrics_optimized(eip_data, cpic_data, eip_nodes)
             
             # Calculate API success rates
@@ -1069,7 +1082,7 @@ class EIPMetricsCollector:
             scrape_duration = time.time() - start_time
             monitoring_info.info({
                 'version': '1.0.0',
-                'nodes': ','.join(self.eip_nodes),
+                'nodes': ','.join(self.eip_nodes) if self.eip_nodes else 'none',
                 'node_count': str(len(self.eip_nodes)),
                 'metrics_count': '50+',
                 'last_update': datetime.now().isoformat(),
@@ -1083,7 +1096,10 @@ class EIPMetricsCollector:
             self.last_update = datetime.now()
             
             logger.info(f"Optimized metrics collection completed in {scrape_duration:.2f}s")
-            logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
+            if len(self.eip_nodes) > 0:
+                logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
+            else:
+                logger.info("Collected metrics (no EIP-enabled nodes found in cluster)")
             
             return True
             
