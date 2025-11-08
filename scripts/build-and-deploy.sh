@@ -711,7 +711,6 @@ remove_coo_monitoring() {
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null || true
     
     # Delete COO operator subscription (optional - may want to keep operator)
     log_warn "COO operator subscription will not be removed automatically"
@@ -732,7 +731,6 @@ remove_uwm_monitoring() {
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null || true
     oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null || true
     
     # Disable UWM in cluster-monitoring-config
     log_info "Disabling User Workload Monitoring in cluster-monitoring-config..."
@@ -835,7 +833,6 @@ deploy_monitoring() {
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
         oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
         
         log_success "COO monitoring infrastructure deployed!"
         
@@ -851,7 +848,6 @@ deploy_monitoring() {
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
         oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
-        oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
         
         log_success "UWM monitoring infrastructure deployed!"
     fi
@@ -1703,24 +1699,6 @@ cleanup_grafana() {
     oc delete grafanadashboard -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
     oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
-    
-    # Delete Grafana RBAC (monitoring-specific)
-    # Try to detect monitoring type and remove appropriate RBAC
-    local current_type=$(detect_current_monitoring_type)
-    if [[ "$current_type" != "none" ]]; then
-        local rbac_file="${project_root}/k8s/monitoring/${current_type}/rbac/grafana-rbac-${current_type}.yaml"
-        if [[ -f "$rbac_file" ]]; then
-            log_info "Removing Grafana RBAC for ${current_type}..."
-            oc delete -f "$rbac_file" 2>/dev/null || true
-        fi
-    else
-        # Try both types if we can't detect
-        log_info "Monitoring type unknown, trying both COO and UWM RBAC cleanup..."
-        local coo_rbac="${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
-        local uwm_rbac="${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
-        [[ -f "$coo_rbac" ]] && oc delete -f "$coo_rbac" 2>/dev/null || true
-        [[ -f "$uwm_rbac" ]] && oc delete -f "$uwm_rbac" 2>/dev/null || true
-    fi
     
     log_success "Grafana resources removed"
     echo ""

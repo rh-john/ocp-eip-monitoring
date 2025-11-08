@@ -495,10 +495,8 @@ remove_coo_monitoring() {
     # This prevents accidental deletion of UWM resources if both are deployed
     if [[ "$VERBOSE" == "true" ]]; then
         oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo || true
-        oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" || true
     else
         oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo &>/dev/null || true
-        oc delete -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" &>/dev/null || true
     fi
     
     # Also delete by name as fallback (in case labels weren't applied)
@@ -575,10 +573,8 @@ remove_uwm_monitoring() {
     # This prevents accidental deletion of COO resources if both are deployed
     if [[ "$VERBOSE" == "true" ]]; then
         oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm || true
-        oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" || true
     else
         oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
-        oc delete -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" &>/dev/null || true
     fi
     
     # Also delete by name as fallback (in case labels weren't applied)
@@ -712,12 +708,10 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
         fi
         
         log_success "COO monitoring infrastructure deployed!"
@@ -735,12 +729,10 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/uwm/rbac/grafana-rbac-uwm.yaml" 2>/dev/null
         fi
         
         log_success "UWM monitoring infrastructure deployed!"
