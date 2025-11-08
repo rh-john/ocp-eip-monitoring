@@ -17,10 +17,9 @@ spec:
     type: prometheus
     isDefault: true
     access: proxy
-    # Use ThanosQuerier to query across multiple Prometheus replicas
-    # ThanosQuerier aggregates queries from all Prometheus instances
-    # This provides consistent results when Prometheus has multiple replicas
-    url: http://thanos-querier-eip-monitoring-stack-querier-coo.eip-monitoring.svc.cluster.local:10902
+    # Use Prometheus service directly (COO doesn't create ThanosQuerier by default)
+    # For multiple replicas, queries will be load-balanced across Prometheus instances
+    url: http://eip-monitoring-stack-prometheus.eip-monitoring.svc.cluster.local:9090
     jsonData:
       httpMethod: POST
       queryTimeout: 300s
