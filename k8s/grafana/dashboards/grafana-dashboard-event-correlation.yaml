@@ -324,22 +324,22 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"})",
               "legendFormat": "OVN Available",
               "refId": "A"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Progressing\",status=\"true\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Progressing\",status=\"true\"})",
               "legendFormat": "OVN Progressing",
               "refId": "B"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"})",
               "legendFormat": "OVN Degraded",
               "refId": "C"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"false\"})",
               "legendFormat": "Network Operator Unavailable",
               "refId": "D"
             }
@@ -633,7 +633,7 @@ spec:
           },
           "targets": [
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Available\",status=\"true\"})",
               "legendFormat": "OVN Available",
               "refId": "A",
               "instant": true
@@ -728,7 +728,7 @@ spec:
               "refId": "C"
             },
             {
-              "expr": "cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"}",
+              "expr": "sum(cluster_operator_conditions{name=\"network\",condition=\"Degraded\",status=\"true\"})",
               "format": "table",
               "instant": true,
               "legendFormat": "Network Degraded",
