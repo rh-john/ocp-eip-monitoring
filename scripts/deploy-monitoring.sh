@@ -707,6 +707,7 @@ deploy_monitoring() {
         if [[ "$VERBOSE" == "true" ]]; then
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
