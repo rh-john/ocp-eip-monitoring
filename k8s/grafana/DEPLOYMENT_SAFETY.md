@@ -156,18 +156,18 @@ The script uses `oc apply` for all resources, which is **idempotent**:
 You can safely test by running:
 
 ```bash
-# First run
-./scripts/deploy-grafana.sh
+# First run (COO)
+./scripts/deploy-grafana.sh --monitoring-type coo
 
 # Immediate re-run (should be fast, no changes)
-./scripts/deploy-grafana.sh
+./scripts/deploy-grafana.sh --monitoring-type coo
 
 # After making changes
 # Edit k8s/grafana/grafana-instance.yaml (add plugin)
-./scripts/deploy-grafana.sh  # Should update plugins
+./scripts/deploy-grafana.sh --monitoring-type coo  # Should update plugins
 
 # Re-run again (should detect no changes)
-./scripts/deploy-grafana.sh
+./scripts/deploy-grafana.sh --monitoring-type coo
 ```
 
 ## Summary

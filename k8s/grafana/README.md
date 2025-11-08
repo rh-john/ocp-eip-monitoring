@@ -412,7 +412,11 @@ Interactive navigation dashboard with click-to-drill functionality and cross-das
 Deploy all dashboards with a single command:
 
 ```bash
-./scripts/deploy-grafana.sh
+# For COO monitoring
+./scripts/deploy-grafana.sh --monitoring-type coo
+
+# For UWM monitoring
+./scripts/deploy-grafana.sh --monitoring-type uwm
 ```
 
 Or deploy individual dashboards:
@@ -442,7 +446,11 @@ To add screenshots to this README:
 
 1. **Deploy the dashboards:**
    ```bash
-   ./scripts/deploy-grafana.sh
+   # For COO monitoring
+   ./scripts/deploy-grafana.sh --monitoring-type coo
+   
+   # For UWM monitoring
+   ./scripts/deploy-grafana.sh --monitoring-type uwm
    ```
 
 2. **Create screenshots directory:**
