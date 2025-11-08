@@ -11,11 +11,15 @@ metadata:
     coo: eip-monitoring
     monitoring: "true"
 spec:
-  # Select Prometheus instances to query
-  # COO creates Prometheus with specific labels
+  # Select MonitoringStack instances to query
+  # COO creates Prometheus with labels matching the MonitoringStack
   selector:
     matchLabels:
       app.kubernetes.io/part-of: eip-monitoring-stack
+  # Explicitly select namespace (optional, but helps with discovery)
+  namespaceSelector:
+    matchNames:
+      - eip-monitoring
   # Optional: configure resources
   resources:
     requests:
