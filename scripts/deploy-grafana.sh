@@ -96,15 +96,23 @@ deploy_grafana() {
     fi
     
     # Check if Grafana operator is already installed
-    local csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
+    # First check cluster-scoped (openshift-operators) and namespace-scoped installations
+    local cluster_csv_phase=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
+    local namespace_csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
     
-    if [[ "$csv_phase" == "Succeeded" ]]; then
+    if [[ "$cluster_csv_phase" == "Succeeded" ]] || [[ "$namespace_csv_phase" == "Succeeded" ]]; then
         log_info "Grafana Operator is already installed and ready (CSV phase: Succeeded)"
     elif oc get crd grafanas.integreatly.org &>/dev/null; then
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
-        if oc apply -f k8s/grafana/grafana-operator.yaml &>/dev/null; then
+        local operator_file="k8s/grafana/grafana-operator.yaml"
+        if [[ ! -f "$operator_file" ]]; then
+            log_error "Grafana operator file not found: $operator_file"
+            log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
+            return 1
+        fi
+        if oc apply -f "$operator_file" &>/dev/null; then
             log_success "Grafana Operator subscription and OperatorGroup created"
             log_info "Waiting for Grafana Operator to be installed (this may take a few minutes)..."
             
@@ -112,8 +120,8 @@ deploy_grafana() {
             local max_wait=300
             local waited=0
             while [[ $waited -lt $max_wait ]]; do
-                csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
-                if [[ "$csv_phase" == "Succeeded" ]]; then
+                namespace_csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
+                if [[ "$namespace_csv_phase" == "Succeeded" ]]; then
                     log_success "Grafana Operator installed successfully (CSV phase: Succeeded)"
                     break
                 elif oc get crd grafanas.integreatly.org &>/dev/null; then
@@ -123,18 +131,33 @@ deploy_grafana() {
                 sleep 5
                 waited=$((waited + 5))
                 if [[ $((waited % 30)) -eq 0 ]]; then
-                    log_info "Still waiting for Grafana Operator... (${waited}s, CSV phase: ${csv_phase:-none})"
+                    log_info "Still waiting for Grafana Operator... (${waited}s, CSV phase: ${namespace_csv_phase:-none})"
                 fi
             done
             
             if [[ $waited -ge $max_wait ]]; then
                 log_warn "Grafana Operator may not be fully ready yet (waited ${max_wait}s)"
-                log_info "Current CSV phase: ${csv_phase:-unknown}"
+                log_info "Current CSV phase: ${namespace_csv_phase:-unknown}"
                 log_info "It may take several minutes to fully install"
             fi
         else
             log_error "Failed to install Grafana Operator"
-            log_error "This requires cluster-admin permissions"
+            log_error "This requires cluster-admin permissions for OperatorGroup/Subscription creation"
+            log_info ""
+            log_info "Alternative: Install Grafana Operator cluster-wide (requires cluster-admin):"
+            log_info "  oc apply -f - <<'EOF'"
+            log_info "apiVersion: operators.coreos.com/v1alpha1"
+            log_info "kind: Subscription"
+            log_info "metadata:"
+            log_info "  name: grafana-operator"
+            log_info "  namespace: openshift-operators"
+            log_info "spec:"
+            log_info "  channel: v5"
+            log_info "  name: grafana-operator"
+            log_info "  source: community-operators"
+            log_info "  sourceNamespace: openshift-marketplace"
+            log_info "  installPlanApproval: Automatic"
+            log_info "EOF"
             return 1
         fi
     fi
