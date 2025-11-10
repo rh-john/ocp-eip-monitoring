@@ -1,0 +1,204 @@
+---
+# EIP Node Performance Dashboard (Perses)
+# Per-node performance metrics and trends
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-node-performance
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Node Performance"
+    description: "Per-node EIP performance metrics and trends"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    node-eip-assigned:
+      kind: Panel
+      spec:
+        display:
+          name: "EIPs Assigned per Node"
+          description: "Number of EIPs assigned to each node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_assigned_total'
+                  seriesNameFormat: "{{node}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_assigned_total&g0.tab=0
+            tooltip: View query in Prometheus
+    node-eip-utilization:
+      kind: Panel
+      spec:
+        display:
+          name: "Node EIP Utilization"
+          description: "EIP utilization percentage per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_utilization_percent'
+                  seriesNameFormat: "{{node}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_utilization_percent&g0.tab=0
+            tooltip: View query in Prometheus
+    node-eip-capacity:
+      kind: Panel
+      spec:
+        display:
+          name: "Node EIP Capacity"
+          description: "Maximum EIP capacity per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_capacity_total'
+                  seriesNameFormat: "{{node}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_capacity_total&g0.tab=0
+            tooltip: View query in Prometheus
+    node-cpic-status:
+      kind: Panel
+      spec:
+        display:
+          name: "Node CPIC Status"
+          description: "CPIC success, pending, and error counts per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_cpic_success_total'
+                  seriesNameFormat: "{{node}} - Success"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_cpic_pending_total'
+                  seriesNameFormat: "{{node}} - Pending"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_cpic_error_total'
+                  seriesNameFormat: "{{node}} - Error"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_cpic_success_total&g0.tab=0
+            tooltip: View query in Prometheus
+    node-capacity-vs-utilization:
+      kind: Panel
+      spec:
+        display:
+          name: "Capacity vs Utilization"
+          description: "Node capacity compared to current utilization"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_capacity_total'
+                  seriesNameFormat: "{{node}} - Capacity"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_assigned_total'
+                  seriesNameFormat: "{{node}} - Assigned"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_capacity_total&g0.tab=0
+            tooltip: View query in Prometheus
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-eip-assigned"
+          - x: 12
+            "y": 0
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-eip-utilization"
+          - x: 0
+            "y": 8
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-eip-capacity"
+          - x: 12
+            "y": 8
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-capacity-vs-utilization"
+          - x: 0
+            "y": 16
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-cpic-status"

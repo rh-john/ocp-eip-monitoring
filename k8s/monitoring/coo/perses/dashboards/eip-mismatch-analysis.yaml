@@ -1,0 +1,224 @@
+---
+# EIP Mismatch Analysis Dashboard (Perses)
+# Detailed breakdown of EIP-CPIC mismatches by type
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-mismatch-analysis
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Mismatch Analysis"
+    description: "Detailed breakdown of EIP-CPIC mismatches by type"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    total-mismatches:
+      kind: Panel
+      spec:
+        display:
+          name: "Total Mismatches"
+          description: "Total count of all EIP-CPIC mismatches"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_total'
+                  seriesNameFormat: "Total Mismatches"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_total&g0.tab=0
+            tooltip: View query in Prometheus
+    node-mismatches:
+      kind: Panel
+      spec:
+        display:
+          name: "Node Mismatches"
+          description: "IPs with different node assignments in EIP vs CPIC"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_node_mismatch'
+                  seriesNameFormat: "Node Mismatches"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_node_mismatch&g0.tab=0
+            tooltip: View query in Prometheus
+    missing-in-eip:
+      kind: Panel
+      spec:
+        display:
+          name: "Missing in EIP"
+          description: "IPs in CPIC but missing from EIP status.items"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_missing_in_eip'
+                  seriesNameFormat: "Missing in EIP"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_missing_in_eip&g0.tab=0
+            tooltip: View query in Prometheus
+    mismatch-percentage:
+      kind: Panel
+      spec:
+        display:
+          name: "Mismatch Percentage"
+          description: "Percentage of configured EIPs that have mismatches"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: '(eip_cpic_mismatches_total / eips_configured_total) * 100'
+                  seriesNameFormat: "Mismatch %"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=%28eip_cpic_mismatches_total%20%2f%20eips_configured_total%29%20%2a%20100&g0.tab=0
+            tooltip: View query in Prometheus
+    mismatch-breakdown:
+      kind: Panel
+      spec:
+        display:
+          name: "Mismatch Breakdown"
+          description: "Comparison of all mismatch types"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_total'
+                  seriesNameFormat: "Total"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_node_mismatch'
+                  seriesNameFormat: "Node Mismatch"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_missing_in_eip'
+                  seriesNameFormat: "Missing in EIP"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_total&g0.tab=0
+            tooltip: View query in Prometheus
+    malfunctioning-resources:
+      kind: Panel
+      spec:
+        display:
+          name: "Malfunctioning Resources"
+          description: "EIP resources with EIP-CPIC mismatches"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'malfunctioning_eip_objects_count'
+                  seriesNameFormat: "Malfunctioning"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=malfunctioning_eip_objects_count&g0.tab=0
+            tooltip: View query in Prometheus
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/total-mismatches"
+          - x: 8
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/node-mismatches"
+          - x: 16
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/missing-in-eip"
+          - x: 0
+            "y": 6
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/mismatch-percentage"
+          - x: 12
+            "y": 6
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/malfunctioning-resources"
+          - x: 0
+            "y": 12
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/mismatch-breakdown"

@@ -1,0 +1,230 @@
+---
+# EIP Distribution Fairness Dashboard (Perses)
+# Gini coefficient, standard deviation, min/max distribution analysis
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-distribution-fairness
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Distribution Fairness"
+    description: "Gini coefficient, standard deviation, min/max distribution analysis"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    gini-coefficient:
+      kind: Panel
+      spec:
+        display:
+          name: "Gini Coefficient"
+          description: "Gini coefficient of EIP distribution (0=perfect equality, 1=perfect inequality)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_distribution_gini_coefficient'
+                  seriesNameFormat: "Gini Coefficient"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_gini_coefficient&g0.tab=0
+            tooltip: View query in Prometheus
+    distribution-stddev:
+      kind: Panel
+      spec:
+        display:
+          name: "Distribution Standard Deviation"
+          description: "Standard deviation of EIP distribution across nodes"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_distribution_stddev'
+                  seriesNameFormat: "StdDev"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_stddev&g0.tab=0
+            tooltip: View query in Prometheus
+    max-per-node:
+      kind: Panel
+      spec:
+        display:
+          name: "Max EIPs per Node"
+          description: "Maximum EIPs on any node (hotspot detection)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_max_per_node'
+                  seriesNameFormat: "Max per Node"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_max_per_node&g0.tab=0
+            tooltip: View query in Prometheus
+    min-per-node:
+      kind: Panel
+      spec:
+        display:
+          name: "Min EIPs per Node"
+          description: "Minimum EIPs on any node (underutilization detection)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_min_per_node'
+                  seriesNameFormat: "Min per Node"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_min_per_node&g0.tab=0
+            tooltip: View query in Prometheus
+    distribution-range:
+      kind: Panel
+      spec:
+        display:
+          name: "Distribution Range"
+          description: "Range between max and min EIPs per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_max_per_node'
+                  seriesNameFormat: "Max"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_min_per_node'
+                  seriesNameFormat: "Min"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_max_per_node&g0.tab=0
+            tooltip: View query in Prometheus
+    fairness-metrics:
+      kind: Panel
+      spec:
+        display:
+          name: "Fairness Metrics Overview"
+          description: "All fairness metrics together"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_distribution_gini_coefficient'
+                  seriesNameFormat: "Gini Coefficient"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_distribution_stddev'
+                  seriesNameFormat: "StdDev"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_gini_coefficient&g0.tab=0
+            tooltip: View query in Prometheus
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/gini-coefficient"
+          - x: 8
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/distribution-stddev"
+          - x: 16
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/max-per-node"
+          - x: 0
+            "y": 6
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/min-per-node"
+          - x: 8
+            "y": 6
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/distribution-range"
+          - x: 16
+            "y": 6
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/fairness-metrics"
+          - x: 0
+            "y": 12
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/fairness-metrics"

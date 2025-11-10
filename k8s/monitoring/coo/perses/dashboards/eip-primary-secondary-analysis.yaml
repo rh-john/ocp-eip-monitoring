@@ -1,0 +1,194 @@
+---
+# EIP Primary/Secondary Analysis Dashboard (Perses)
+# Primary vs secondary EIP distribution and analysis
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-primary-secondary-analysis
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Primary/Secondary Analysis"
+    description: "Primary vs secondary EIP distribution and analysis"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    primary-by-node:
+      kind: Panel
+      spec:
+        display:
+          name: "Primary EIPs by Node"
+          description: "Primary EIP count per node (first IP from each resource)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_primary_total'
+                  seriesNameFormat: "{{node}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_primary_total&g0.tab=0
+            tooltip: View query in Prometheus
+    secondary-by-node:
+      kind: Panel
+      spec:
+        display:
+          name: "Secondary EIPs by Node"
+          description: "Secondary EIP count per node (remaining IPs)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_secondary_total'
+                  seriesNameFormat: "{{node}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_secondary_total&g0.tab=0
+            tooltip: View query in Prometheus
+    primary-vs-secondary:
+      kind: Panel
+      spec:
+        display:
+          name: "Primary vs Secondary Total"
+          description: "Total primary and secondary EIPs"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(node_eip_primary_total)'
+                  seriesNameFormat: "Primary Total"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(node_eip_secondary_total)'
+                  seriesNameFormat: "Secondary Total"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28node_eip_primary_total%29&g0.tab=0
+            tooltip: View query in Prometheus
+    primary-secondary-ratio:
+      kind: Panel
+      spec:
+        display:
+          name: "Primary/Secondary Ratio"
+          description: "Ratio of primary to secondary EIPs"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(node_eip_primary_total) / sum(node_eip_secondary_total)'
+                  seriesNameFormat: "Primary/Secondary Ratio"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28node_eip_primary_total%29%20%2f%20sum%28node_eip_secondary_total%29&g0.tab=0
+            tooltip: View query in Prometheus
+    node-primary-secondary:
+      kind: Panel
+      spec:
+        display:
+          name: "Node Primary vs Secondary"
+          description: "Primary and secondary EIPs per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_primary_total'
+                  seriesNameFormat: "{{node}} - Primary"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_secondary_total'
+                  seriesNameFormat: "{{node}} - Secondary"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_primary_total&g0.tab=0
+            tooltip: View query in Prometheus
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/primary-by-node"
+          - x: 12
+            "y": 0
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/secondary-by-node"
+          - x: 0
+            "y": 8
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/primary-vs-secondary"
+          - x: 12
+            "y": 8
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/primary-secondary-ratio"
+          - x: 0
+            "y": 14
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-primary-secondary"
