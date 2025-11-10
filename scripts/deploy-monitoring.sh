@@ -494,6 +494,65 @@ install_coo_operator() {
     fi
 }
 
+# Verify ThanosQuerier store discovery
+verify_thanosquerier_stores() {
+    log_info "Verifying ThanosQuerier store discovery..."
+    
+    local thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    
+    if [[ -z "$thanos_pod" ]]; then
+        log_warn "ThanosQuerier pod not found, skipping store verification"
+        return 0
+    fi
+    
+    # Wait for ThanosQuerier to be ready
+    local max_wait=120
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        if oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Running"; then
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    
+    # Check ThanosQuerier logs for store discovery
+    local max_attempts=6
+    local attempt=0
+    local stores_found=false
+    
+    while [[ $attempt -lt $max_attempts ]]; do
+        local log_output=$(oc logs "$thanos_pod" -n "$NAMESPACE" --tail=100 2>&1 | grep -i "adding new sidecar" || echo "")
+        
+        if [[ -n "$log_output" ]]; then
+            local store_count=$(echo "$log_output" | grep -c "adding new sidecar" || echo "0")
+            if [[ "$store_count" -gt 0 ]]; then
+                stores_found=true
+                log_success "ThanosQuerier discovered $store_count Prometheus store(s)"
+                break
+            fi
+        fi
+        
+        attempt=$((attempt + 1))
+        if [[ $attempt -lt $max_attempts ]]; then
+            sleep 10
+        fi
+    done
+    
+    if [[ "$stores_found" == "false" ]]; then
+        log_warn "ThanosQuerier store discovery verification failed"
+        log_warn "This may indicate that:"
+        log_warn "  1. MonitoringStack label 'app.kubernetes.io/part-of: eip-monitoring-stack' is missing"
+        log_warn "  2. Prometheus pods don't have Thanos sidecars running"
+        log_warn "  3. COO operator hasn't reconciled yet"
+        log_warn "ThanosQuerier may still work, but stores may not be discovered yet."
+        log_warn "You can check logs with: oc logs $thanos_pod -n $NAMESPACE | grep -i store"
+        return 1
+    fi
+    
+    return 0
+}
+
 # Configure COO monitoring stack
 configure_coo_monitoring_stack() {
     log_info "Deploying COO MonitoringStack..."
@@ -513,6 +572,20 @@ configure_coo_monitoring_stack() {
     }
     
     log_success "COO MonitoringStack deployed"
+    
+    # Ensure MonitoringStack has the required label for ThanosQuerier discovery
+    log_info "Ensuring MonitoringStack has required label for ThanosQuerier discovery..."
+    local part_of_label=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || echo "")
+    if [[ "$part_of_label" != "eip-monitoring-stack" ]]; then
+        log_info "Adding required label to MonitoringStack..."
+        oc patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
+            -p '{"metadata":{"labels":{"app.kubernetes.io/part-of":"eip-monitoring-stack"}}}' || {
+            log_warn "Failed to add label to MonitoringStack (this may affect ThanosQuerier store discovery)"
+        }
+        # Wait a moment for the label to be applied
+        sleep 2
+    fi
+    
     log_info "Waiting for COO Prometheus and Alertmanager to be ready (this may take a few minutes)..."
     
     # Wait for Prometheus pods
@@ -783,6 +856,24 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
         fi
+        
+        # Verify ThanosQuerier store discovery
+        log_info "Waiting for ThanosQuerier to be ready..."
+        local max_wait=60
+        local waited=0
+        while [[ $waited -lt $max_wait ]]; do
+            if oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | grep -q "Running"; then
+                break
+            fi
+            sleep 5
+            waited=$((waited + 5))
+        done
+        
+        # Verify store discovery (non-blocking - warns but doesn't fail deployment)
+        verify_thanosquerier_stores || {
+            log_warn "ThanosQuerier store discovery verification failed, but deployment continues"
+            log_warn "ThanosQuerier may need more time to discover stores, or there may be a configuration issue"
+        }
         
         # Install Perses datasources and dashboards for console integration
         # Note: These must be in openshift-operators namespace to be visible in the web console

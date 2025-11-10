@@ -9,6 +9,9 @@ metadata:
   labels:
     app: eip-monitor
     coo: eip-monitoring
+    # Required label for ThanosQuerier store discovery
+    # ThanosQuerier uses this label to discover MonitoringStack instances
+    app.kubernetes.io/part-of: eip-monitoring-stack
 spec:
   logLevel: info
   retention: 15d
