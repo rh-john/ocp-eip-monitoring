@@ -4,10 +4,29 @@
 # allowing PrometheusRules to be viewed in the Alerting Rules section
 # Reference: https://docs.redhat.com/en/documentation/red_hat_openshift_cluster_observability_operator/1-latest/html-single/ui_plugins_for_red_hat_openshift_cluster_observability_operator/index#monitoring-ui-plugin
 # Note: UIPlugin is a cluster-scoped resource (no namespace)
+#
+# When perses.enabled: true, the plugin automatically installs:
+# - Perses instance in openshift-operators namespace
+# - Default datasource: accelerators-thanos-querier-datasource
+# - Default dashboard: accelerators-dashboard (for GPU/accelerator metrics)
+#   Note: The accelerators-dashboard will show "No data" if there are no GPUs in the cluster.
+#   This is expected behavior and harmless - the dashboard is a system default.
 apiVersion: observability.openshift.io/v1alpha1
 kind: UIPlugin
 metadata:
   name: monitoring
 spec:
   type: Monitoring
+  monitoring:
+    # Enable incident detection (groups alerts into incidents)
+    incidents:
+      enabled: true
+    # Enable Perses dashboards (alternative to Grafana)
+    # This automatically installs the Accelerators dashboard (system default)
+    # The dashboard will show "No data" if there are no GPUs - this is normal
+    perses:
+      enabled: true
+    # ACM (Advanced Cluster Management) configuration - not needed for basic monitoring
+    # acm:
+    #   enabled: false
 

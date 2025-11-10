@@ -1,0 +1,34 @@
+---
+# Perses DataSource for COO Prometheus
+# Uses ThanosQuerier to aggregate queries across multiple Prometheus replicas
+apiVersion: perses.dev/v1alpha1
+kind: PersesDatasource
+metadata:
+  name: prometheus-coo
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  config:
+    default: false
+    display:
+      name: Prometheus-COO
+      description: "COO-managed Prometheus via ThanosQuerier (aggregates multiple replicas)"
+    plugin:
+      kind: PrometheusDatasource
+      spec:
+        # Use ThanosQuerier to query across multiple Prometheus replicas
+        # ThanosQuerier aggregates and deduplicates data from all Prometheus instances
+        # This provides consistent results when Prometheus has multiple replicas (default: 2)
+        # Benefits:
+        # - Deduplicates data from multiple replicas
+        # - Provides consistent query results
+        # - Handles replica failures gracefully
+        # - Better for production use with high availability
+        proxy:
+          kind: HTTPProxy
+          spec:
+            url: http://thanos-querier-eip-monitoring-stack-querier-coo.eip-monitoring.svc.cluster.local:10902
+

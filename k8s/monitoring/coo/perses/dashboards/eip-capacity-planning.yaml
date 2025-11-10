@@ -1,0 +1,217 @@
+---
+# EIP Capacity Planning Dashboard (Perses)
+# Historical trends and forecasting for capacity planning
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-capacity-planning
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Capacity Planning"
+    description: "Historical trends and forecasting for capacity planning"
+  duration: 24h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    utilization-trend:
+      kind: Panel
+      spec:
+        display:
+          name: "Utilization Trend"
+          description: "EIP utilization percentage over time"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_utilization_percent'
+                  seriesNameFormat: "Utilization"
+    
+    configured-vs-assigned:
+      kind: Panel
+      spec:
+        display:
+          name: "Configured vs Assigned"
+          description: "Total configured EIPs vs currently assigned"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eips_configured_total'
+                  seriesNameFormat: "Configured"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eips_assigned_total'
+                  seriesNameFormat: "Assigned"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eips_unassigned_total'
+                  seriesNameFormat: "Unassigned"
+    
+    available-nodes:
+      kind: Panel
+      spec:
+        display:
+          name: "Available Nodes"
+          description: "Number of EIP-enabled nodes available"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_nodes_available_total'
+                  seriesNameFormat: "Available Nodes"
+    
+    changes-last-hour:
+      kind: Panel
+      spec:
+        display:
+          name: "Changes Last Hour"
+          description: "EIP changes in the last hour"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_changes_last_hour'
+                  seriesNameFormat: "Changes"
+    
+    overcommitted-trend:
+      kind: Panel
+      spec:
+        display:
+          name: "Overcommitted Trend"
+          description: "Total overcommitted IPs over time"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'overcommitted_eip_objects_count'
+                  seriesNameFormat: "Overcommitted"
+    
+    assignment-rate-trend:
+      kind: Panel
+      spec:
+        display:
+          name: "Assignment Rate Trend"
+          description: "Assignment and unassignment rates over time"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_assignment_rate_per_minute'
+                  seriesNameFormat: "Assignment Rate"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_unassignment_rate_per_minute'
+                  seriesNameFormat: "Unassignment Rate"
+  
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/utilization-trend"
+          - x: 12
+            "y": 0
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/available-nodes"
+          - x: 0
+            "y": 8
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/configured-vs-assigned"
+          - x: 0
+            "y": 16
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/changes-last-hour"
+          - x: 8
+            "y": 16
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/overcommitted-trend"
+          - x: 16
+            "y": 16
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/assignment-rate-trend"
+

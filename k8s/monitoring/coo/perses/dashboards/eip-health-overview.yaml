@@ -1,0 +1,298 @@
+---
+# EIP Health Overview Dashboard (Perses)
+# High-level health status, utilization, and critical issues
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-health-overview
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Health Overview"
+    description: "High-level EIP health status, utilization, and critical issues"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    health-score:
+      kind: Panel
+      spec:
+        display:
+          name: "Cluster Health Score"
+          description: "Overall EIP cluster health score (0-100)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cluster_eip_health_score'
+                  seriesNameFormat: "Health Score"
+    
+    stability-score:
+      kind: Panel
+      spec:
+        display:
+          name: "Stability Score"
+          description: "EIP stability score based on change frequency (0-100)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cluster_eip_stability_score'
+                  seriesNameFormat: "Stability Score"
+    
+    utilization:
+      kind: Panel
+      spec:
+        display:
+          name: "EIP Utilization"
+          description: "Percentage of EIPs currently assigned"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_utilization_percent'
+                  seriesNameFormat: "Utilization"
+    
+    eip-counts:
+      kind: Panel
+      spec:
+        display:
+          name: "EIP Counts"
+          description: "Configured, assigned, and unassigned EIP counts"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eips_configured_total'
+                  seriesNameFormat: "Configured"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eips_assigned_total'
+                  seriesNameFormat: "Assigned"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eips_unassigned_total'
+                  seriesNameFormat: "Unassigned"
+    
+    critical-issues:
+      kind: Panel
+      spec:
+        display:
+          name: "Critical Issues"
+          description: "Count of critical EIP issues"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'critical_eip_objects_count'
+                  seriesNameFormat: "Critical Issues"
+    
+    malfunctioning:
+      kind: Panel
+      spec:
+        display:
+          name: "Malfunctioning Resources"
+          description: "EIP resources with EIP-CPIC mismatches"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'malfunctioning_eip_objects_count'
+                  seriesNameFormat: "Malfunctioning"
+    
+    mismatches:
+      kind: Panel
+      spec:
+        display:
+          name: "Total Mismatches"
+          description: "Total count of EIP-CPIC mismatches"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_cpic_mismatches_total'
+                  seriesNameFormat: "Mismatches"
+    
+    overcommitted:
+      kind: Panel
+      spec:
+        display:
+          name: "Overcommitted IPs"
+          description: "Total overcommitted IPs (when configured > available nodes)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'overcommitted_eip_objects_count'
+                  seriesNameFormat: "Overcommitted"
+    
+    assignment-rates:
+      kind: Panel
+      spec:
+        display:
+          name: "Assignment Rates"
+          description: "EIP assignment and unassignment rates per minute"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_assignment_rate_per_minute'
+                  seriesNameFormat: "Assignment Rate"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_unassignment_rate_per_minute'
+                  seriesNameFormat: "Unassignment Rate"
+  
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/health-score"
+          - x: 6
+            "y": 0
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/stability-score"
+          - x: 12
+            "y": 0
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/utilization"
+          - x: 18
+            "y": 0
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/critical-issues"
+          - x: 0
+            "y": 4
+            width: 8
+            height: 4
+            content:
+              $ref: "#/spec/panels/malfunctioning"
+          - x: 8
+            "y": 4
+            width: 8
+            height: 4
+            content:
+              $ref: "#/spec/panels/mismatches"
+          - x: 16
+            "y": 4
+            width: 8
+            height: 4
+            content:
+              $ref: "#/spec/panels/overcommitted"
+          - x: 0
+            "y": 8
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/eip-counts"
+          - x: 0
+            "y": 16
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/assignment-rates"
+

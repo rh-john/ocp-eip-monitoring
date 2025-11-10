@@ -1,0 +1,251 @@
+---
+# EIP Distribution Dashboard (Perses)
+# EIP distribution across nodes, fairness metrics, and capacity analysis
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-distribution
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Distribution & Fairness"
+    description: "EIP distribution across nodes, fairness metrics, and capacity analysis"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    node-eip-assignments:
+      kind: Panel
+      spec:
+        display:
+          name: "EIP Assignments by Node"
+          description: "Total EIPs assigned per node over time"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_assigned_total'
+                  seriesNameFormat: "{{node}}"
+    
+    node-eip-utilization:
+      kind: Panel
+      spec:
+        display:
+          name: "Node EIP Utilization"
+          description: "EIP utilization percentage per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_utilization_percent'
+                  seriesNameFormat: "{{node}}"
+    
+    node-eip-capacity:
+      kind: Panel
+      spec:
+        display:
+          name: "Node EIP Capacity"
+          description: "EIP capacity per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_capacity_total'
+                  seriesNameFormat: "{{node}}"
+    
+    gini-coefficient:
+      kind: Panel
+      spec:
+        display:
+          name: "Distribution Fairness (Gini)"
+          description: "Gini coefficient: 0=perfect equality, 1=perfect inequality"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_distribution_gini_coefficient'
+                  seriesNameFormat: "Gini Coefficient"
+    
+    distribution-stddev:
+      kind: Panel
+      spec:
+        display:
+          name: "Distribution Standard Deviation"
+          description: "Standard deviation of EIP distribution across nodes"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_distribution_stddev'
+                  seriesNameFormat: "StdDev"
+    
+    max-min-per-node:
+      kind: Panel
+      spec:
+        display:
+          name: "Max/Min EIPs per Node"
+          description: "Maximum and minimum EIPs assigned to any single node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_max_per_node'
+                  seriesNameFormat: "Max per Node"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_min_per_node'
+                  seriesNameFormat: "Min per Node"
+    
+    available-nodes:
+      kind: Panel
+      spec:
+        display:
+          name: "Available EIP Nodes"
+          description: "Number of nodes available for EIP assignment"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_nodes_available_total'
+                  seriesNameFormat: "Available Nodes"
+    
+    nodes-with-errors:
+      kind: Panel
+      spec:
+        display:
+          name: "Nodes with CPIC Errors"
+          description: "Number of nodes with CPIC errors"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_nodes_with_errors_total'
+                  seriesNameFormat: "Nodes with Errors"
+  
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 12
+            height: 4
+            content:
+              $ref: "#/spec/panels/available-nodes"
+          - x: 12
+            "y": 0
+            width: 12
+            height: 4
+            content:
+              $ref: "#/spec/panels/nodes-with-errors"
+          - x: 0
+            "y": 4
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-eip-assignments"
+          - x: 0
+            "y": 12
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/gini-coefficient"
+          - x: 12
+            "y": 12
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/distribution-stddev"
+          - x: 0
+            "y": 18
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/max-min-per-node"
+          - x: 12
+            "y": 18
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/node-eip-utilization"
+          - x: 0
+            "y": 24
+            width: 24
+            height: 6
+            content:
+              $ref: "#/spec/panels/node-eip-capacity"
+

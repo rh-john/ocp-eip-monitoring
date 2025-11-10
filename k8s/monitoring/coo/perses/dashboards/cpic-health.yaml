@@ -1,0 +1,227 @@
+---
+# CPIC Health Dashboard (Perses)
+# CPIC success/error rates, pending durations, and per-node status
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: cpic-health
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "CPIC Health & Status"
+    description: "CPIC health metrics, success/error rates, and pending durations"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    cpic-status-overview:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Status Overview"
+          description: "Total CPIC resources by status"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_success_total'
+                  seriesNameFormat: "Success"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_pending_total'
+                  seriesNameFormat: "Pending"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_error_total'
+                  seriesNameFormat: "Error"
+    
+    cpic-transition-rate:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Transition Rate"
+          description: "Rate of CPIC state transitions per minute"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_transitions_per_minute'
+                  seriesNameFormat: "Transitions/min"
+    
+    cpic-pending-duration:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Pending Duration"
+          description: "Time resources spend in pending state (by resource)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_pending_duration_seconds'
+                  seriesNameFormat: "{{resource_name}}"
+    
+    cpic-error-duration:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Error Duration"
+          description: "Time resources spend in error state (by resource)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_error_duration_seconds'
+                  seriesNameFormat: "{{resource_name}}"
+    
+    node-cpic-status:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Status by Node"
+          description: "CPIC success, pending, and error counts per node"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_cpic_success_total'
+                  seriesNameFormat: "{{node}} - Success"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_cpic_pending_total'
+                  seriesNameFormat: "{{node}} - Pending"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_cpic_error_total'
+                  seriesNameFormat: "{{node}} - Error"
+    
+    cpic-recoveries:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Recoveries"
+          description: "Number of CPIC error recoveries in the last hour"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_recoveries_last_hour'
+                  seriesNameFormat: "Recoveries"
+  
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/cpic-status-overview"
+          - x: 0
+            "y": 8
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/cpic-transition-rate"
+          - x: 12
+            "y": 8
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/cpic-recoveries"
+          - x: 0
+            "y": 14
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/cpic-pending-duration"
+          - x: 12
+            "y": 14
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/cpic-error-duration"
+          - x: 0
+            "y": 22
+            width: 24
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-cpic-status"
+

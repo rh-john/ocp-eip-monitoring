@@ -1,0 +1,27 @@
+---
+# Perses Instance for COO
+# NOTE: This file is kept for reference, but the actual Perses instance
+# for console integration is created automatically by UIPlugin in openshift-operators
+# namespace when spec.monitoring.perses.enabled: true
+#
+# PersesDashboards and PersesDatasources should be deployed in openshift-operators
+# namespace to be visible in the OpenShift web console.
+#
+# This file can be used if you need a separate Perses instance for non-console use.
+apiVersion: perses.dev/v1alpha1
+kind: Perses
+metadata:
+  name: perses-eip-monitoring
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  # Perses instance configuration
+  # The spec can be empty for default configuration, or you can add:
+  # - affinity rules for pod placement
+  # - resource limits
+  # - other deployment configurations
+  # For now, using defaults which should work for most cases
+

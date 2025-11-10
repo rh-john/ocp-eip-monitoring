@@ -1,0 +1,61 @@
+---
+# EIP/CPIC Event Correlation with Cluster Events Dashboard (Perses)
+# Converted from Grafana dashboard format
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-event-correlation
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP/CPIC Event Correlation with Cluster Events"
+    description: "Correlates EIP/CPIC events with cluster and node events"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    node-status-timeline:
+      kind: Panel
+      spec:
+        display:
+          name: "Node Status Timeline"
+          description: "Shows node Ready/NotReady status over time"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_assigned_total'
+                  seriesNameFormat: "EIPs Assigned - {{node}}"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_eip_unassigned_total'
+                  seriesNameFormat: "EIPs Unassigned - {{node}}"
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 24
+            height: 10
+            content:
+              $ref: "#/spec/panels/node-status-timeline"
+
