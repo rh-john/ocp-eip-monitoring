@@ -1,6 +1,6 @@
 ---
 # EIP/CPIC Event Correlation with Cluster Events Dashboard (Perses)
-# Converted from Grafana dashboard format
+# Comprehensive correlation of EIP/CPIC events with node and cluster events
 apiVersion: perses.dev/v1alpha1
 kind: PersesDashboard
 metadata:
@@ -13,7 +13,7 @@ metadata:
 spec:
   display:
     name: "EIP/CPIC Event Correlation with Cluster Events"
-    description: "Correlates EIP/CPIC events with cluster and node events"
+    description: "Correlates EIP/CPIC events with cluster and node events including node status, reboots, and OVN/CNCC status"
   duration: 6h
   refreshInterval: 30s
   variables: []
@@ -23,11 +23,31 @@ spec:
       spec:
         display:
           name: "Node Status Timeline"
-          description: "Shows node Ready/NotReady status over time"
+          description: "Node Ready/NotReady status for EIP-capable nodes"
         plugin:
           kind: TimeSeriesChart
           spec: {}
         queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'kube_node_status_condition{condition="Ready",status="false"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"}'
+                  seriesNameFormat: "NotReady - {{node}}"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'kube_node_status_condition{condition="Ready",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"}'
+                  seriesNameFormat: "Ready - {{node}}"
           - kind: TimeSeriesQuery
             spec:
               plugin:
@@ -48,6 +68,419 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_unassigned_total'
                   seriesNameFormat: "EIPs Unassigned - {{node}}"
+    
+    cpic-events-vs-node-status:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Events vs Node Status"
+          description: "CPIC success/error/pending rates vs node NotReady status"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cpic_success_total)'
+                  seriesNameFormat: "CPIC Success"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cpic_error_total)'
+                  seriesNameFormat: "CPIC Errors"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cpic_pending_total)'
+                  seriesNameFormat: "CPIC Pending"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(kube_node_status_condition{condition="Ready",status="false"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
+                  seriesNameFormat: "Nodes NotReady"
+    
+    node-reboot-detection:
+      kind: Panel
+      spec:
+        display:
+          name: "Node Reboot Detection"
+          description: "Detects node reboots and boot time for EIP-capable nodes"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'changes(kube_node_status_condition{condition="Ready",status="false"}[5m]) > 0'
+                  seriesNameFormat: "Reboot Detected - {{node}}"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'kube_node_status_condition{condition="Ready",status="false"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"}'
+                  seriesNameFormat: "Node Down - {{node}}"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'node_boot_time_seconds * on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable="true"}'
+                  seriesNameFormat: "Boot Time - {{node}}"
+    
+    eip-assignment-vs-node-changes:
+      kind: Panel
+      spec:
+        display:
+          name: "EIP Assignment Rate vs Node Status Changes"
+          description: "EIP assignment/unassignment rates compared to node status changes"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_assignment_rate_per_minute'
+                  seriesNameFormat: "Assignment Rate"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_unassignment_rate_per_minute'
+                  seriesNameFormat: "Unassignment Rate"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'count(changes(kube_node_status_condition{condition="Ready"}[5m]) > 0)'
+                  seriesNameFormat: "Node Status Changes"
+    
+    cpic-error-vs-node-conditions:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Error Rate vs Node Conditions"
+          description: "CPIC errors vs node conditions (MemoryPressure, DiskPressure, NetworkUnavailable)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cpic_error_total)'
+                  seriesNameFormat: "CPIC Errors"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(kube_node_status_condition{condition="MemoryPressure",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
+                  seriesNameFormat: "Memory Pressure"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(kube_node_status_condition{condition="DiskPressure",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
+                  seriesNameFormat: "Disk Pressure"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(kube_node_status_condition{condition="NetworkUnavailable",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
+                  seriesNameFormat: "Network Unavailable"
+    
+    ovn-network-events:
+      kind: Panel
+      spec:
+        display:
+          name: "OVN Network Events Timeline"
+          description: "OVN network operator status and events"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="network",condition="Available"} == 1)'
+                  seriesNameFormat: "OVN Available"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="network",condition="Degraded"} == 1)'
+                  seriesNameFormat: "OVN Degraded"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="network",condition="Progressing"} == 1)'
+                  seriesNameFormat: "OVN Progressing"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="network",condition="Available"} == 0)'
+                  seriesNameFormat: "OVN Unavailable"
+    
+    cncc-events:
+      kind: Panel
+      spec:
+        display:
+          name: "CNCC Events Timeline"
+          description: "Cloud Controller Manager (CNCC) status and events"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Available"} == 1)'
+                  seriesNameFormat: "CNCC Available"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Degraded"} == 1)'
+                  seriesNameFormat: "CNCC Degraded"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Progressing"} == 1)'
+                  seriesNameFormat: "CNCC Progressing"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Upgradeable"} == 0)'
+                  seriesNameFormat: "CNCC Not Upgradeable"
+    
+    ovn-status:
+      kind: Panel
+      spec:
+        display:
+          name: "OVN Network Status"
+          description: "OVN degraded status indicator"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="network",condition="Degraded"} == 1) * 10'
+                  seriesNameFormat: "OVN Degraded (x10)"
+    
+    cncc-status:
+      kind: Panel
+      spec:
+        display:
+          name: "CNCC Status"
+          description: "CNCC degraded status indicator"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Degraded"} == 1) * 10'
+                  seriesNameFormat: "CNCC Degraded (x10)"
+    
+    node-status-summary:
+      kind: Panel
+      spec:
+        display:
+          name: "Ready Nodes Count"
+          description: "Number of EIP-capable nodes in Ready state"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'count(kube_node_status_condition{condition="Ready",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
+                  seriesNameFormat: "Ready Nodes"
+    
+    not-ready-nodes:
+      kind: Panel
+      spec:
+        display:
+          name: "Not Ready Nodes Count"
+          description: "Number of EIP-capable nodes in NotReady state"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'count(kube_node_status_condition{condition="Ready",status="false"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
+                  seriesNameFormat: "Not Ready Nodes"
+    
+    ovn-available-status:
+      kind: Panel
+      spec:
+        display:
+          name: "OVN Available Status"
+          description: "OVN network operator available status (1=available, 0=unavailable)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="network",condition="Available"} == 1)'
+                  seriesNameFormat: "OVN Available"
+    
+    cncc-available-status:
+      kind: Panel
+      spec:
+        display:
+          name: "CNCC Available Status"
+          description: "CNCC available status (1=available, 0=unavailable)"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Available"} == 1)'
+                  seriesNameFormat: "CNCC Available"
+  
   layouts:
     - kind: Grid
       spec:
@@ -55,7 +488,78 @@ spec:
           - x: 0
             "y": 0
             width: 24
-            height: 10
+            height: 8
             content:
               $ref: "#/spec/panels/node-status-timeline"
-
+          - x: 0
+            "y": 8
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/cpic-events-vs-node-status"
+          - x: 12
+            "y": 8
+            width: 12
+            height: 8
+            content:
+              $ref: "#/spec/panels/node-reboot-detection"
+          - x: 0
+            "y": 16
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/eip-assignment-vs-node-changes"
+          - x: 12
+            "y": 16
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/cpic-error-vs-node-conditions"
+          - x: 0
+            "y": 22
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/ovn-network-events"
+          - x: 12
+            "y": 22
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/cncc-events"
+          - x: 0
+            "y": 28
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/ovn-status"
+          - x: 12
+            "y": 28
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/cncc-status"
+          - x: 0
+            "y": 34
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/node-status-summary"
+          - x: 6
+            "y": 34
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/not-ready-nodes"
+          - x: 12
+            "y": 34
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/ovn-available-status"
+          - x: 18
+            "y": 34
+            width: 6
+            height: 4
+            content:
+              $ref: "#/spec/panels/cncc-available-status"
