@@ -553,6 +553,185 @@ verify_thanosquerier_stores() {
     return 0
 }
 
+# Setup federation token secret for COO Prometheus
+setup_federation_token() {
+    log_info "Setting up federation token secret for COO Prometheus..."
+    
+    local token_secret_name="eip-monitoring-stack-prometheus-token"
+    local service_account="eip-monitoring-stack-prometheus"
+    
+    # Wait for service account to exist (created by MonitoringStack)
+    log_info "Waiting for service account $service_account to be created..."
+    local max_wait=60
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        if oc get serviceaccount "$service_account" -n "$NAMESPACE" &>/dev/null; then
+            break
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    
+    if ! oc get serviceaccount "$service_account" -n "$NAMESPACE" &>/dev/null; then
+        log_error "Service account $service_account not found in namespace $NAMESPACE"
+        return 1
+    fi
+    
+    # Check if token secret already exists
+    if oc get secret "$token_secret_name" -n "$NAMESPACE" &>/dev/null; then
+        log_info "Token secret $token_secret_name already exists, checking if it's valid..."
+        # Check if token is valid by checking its size (should be > 0)
+        local token_size=$(oc get secret "$token_secret_name" -n "$NAMESPACE" -o jsonpath='{.data.token}' 2>/dev/null | base64 -d 2>/dev/null | wc -c || echo "0")
+        if [[ "$token_size" -gt 100 ]]; then
+            log_info "Existing token secret appears valid (${token_size} bytes), skipping recreation"
+            return 0
+        else
+            log_warn "Existing token secret appears invalid or empty, recreating..."
+            oc delete secret "$token_secret_name" -n "$NAMESPACE" 2>/dev/null || true
+        fi
+    fi
+    
+    # Create new token
+    log_info "Creating new federation token..."
+    local token_output
+    token_output=$(oc create token "$service_account" -n "$NAMESPACE" --duration=8760h 2>&1)
+    if [[ $? -ne 0 ]]; then
+        log_error "Failed to create token for service account $service_account: $token_output"
+        return 1
+    fi
+    
+    local token=$(echo "$token_output" | tail -1)
+    if [[ -z "$token" ]]; then
+        log_error "Token creation succeeded but token is empty"
+        return 1
+    fi
+    
+    # Create secret with token
+    oc create secret generic "$token_secret_name" \
+        -n "$NAMESPACE" \
+        --from-literal=token="$token" \
+        --dry-run=client -o yaml | oc apply -f - || {
+        log_error "Failed to create token secret $token_secret_name"
+        return 1
+    }
+    
+    log_success "Federation token secret created: $token_secret_name"
+    return 0
+}
+
+# Verify federation is working
+verify_federation() {
+    log_info "Verifying Prometheus federation is working..."
+    
+    # Wait for Prometheus pods to be ready
+    log_info "Waiting for Prometheus pods to be ready..."
+    local max_wait=120
+    local waited=0
+    while [[ $waited -lt $max_wait ]]; do
+        local prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || echo "0")
+        prom_pods=$(echo "$prom_pods" | tr -d '[:space:]')
+        if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    
+    if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -eq 0 ]]; then
+        log_warn "Prometheus pods not ready after ${max_wait}s, skipping federation verification"
+        return 1
+    fi
+    
+    local prometheus_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [[ -z "$prometheus_pod" ]]; then
+        log_warn "Prometheus pod not found, skipping federation verification"
+        return 1
+    fi
+    
+    # Check federation target health
+    log_info "Checking federation target health..."
+    local max_retries=12
+    local retry=0
+    local federation_healthy=false
+    
+    while [[ $retry -lt $max_retries ]]; do
+        local targets_json
+        targets_json=$(oc exec -n "$NAMESPACE" "$prometheus_pod" -- curl -s http://localhost:9090/api/v1/targets 2>/dev/null || echo "")
+        
+        if [[ -n "$targets_json" ]]; then
+            # Check for federation target
+            local federation_targets
+            federation_targets=$(echo "$targets_json" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    targets = data.get('data', {}).get('activeTargets', [])
+    fed_targets = [t for t in targets if 'federation' in t.get('scrapeUrl', '').lower() or 'federate' in t.get('scrapeUrl', '').lower()]
+    if fed_targets:
+        health = fed_targets[0].get('health', 'unknown')
+        error = fed_targets[0].get('lastError', '')
+        print(f'{health}|{error[:100]}')
+    else:
+        print('not_found|')
+except:
+    print('error|Failed to parse targets')
+" 2>/dev/null || echo "error|Failed to check targets")
+            
+            local health=$(echo "$federation_targets" | cut -d'|' -f1)
+            local error=$(echo "$federation_targets" | cut -d'|' -f2)
+            
+            if [[ "$health" == "up" ]]; then
+                federation_healthy=true
+                log_success "Federation target is healthy"
+                break
+            elif [[ "$health" == "down" ]]; then
+                if [[ -n "$error" ]]; then
+                    log_warn "Federation target is down: $error"
+                else
+                    log_warn "Federation target is down (checking again...)"
+                fi
+            elif [[ "$health" == "unknown" ]]; then
+                log_info "Federation target health is unknown (may still be initializing)..."
+            fi
+        fi
+        
+        sleep 5
+        retry=$((retry + 1))
+    done
+    
+    if [[ "$federation_healthy" == "true" ]]; then
+        # Verify federated metrics are available
+        log_info "Verifying federated metrics are available..."
+        local metrics_check
+        metrics_check=$(oc exec -n "$NAMESPACE" "$prometheus_pod" -- curl -s -G --data-urlencode 'query=kube_node_labels' http://localhost:9090/api/v1/query 2>/dev/null | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    result = data.get('data', {}).get('result', [])
+    print(f'{data.get(\"status\", \"unknown\")}|{len(result)}')
+except:
+    print('error|0')
+" 2>/dev/null || echo "error|0")
+        
+        local status=$(echo "$metrics_check" | cut -d'|' -f1)
+        local count=$(echo "$metrics_check" | cut -d'|' -f2)
+        
+        if [[ "$status" == "success" ]] && [[ "$count" -gt 0 ]]; then
+            log_success "Federated metrics are available (found $count kube_node_labels)"
+            return 0
+        else
+            log_warn "Federated metrics check failed (status: $status, count: $count)"
+            log_warn "Federation may still be initializing, or there may be a configuration issue"
+            return 1
+        fi
+    else
+        log_warn "Federation target verification failed after $max_retries retries"
+        log_warn "Federation may still be initializing, or there may be a configuration issue"
+        log_warn "You can check federation status with: oc exec -n $NAMESPACE $prometheus_pod -- curl -s http://localhost:9090/api/v1/targets | grep -i federation"
+        return 1
+    fi
+}
+
 # Configure COO monitoring stack
 configure_coo_monitoring_stack() {
     log_info "Deploying COO MonitoringStack..."
@@ -842,7 +1021,6 @@ deploy_monitoring() {
         if [[ "$VERBOSE" == "true" ]]; then
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
@@ -850,11 +1028,40 @@ deploy_monitoring() {
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
+        fi
+        
+        # Apply federation ScrapeConfig if it exists
+        local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
+        if [[ -f "$scrapeconfig_file" ]]; then
+            log_info "Applying federation ScrapeConfig..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc apply -f "$scrapeconfig_file"
+            else
+                oc apply -f "$scrapeconfig_file" 2>/dev/null
+            fi
+            
+            # Setup federation token secret
+            setup_federation_token || {
+                log_warn "Failed to setup federation token, but deployment continues"
+                log_warn "Federation may not work until the token is created manually"
+            }
+            
+            # Wait for Prometheus to pick up the new token
+            log_info "Waiting for Prometheus to pick up federation configuration..."
+            sleep 10
+            
+            # Verify federation is working (non-blocking)
+            verify_federation || {
+                log_warn "Federation verification failed, but deployment continues"
+                log_warn "Federation may still be initializing, or there may be a configuration issue"
+            }
+        else
+            log_warn "Federation ScrapeConfig file not found: $scrapeconfig_file"
+            log_warn "Federation will not be configured. If you need cluster metrics, create the ScrapeConfig file."
         fi
         
         # Verify ThanosQuerier store discovery
