@@ -111,15 +111,21 @@ The Perses dashboards include "Inspect" links on each panel that use Prometheus 
 
 ### Exposing ThanosQuerier Route
 
-The route to ThanosQuerier is created using:
+The route to ThanosQuerier is automatically created when deploying COO monitoring via `deploy-monitoring.sh`. The route manifest is located at:
 
-```bash
-oc expose svc thanos-querier-eip-monitoring-stack-querier-coo -n eip-monitoring --name=thanos-querier-coo --port=10902
+```
+k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml
 ```
 
-This creates a route with edge TLS termination. The route URL format is:
+The route uses edge TLS termination and is automatically created with the correct hostname format:
 ```
 https://thanos-querier-coo-<namespace>.apps.<cluster-domain>/graph
+```
+
+**Manual creation (if needed):**
+If you need to create the route manually:
+```bash
+oc apply -f k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml
 ```
 
 ### Adding Inspect Links to Dashboards

@@ -1034,6 +1034,18 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
         fi
         
+        # Deploy Route for ThanosQuerier (for Inspect links in Perses dashboards)
+        log_info "Deploying ThanosQuerier route..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml" || {
+                log_warn "Failed to deploy ThanosQuerier route (non-critical, inspect links may not work)"
+            }
+        else
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml" 2>/dev/null || {
+                log_warn "Failed to deploy ThanosQuerier route (non-critical, inspect links may not work)"
+            }
+        fi
+        
         # Apply federation ScrapeConfig if it exists
         local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
         if [[ -f "$scrapeconfig_file" ]]; then
