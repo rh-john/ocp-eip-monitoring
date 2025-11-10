@@ -402,13 +402,68 @@ install_coo_operator() {
         return 1
     fi
     
-    oc apply -f "$subscription_file" || {
+    # Check if subscription already exists and is healthy
+    local subscription_exists=false
+    local subscription_healthy=false
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        subscription_exists=true
+        # Check if subscription is properly linked to a CSV
+        local installed_csv=$(oc get subscription cluster-observability-operator -n openshift-operators -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
+        local subscription_state=$(oc get subscription cluster-observability-operator -n openshift-operators -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+        
+        if [[ -n "$installed_csv" ]] && [[ "$subscription_state" == "AtLatestKnown" ]]; then
+            subscription_healthy=true
+            log_info "COO operator subscription already exists and is healthy (installedCSV: $installed_csv)"
+        else
+            log_warn "COO operator subscription exists but may not be properly linked (installedCSV: ${installed_csv:-null}, state: ${subscription_state:-null})"
+        fi
+    fi
+    
+    # Check if CSV exists independently (not linked to subscription)
+    local csv_exists=false
+    local csv_name=""
+    local csv_phase=""
+    csv_name=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | .metadata.name' | head -1 || echo "")
+    if [[ -n "$csv_name" ]]; then
+        csv_exists=true
+        csv_phase=$(oc get csv "$csv_name" -n openshift-operators -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        
+        # Check if CSV is owned by a subscription
+        local csv_owner=$(oc get csv "$csv_name" -n openshift-operators -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Subscription")].name}' 2>/dev/null || echo "")
+        
+        if [[ -z "$csv_owner" ]]; then
+            log_warn "CSV $csv_name exists but is not owned by a subscription"
+            if [[ "$subscription_exists" == "true" ]] && [[ "$subscription_healthy" == "false" ]]; then
+                log_info "Subscription exists but CSV is not linked. This may cause resolution issues."
+                log_info "To fix: delete the CSV and let the subscription reinstall it:"
+                log_info "  oc delete csv $csv_name -n openshift-operators"
+            fi
+        elif [[ "$csv_phase" == "Succeeded" ]] && [[ "$subscription_healthy" == "true" ]]; then
+            log_success "COO operator is already installed and healthy (CSV: $csv_name, phase: $csv_phase)"
+            return 0
+        fi
+    fi
+    
+    # If subscription is healthy, we're done
+    if [[ "$subscription_healthy" == "true" ]]; then
+        log_success "COO operator subscription is healthy, skipping installation"
+        return 0
+    fi
+    
+    # Apply subscription (idempotent - will update if exists, create if not)
+    log_info "Applying COO operator subscription..."
+    if oc apply -f "$subscription_file" 2>/dev/null; then
+        if [[ "$subscription_exists" == "true" ]]; then
+            log_success "COO operator subscription updated"
+        else
+            log_success "COO operator subscription created"
+        fi
+    else
         log_error "Failed to install COO operator subscription"
         log_error "This requires cluster-admin permissions"
         return 1
-    }
+    fi
     
-    log_success "COO operator subscription created"
     log_info "Waiting for COO operator to be installed (this may take a few minutes)..."
     
     # Wait for CSV to succeed
@@ -416,19 +471,26 @@ install_coo_operator() {
     local waited=0
     while [[ $waited -lt $max_wait ]]; do
         local csv_phase=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | .status.phase' | head -1 || echo "")
-        if [[ "$csv_phase" == "Succeeded" ]]; then
-            log_success "COO operator installed successfully"
+        local installed_csv=$(oc get subscription cluster-observability-operator -n openshift-operators -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
+        
+        if [[ "$csv_phase" == "Succeeded" ]] && [[ -n "$installed_csv" ]]; then
+            log_success "COO operator installed successfully (CSV: $installed_csv)"
             break
         fi
         sleep 5
         waited=$((waited + 5))
         if [[ $((waited % 30)) -eq 0 ]]; then
-            log_info "Still waiting for COO operator... (${waited}s, CSV phase: ${csv_phase:-none})"
+            log_info "Still waiting for COO operator... (${waited}s, CSV phase: ${csv_phase:-none}, installedCSV: ${installed_csv:-null})"
         fi
     done
     
     if [[ $waited -ge $max_wait ]]; then
         log_warn "COO operator may not be fully ready yet (waited ${max_wait}s)"
+        local final_csv=$(oc get subscription cluster-observability-operator -n openshift-operators -o jsonpath='{.status.installedCSV}' 2>/dev/null || echo "")
+        if [[ -z "$final_csv" ]]; then
+            log_warn "Subscription installedCSV is still null - there may be a resolution issue"
+            log_info "Check subscription status: oc get subscription cluster-observability-operator -n openshift-operators -o yaml"
+        fi
     fi
 }
 
@@ -710,6 +772,7 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
@@ -717,7 +780,72 @@ deploy_monitoring() {
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
+        fi
+        
+        # Install Perses datasources and dashboards for console integration
+        # Note: These must be in openshift-operators namespace to be visible in the web console
+        # The Perses instance is created automatically by UIPlugin
+        log_info "Installing Perses datasources and dashboards for console integration..."
+        if [[ -d "${project_root}/k8s/monitoring/coo/perses" ]]; then
+            # Install datasources
+            if [[ -d "${project_root}/k8s/monitoring/coo/perses/datasources" ]]; then
+                for datasource in "${project_root}"/k8s/monitoring/coo/perses/datasources/*.yaml; do
+                    if [[ -f "$datasource" ]]; then
+                        local ds_name=$(basename "$datasource" .yaml)
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            oc apply -f "$datasource" && log_success "  ✓ Installed Perses datasource: $ds_name"
+                        else
+                            if oc apply -f "$datasource" &>/dev/null; then
+                                log_success "  ✓ Installed Perses datasource: $ds_name"
+                            else
+                                log_warn "  ✗ Failed to install Perses datasource: $ds_name"
+                            fi
+                        fi
+                    fi
+                done
+            fi
+            # Install dashboards
+            if [[ -d "${project_root}/k8s/monitoring/coo/perses/dashboards" ]]; then
+                for dashboard in "${project_root}"/k8s/monitoring/coo/perses/dashboards/*.yaml; do
+                    if [[ -f "$dashboard" ]]; then
+                        local db_name=$(basename "$dashboard" .yaml)
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            oc apply -f "$dashboard" && log_success "  ✓ Installed Perses dashboard: $db_name"
+                        else
+                            if oc apply -f "$dashboard" &>/dev/null; then
+                                log_success "  ✓ Installed Perses dashboard: $db_name"
+                            else
+                                log_warn "  ✗ Failed to install Perses dashboard: $db_name"
+                            fi
+                        fi
+                    fi
+                done
+            fi
+        else
+            log_warn "Perses directory not found: ${project_root}/k8s/monitoring/coo/perses"
+        fi
+        
+        # Install COO UI plugins (for OpenShift console integration)
+        log_info "Installing COO UI plugins..."
+        if [[ -d "${project_root}/k8s/monitoring/coo/ui-plugins" ]]; then
+            for ui_plugin in "${project_root}"/k8s/monitoring/coo/ui-plugins/*.yaml; do
+                if [[ -f "$ui_plugin" ]]; then
+                    local plugin_name=$(basename "$ui_plugin" .yaml)
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        oc apply -f "$ui_plugin" && log_success "  ✓ Installed UI plugin: $plugin_name"
+                    else
+                        if oc apply -f "$ui_plugin" &>/dev/null; then
+                            log_success "  ✓ Installed UI plugin: $plugin_name"
+                        else
+                            log_warn "  ✗ Failed to install UI plugin: $plugin_name"
+                        fi
+                    fi
+                fi
+            done
+        else
+            log_warn "UI plugins directory not found: ${project_root}/k8s/monitoring/coo/ui-plugins"
         fi
         
         # Add COO monitoring labels to deployment and service for service discovery
@@ -829,10 +957,20 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             -n|--namespace)
+                if [[ $# -lt 2 ]]; then
+                    log_error "Option $1 requires a value"
+                    show_usage
+                    exit 1
+                fi
                 NAMESPACE="$2"
                 shift 2
                 ;;
             --monitoring-type)
+                if [[ $# -lt 2 ]]; then
+                    log_error "Option $1 requires a value (coo or uwm)"
+                    show_usage
+                    exit 1
+                fi
                 MONITORING_TYPE="$2"
                 shift 2
                 ;;
