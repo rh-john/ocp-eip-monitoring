@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'api_response_time_seconds'
                   seriesNameFormat: "{{operation}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=api_response_time_seconds&g0.tab=0
+            tooltip: View query in Prometheus
     api-success-rate:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'api_success_rate_percent'
                   seriesNameFormat: "{{operation}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=api_success_rate_percent&g0.tab=0
+            tooltip: View query in Prometheus
     api-calls-total:
       kind: Panel
       spec:
@@ -80,7 +86,10 @@ spec:
                     name: prometheus-coo
                   query: 'api_calls_total'
                   seriesNameFormat: "{{operation}} - {{status}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=api_calls_total&g0.tab=0
+            tooltip: View query in Prometheus
     scrape-duration:
       kind: Panel
       spec:
@@ -101,7 +110,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_scrape_duration_seconds'
                   seriesNameFormat: "Scrape Duration"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_scrape_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
     assignment-rates:
       kind: Panel
       spec:
@@ -132,7 +144,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_unassignment_rate_per_minute'
                   seriesNameFormat: "Unassignment Rate"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_assignment_rate_per_minute&g0.tab=0
+            tooltip: View query in Prometheus
     error-correlation:
       kind: Panel
       spec:
@@ -173,7 +188,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(api_calls_total{status="error"})'
                   seriesNameFormat: "API Errors"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cpic_error_total%29&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-error-duration:
       kind: Panel
       spec:
@@ -194,7 +212,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_error_duration_seconds'
                   seriesNameFormat: "{{resource_name}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_error_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-pending-duration:
       kind: Panel
       spec:
@@ -215,7 +236,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_pending_duration_seconds'
                   seriesNameFormat: "{{resource_name}}"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_pending_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -268,4 +292,3 @@ spec:
             height: 6
             content:
               $ref: "#/spec/panels/cpic-pending-duration"
-

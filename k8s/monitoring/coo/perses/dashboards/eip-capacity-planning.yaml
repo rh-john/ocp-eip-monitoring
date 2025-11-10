@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_utilization_percent'
                   seriesNameFormat: "Utilization"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_utilization_percent&g0.tab=0
+            tooltip: View query in Prometheus
     configured-vs-assigned:
       kind: Panel
       spec:
@@ -79,7 +82,10 @@ spec:
                     name: prometheus-coo
                   query: 'eips_unassigned_total'
                   seriesNameFormat: "Unassigned"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eips_configured_total&g0.tab=0
+            tooltip: View query in Prometheus
     available-nodes:
       kind: Panel
       spec:
@@ -100,7 +106,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_nodes_available_total'
                   seriesNameFormat: "Available Nodes"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_nodes_available_total&g0.tab=0
+            tooltip: View query in Prometheus
     changes-last-hour:
       kind: Panel
       spec:
@@ -121,7 +130,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_changes_last_hour'
                   seriesNameFormat: "Changes"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_changes_last_hour&g0.tab=0
+            tooltip: View query in Prometheus
     overcommitted-trend:
       kind: Panel
       spec:
@@ -142,7 +154,10 @@ spec:
                     name: prometheus-coo
                   query: 'overcommitted_eip_objects_count'
                   seriesNameFormat: "Overcommitted"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=overcommitted_eip_objects_count&g0.tab=0
+            tooltip: View query in Prometheus
     assignment-rate-trend:
       kind: Panel
       spec:
@@ -173,7 +188,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_unassignment_rate_per_minute'
                   seriesNameFormat: "Unassignment Rate"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_assignment_rate_per_minute&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -214,4 +232,3 @@ spec:
             height: 6
             content:
               $ref: "#/spec/panels/assignment-rate-trend"
-

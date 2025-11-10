@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'cluster_eip_health_score'
                   seriesNameFormat: "Health Score"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cluster_eip_health_score&g0.tab=0
+            tooltip: View query in Prometheus
     stability-score:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'cluster_eip_stability_score'
                   seriesNameFormat: "Stability Score"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cluster_eip_stability_score&g0.tab=0
+            tooltip: View query in Prometheus
     utilization:
       kind: Panel
       spec:
@@ -80,7 +86,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_utilization_percent'
                   seriesNameFormat: "Utilization"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_utilization_percent&g0.tab=0
+            tooltip: View query in Prometheus
     eip-counts:
       kind: Panel
       spec:
@@ -121,7 +130,10 @@ spec:
                     name: prometheus-coo
                   query: 'eips_unassigned_total'
                   seriesNameFormat: "Unassigned"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eips_configured_total&g0.tab=0
+            tooltip: View query in Prometheus
     critical-issues:
       kind: Panel
       spec:
@@ -142,7 +154,10 @@ spec:
                     name: prometheus-coo
                   query: 'critical_eip_objects_count'
                   seriesNameFormat: "Critical Issues"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=critical_eip_objects_count&g0.tab=0
+            tooltip: View query in Prometheus
     malfunctioning:
       kind: Panel
       spec:
@@ -163,7 +178,10 @@ spec:
                     name: prometheus-coo
                   query: 'malfunctioning_eip_objects_count'
                   seriesNameFormat: "Malfunctioning"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=malfunctioning_eip_objects_count&g0.tab=0
+            tooltip: View query in Prometheus
     mismatches:
       kind: Panel
       spec:
@@ -184,7 +202,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_cpic_mismatches_total'
                   seriesNameFormat: "Mismatches"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_total&g0.tab=0
+            tooltip: View query in Prometheus
     overcommitted:
       kind: Panel
       spec:
@@ -205,7 +226,10 @@ spec:
                     name: prometheus-coo
                   query: 'overcommitted_eip_objects_count'
                   seriesNameFormat: "Overcommitted"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=overcommitted_eip_objects_count&g0.tab=0
+            tooltip: View query in Prometheus
     assignment-rates:
       kind: Panel
       spec:
@@ -236,7 +260,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_unassignment_rate_per_minute'
                   seriesNameFormat: "Unassignment Rate"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_assignment_rate_per_minute&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -295,4 +322,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/assignment-rates"
-

@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_assigned_total'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_assigned_total&g0.tab=0
+            tooltip: View query in Prometheus
     node-eip-utilization:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_utilization_percent'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_utilization_percent&g0.tab=0
+            tooltip: View query in Prometheus
     node-eip-capacity:
       kind: Panel
       spec:
@@ -80,7 +86,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_capacity_total'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_capacity_total&g0.tab=0
+            tooltip: View query in Prometheus
     gini-coefficient:
       kind: Panel
       spec:
@@ -101,7 +110,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_distribution_gini_coefficient'
                   seriesNameFormat: "Gini Coefficient"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_gini_coefficient&g0.tab=0
+            tooltip: View query in Prometheus
     distribution-stddev:
       kind: Panel
       spec:
@@ -122,7 +134,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_distribution_stddev'
                   seriesNameFormat: "StdDev"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_stddev&g0.tab=0
+            tooltip: View query in Prometheus
     max-min-per-node:
       kind: Panel
       spec:
@@ -153,7 +168,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_min_per_node'
                   seriesNameFormat: "Min per Node"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_max_per_node&g0.tab=0
+            tooltip: View query in Prometheus
     available-nodes:
       kind: Panel
       spec:
@@ -174,7 +192,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_nodes_available_total'
                   seriesNameFormat: "Available Nodes"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_nodes_available_total&g0.tab=0
+            tooltip: View query in Prometheus
     nodes-with-errors:
       kind: Panel
       spec:
@@ -195,7 +216,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_nodes_with_errors_total'
                   seriesNameFormat: "Nodes with Errors"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_nodes_with_errors_total&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -248,4 +272,3 @@ spec:
             height: 6
             content:
               $ref: "#/spec/panels/node-eip-capacity"
-

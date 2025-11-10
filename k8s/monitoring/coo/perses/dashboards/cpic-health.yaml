@@ -58,7 +58,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_error_total'
                   seriesNameFormat: "Error"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_success_total&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-transition-rate:
       kind: Panel
       spec:
@@ -79,7 +82,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_transitions_per_minute'
                   seriesNameFormat: "Transitions/min"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_transitions_per_minute&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-pending-duration:
       kind: Panel
       spec:
@@ -100,7 +106,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_pending_duration_seconds'
                   seriesNameFormat: "{{resource_name}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_pending_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-error-duration:
       kind: Panel
       spec:
@@ -121,7 +130,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_error_duration_seconds'
                   seriesNameFormat: "{{resource_name}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_error_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
     node-cpic-status:
       kind: Panel
       spec:
@@ -162,7 +174,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_cpic_error_total'
                   seriesNameFormat: "{{node}} - Error"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_cpic_success_total&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-recoveries:
       kind: Panel
       spec:
@@ -183,7 +198,10 @@ spec:
                     name: prometheus-coo
                   query: 'cpic_recoveries_last_hour'
                   seriesNameFormat: "Recoveries"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_recoveries_last_hour&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -224,4 +242,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/node-cpic-status"
-

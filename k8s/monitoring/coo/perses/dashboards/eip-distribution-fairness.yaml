@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_distribution_gini_coefficient'
                   seriesNameFormat: "Gini Coefficient"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_gini_coefficient&g0.tab=0
+            tooltip: View query in Prometheus
     distribution-stddev:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_distribution_stddev'
                   seriesNameFormat: "StdDev"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_stddev&g0.tab=0
+            tooltip: View query in Prometheus
     max-per-node:
       kind: Panel
       spec:
@@ -80,7 +86,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_max_per_node'
                   seriesNameFormat: "Max per Node"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_max_per_node&g0.tab=0
+            tooltip: View query in Prometheus
     min-per-node:
       kind: Panel
       spec:
@@ -101,7 +110,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_min_per_node'
                   seriesNameFormat: "Min per Node"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_min_per_node&g0.tab=0
+            tooltip: View query in Prometheus
     distribution-range:
       kind: Panel
       spec:
@@ -132,7 +144,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_min_per_node'
                   seriesNameFormat: "Min"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_max_per_node&g0.tab=0
+            tooltip: View query in Prometheus
     fairness-metrics:
       kind: Panel
       spec:
@@ -163,7 +178,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_distribution_stddev'
                   seriesNameFormat: "StdDev"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_distribution_gini_coefficient&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -210,4 +228,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/fairness-metrics"
-

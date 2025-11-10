@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_assigned_total'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_assigned_total&g0.tab=0
+            tooltip: View query in Prometheus
     node-eip-utilization:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_utilization_percent'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_utilization_percent&g0.tab=0
+            tooltip: View query in Prometheus
     node-eip-capacity:
       kind: Panel
       spec:
@@ -80,7 +86,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_capacity_total'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_capacity_total&g0.tab=0
+            tooltip: View query in Prometheus
     node-cpic-status:
       kind: Panel
       spec:
@@ -121,7 +130,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_cpic_error_total'
                   seriesNameFormat: "{{node}} - Error"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_cpic_success_total&g0.tab=0
+            tooltip: View query in Prometheus
     node-capacity-vs-utilization:
       kind: Panel
       spec:
@@ -152,7 +164,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_assigned_total'
                   seriesNameFormat: "{{node}} - Assigned"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_capacity_total&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -187,4 +202,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/node-cpic-status"
-

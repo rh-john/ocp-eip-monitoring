@@ -101,6 +101,48 @@ Query plugins:
 - `PrometheusLabelNamesQuery` - for label names
 - `PrometheusLabelValuesQuery` - for label values
 
+## Inspect Links
+
+The Perses dashboards include "Inspect" links on each panel that use Prometheus queries. Clicking an "Inspect" link opens the ThanosQuerier web interface with the query pre-filled in the PromQL editor, allowing you to:
+
+- View and modify the query
+- Explore related metrics
+- Analyze the data in detail
+
+### Exposing ThanosQuerier Route
+
+The route to ThanosQuerier is created using:
+
+```bash
+oc expose svc thanos-querier-eip-monitoring-stack-querier-coo -n eip-monitoring --name=thanos-querier-coo --port=10902
+```
+
+This creates a route with edge TLS termination. The route URL format is:
+```
+https://thanos-querier-coo-<namespace>.apps.<cluster-domain>/graph
+```
+
+### Adding Inspect Links to Dashboards
+
+Inspect links are automatically added to dashboard panels using the `add-perses-inspect-links.sh` script:
+
+```bash
+./scripts/add-perses-inspect-links.sh
+```
+
+This script:
+- Finds all panels with Prometheus queries
+- Extracts the first query from each panel
+- Adds an "Inspect" link that opens ThanosQuerier with the query pre-filled
+
+### Troubleshooting
+
+If the route has TLS handshake issues, you can use port-forward as an alternative:
+```bash
+oc port-forward -n eip-monitoring svc/thanos-querier-eip-monitoring-stack-querier-coo 10902:10902
+```
+Then update the inspect links to use `http://localhost:10902/graph` instead.
+
 ## References
 
 - [Perses Documentation](https://perses.dev)

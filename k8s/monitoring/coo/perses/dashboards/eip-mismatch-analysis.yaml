@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_cpic_mismatches_total'
                   seriesNameFormat: "Total Mismatches"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_total&g0.tab=0
+            tooltip: View query in Prometheus
     node-mismatches:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_cpic_mismatches_node_mismatch'
                   seriesNameFormat: "Node Mismatches"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_node_mismatch&g0.tab=0
+            tooltip: View query in Prometheus
     missing-in-eip:
       kind: Panel
       spec:
@@ -80,7 +86,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_cpic_mismatches_missing_in_eip'
                   seriesNameFormat: "Missing in EIP"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_missing_in_eip&g0.tab=0
+            tooltip: View query in Prometheus
     mismatch-percentage:
       kind: Panel
       spec:
@@ -101,7 +110,10 @@ spec:
                     name: prometheus-coo
                   query: '(eip_cpic_mismatches_total / eips_configured_total) * 100'
                   seriesNameFormat: "Mismatch %"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=%28eip_cpic_mismatches_total%20%2f%20eips_configured_total%29%20%2a%20100&g0.tab=0
+            tooltip: View query in Prometheus
     mismatch-breakdown:
       kind: Panel
       spec:
@@ -142,7 +154,10 @@ spec:
                     name: prometheus-coo
                   query: 'eip_cpic_mismatches_missing_in_eip'
                   seriesNameFormat: "Missing in EIP"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_cpic_mismatches_total&g0.tab=0
+            tooltip: View query in Prometheus
     malfunctioning-resources:
       kind: Panel
       spec:
@@ -163,7 +178,10 @@ spec:
                     name: prometheus-coo
                   query: 'malfunctioning_eip_objects_count'
                   seriesNameFormat: "Malfunctioning"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=malfunctioning_eip_objects_count&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -204,4 +222,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/mismatch-breakdown"
-

@@ -27,6 +27,10 @@ spec:
         plugin:
           kind: TimeSeriesChart
           spec: {}
+        links:
+          - title: "Inspect"
+            url: "https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=kube_node_status_condition{condition%3D%22Ready%22,status%3D%22false%22}%20*%20on(node)%20kube_node_labels{label_k8s_ovn_org_egress_assignable%3D%22true%22}&g0.tab=0"
+            tooltip: "Inspect query in Prometheus"
         queries:
           - kind: TimeSeriesQuery
             spec:
@@ -68,7 +72,6 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_unassigned_total'
                   seriesNameFormat: "EIPs Unassigned - {{node}}"
-    
     cpic-events-vs-node-status:
       kind: Panel
       spec:
@@ -119,7 +122,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(kube_node_status_condition{condition="Ready",status="false"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
                   seriesNameFormat: "Nodes NotReady"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cpic_success_total%29&g0.tab=0
+            tooltip: View query in Prometheus
     node-reboot-detection:
       kind: Panel
       spec:
@@ -160,7 +166,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_boot_time_seconds * on(instance) group_left(node) kube_node_info{label_k8s_ovn_org_egress_assignable="true"}'
                   seriesNameFormat: "Boot Time - {{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=changes%28kube_node_status_condition%7bcondition%3d%22Ready%22%2cstatus%3d%22false%22%7d%5b5m%5d%29%20%3e%200&g0.tab=0
+            tooltip: View query in Prometheus
     eip-assignment-vs-node-changes:
       kind: Panel
       spec:
@@ -201,7 +210,10 @@ spec:
                     name: prometheus-coo
                   query: 'count(changes(kube_node_status_condition{condition="Ready"}[5m]) > 0)'
                   seriesNameFormat: "Node Status Changes"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_assignment_rate_per_minute&g0.tab=0
+            tooltip: View query in Prometheus
     cpic-error-vs-node-conditions:
       kind: Panel
       spec:
@@ -252,7 +264,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(kube_node_status_condition{condition="NetworkUnavailable",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
                   seriesNameFormat: "Network Unavailable"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cpic_error_total%29&g0.tab=0
+            tooltip: View query in Prometheus
     ovn-network-events:
       kind: Panel
       spec:
@@ -303,7 +318,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(cluster_operator_conditions{name="network",condition="Available"} == 0)'
                   seriesNameFormat: "OVN Unavailable"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cluster_operator_conditions%7bname%3d%22network%22%2ccondition%3d%22Available%22%7d%20%3d%3d%201%29&g0.tab=0
+            tooltip: View query in Prometheus
     cncc-events:
       kind: Panel
       spec:
@@ -354,7 +372,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Upgradeable"} == 0)'
                   seriesNameFormat: "CNCC Not Upgradeable"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cluster_operator_conditions%7bname%3d%22cloud-controller-manager%22%2ccondition%3d%22Available%22%7d%20%3d%3d%201%29&g0.tab=0
+            tooltip: View query in Prometheus
     ovn-status:
       kind: Panel
       spec:
@@ -375,7 +396,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(cluster_operator_conditions{name="network",condition="Degraded"} == 1) * 10'
                   seriesNameFormat: "OVN Degraded (x10)"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cluster_operator_conditions%7bname%3d%22network%22%2ccondition%3d%22Degraded%22%7d%20%3d%3d%201%29%20%2a%2010&g0.tab=0
+            tooltip: View query in Prometheus
     cncc-status:
       kind: Panel
       spec:
@@ -396,7 +420,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Degraded"} == 1) * 10'
                   seriesNameFormat: "CNCC Degraded (x10)"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cluster_operator_conditions%7bname%3d%22cloud-controller-manager%22%2ccondition%3d%22Degraded%22%7d%20%3d%3d%201%29%20%2a%2010&g0.tab=0
+            tooltip: View query in Prometheus
     node-status-summary:
       kind: Panel
       spec:
@@ -417,7 +444,10 @@ spec:
                     name: prometheus-coo
                   query: 'count(kube_node_status_condition{condition="Ready",status="true"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
                   seriesNameFormat: "Ready Nodes"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=count%28kube_node_status_condition%7bcondition%3d%22Ready%22%2cstatus%3d%22true%22%7d%20%2a%20on%28node%29%20kube_node_labels%7blabel_k8s_ovn_org_egress_assignable%3d%22true%22%7d%29&g0.tab=0
+            tooltip: View query in Prometheus
     not-ready-nodes:
       kind: Panel
       spec:
@@ -438,7 +468,10 @@ spec:
                     name: prometheus-coo
                   query: 'count(kube_node_status_condition{condition="Ready",status="false"} * on(node) kube_node_labels{label_k8s_ovn_org_egress_assignable="true"})'
                   seriesNameFormat: "Not Ready Nodes"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=count%28kube_node_status_condition%7bcondition%3d%22Ready%22%2cstatus%3d%22false%22%7d%20%2a%20on%28node%29%20kube_node_labels%7blabel_k8s_ovn_org_egress_assignable%3d%22true%22%7d%29&g0.tab=0
+            tooltip: View query in Prometheus
     ovn-available-status:
       kind: Panel
       spec:
@@ -459,7 +492,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(cluster_operator_conditions{name="network",condition="Available"} == 1)'
                   seriesNameFormat: "OVN Available"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cluster_operator_conditions%7bname%3d%22network%22%2ccondition%3d%22Available%22%7d%20%3d%3d%201%29&g0.tab=0
+            tooltip: View query in Prometheus
     cncc-available-status:
       kind: Panel
       spec:
@@ -480,7 +516,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(cluster_operator_conditions{name="cloud-controller-manager",condition="Available"} == 1)'
                   seriesNameFormat: "CNCC Available"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cluster_operator_conditions%7bname%3d%22cloud-controller-manager%22%2ccondition%3d%22Available%22%7d%20%3d%3d%201%29&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:

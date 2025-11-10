@@ -38,7 +38,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_primary_total'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_primary_total&g0.tab=0
+            tooltip: View query in Prometheus
     secondary-by-node:
       kind: Panel
       spec:
@@ -59,7 +62,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_secondary_total'
                   seriesNameFormat: "{{node}}"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_secondary_total&g0.tab=0
+            tooltip: View query in Prometheus
     primary-vs-secondary:
       kind: Panel
       spec:
@@ -90,7 +96,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(node_eip_secondary_total)'
                   seriesNameFormat: "Secondary Total"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28node_eip_primary_total%29&g0.tab=0
+            tooltip: View query in Prometheus
     primary-secondary-ratio:
       kind: Panel
       spec:
@@ -111,7 +120,10 @@ spec:
                     name: prometheus-coo
                   query: 'sum(node_eip_primary_total) / sum(node_eip_secondary_total)'
                   seriesNameFormat: "Primary/Secondary Ratio"
-    
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28node_eip_primary_total%29%20%2f%20sum%28node_eip_secondary_total%29&g0.tab=0
+            tooltip: View query in Prometheus
     node-primary-secondary:
       kind: Panel
       spec:
@@ -142,7 +154,10 @@ spec:
                     name: prometheus-coo
                   query: 'node_eip_secondary_total'
                   seriesNameFormat: "{{node}} - Secondary"
-  
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=node_eip_primary_total&g0.tab=0
+            tooltip: View query in Prometheus
   layouts:
     - kind: Grid
       spec:
@@ -177,4 +192,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/node-primary-secondary"
-
