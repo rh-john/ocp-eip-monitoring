@@ -37,11 +37,7 @@ cleanup() {
         
         log_info "Removing Grafana resources..."
         # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC and operator)
-<<<<<<< Updated upstream
-        # Note: Grafana CRDs are cluster-wide and not deleted (they're managed by the operator)
-=======
         # Note: Grafana CRDs are cluster-wide and only deleted if --delete-crds is specified
->>>>>>> Stashed changes
         if [[ -f "${project_root}/scripts/deploy-grafana.sh" ]]; then
             if [[ "$DELETE_CRDS" == "true" ]]; then
                 log_info "CRD deletion enabled (requires cluster-admin permissions)"
