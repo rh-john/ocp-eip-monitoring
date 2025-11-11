@@ -214,78 +214,82 @@ except:
         fi
     fi
     
-    # For COO, prefer querying via ThanosQuerier route (cleaner, no exec needed)
-    # Fallback to ThanosQuerier pod, then Prometheus pod
+    # For COO, prefer querying via ThanosQuerier pod (consistent with verify-prometheus-metrics.sh pattern)
+    # Fallback to Prometheus pod if ThanosQuerier not available
     local query_pod=""
-    local query_url=""
     local query_port="9090"
-    local use_route=false
     
-    # Try to use ThanosQuerier route first (preferred - cleaner, no exec needed)
-    local thanos_route=$(oc get route thanos-querier-coo -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
-    if [[ -n "$thanos_route" ]]; then
-        query_url="https://${thanos_route}"
-        query_port=""
-        use_route=true
-        log_info "Using ThanosQuerier route for metrics query: $query_url"
-    else
-        # Fallback to ThanosQuerier pod
-        local thanos_pod=""
-        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-        if [[ -z "$thanos_pod" ]]; then
-            thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-        fi
-        
-        if [[ -n "$thanos_pod" ]]; then
-            local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            if [[ "$thanos_phase" == "Running" ]]; then
-                query_pod="$thanos_pod"
-                query_port="10902"  # ThanosQuerier uses port 10902
-                log_info "Using ThanosQuerier pod for metrics query: $thanos_pod"
-            fi
-        fi
-        
-        # Fallback to Prometheus pod if ThanosQuerier not available
-        if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
-            query_pod="$prom_pod"
-            query_port="9090"
-            log_info "Using Prometheus pod for metrics query: $prom_pod"
+    # Try to find ThanosQuerier pod first (preferred for COO)
+    local thanos_pod=""
+    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    if [[ -z "$thanos_pod" ]]; then
+        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    fi
+    
+    if [[ -n "$thanos_pod" ]]; then
+        local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [[ "$thanos_phase" == "Running" ]]; then
+            query_pod="$thanos_pod"
+            query_port="10902"  # ThanosQuerier uses port 10902
+            log_info "Using ThanosQuerier pod for metrics query: $thanos_pod"
         fi
     fi
     
-    if [[ -n "$query_url" ]] || [[ -n "$query_pod" ]]; then
+    # Fallback to Prometheus pod if ThanosQuerier not available
+    if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
+        query_pod="$prom_pod"
+        query_port="9090"
+        log_info "Using Prometheus pod for metrics query: $prom_pod"
+    fi
+    
+    if [[ -n "$query_pod" ]]; then
         # Wait a bit longer for scraping to start (COO Prometheus may need more time)
         log_info "Waiting for metrics to be scraped (this may take a few minutes)..."
         sleep 60  # Increased from 30s to 60s for COO
         
-        # Query for eip_ metrics
-        local metrics_count="0"
-        if [[ "$use_route" == "true" ]]; then
-            # Use route with curl (handles TLS automatically)
-            metrics_count=$(curl -sk "${query_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
-                python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('data', {}).get('result', [{}])[0].get('value', [0, '0'])[1])" 2>/dev/null || echo "0")
-        else
-            # Use pod exec
-            metrics_count=$(oc exec -n "$NAMESPACE" "$query_pod" -- wget -qO- "http://localhost:${query_port}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
-                python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('data', {}).get('result', [{}])[0].get('value', [0, '0'])[1])" 2>/dev/null || echo "0")
-        fi
+        # URL encode the query (following verify-prometheus-metrics.sh pattern)
+        local encoded_query=$(echo "count({__name__=~\"eip_.*\"})" | jq -sRr @uri)
+        local query_url="http://localhost:${query_port}/api/v1/query?query=${encoded_query}"
         
-        if [[ "$metrics_count" != "0" ]] && [[ -n "$metrics_count" ]]; then
-            log_success "Found $metrics_count eip_* metrics"
-            ((TESTS_PASSED++)) || true
-        else
-            log_warn "No eip_* metrics found yet (may still be initializing)"
-            log_info "This is normal if Prometheus was just deployed - scraping may take a few minutes"
-            if [[ "$use_route" == "true" ]]; then
-                log_info "Check ThanosQuerier metrics: curl -sk ${query_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})"
-                log_info "Note: ThanosQuerier doesn't expose /api/v1/targets - use Prometheus directly for targets"
-            elif [[ -n "$prom_pod" ]]; then
-                log_info "Check Prometheus targets: oc exec -n $NAMESPACE $prom_pod -- wget -qO- http://localhost:9090/api/v1/targets | grep eip-monitor"
+        # Query for eip_ metrics using oc exec with curl (consistent with verify-prometheus-metrics.sh)
+        local metrics_result=$(oc exec -n "$NAMESPACE" "$query_pod" -- curl -s "$query_url" 2>/dev/null || echo "")
+        
+        if [[ -n "$metrics_result" ]]; then
+            # Check if response is valid JSON and has success status
+            if echo "$metrics_result" | jq . >/dev/null 2>&1; then
+                local status=$(echo "$metrics_result" | jq -r '.status' 2>/dev/null || echo "error")
+                if [[ "$status" == "success" ]]; then
+                    local metrics_count=$(echo "$metrics_result" | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+                    if [[ "$metrics_count" != "0" ]] && [[ -n "$metrics_count" ]] && [[ "$metrics_count" != "null" ]]; then
+                        log_success "Found $metrics_count eip_* metrics"
+                        ((TESTS_PASSED++)) || true
+                    else
+                        log_warn "No eip_* metrics found yet (may still be initializing)"
+                        log_info "This is normal if Prometheus was just deployed - scraping may take a few minutes"
+                        log_info "Check Prometheus targets: oc exec -n $NAMESPACE $prom_pod -- curl -s http://localhost:9090/api/v1/targets | grep eip-monitor"
+                        ((TESTS_WARNED++)) || true
+                    fi
+                else
+                    local error_msg=$(echo "$metrics_result" | jq -r '.error' 2>/dev/null || echo "Unknown error")
+                    log_warn "Query returned error: $error_msg"
+                    ((TESTS_WARNED++)) || true
+                fi
+            else
+                log_warn "Invalid JSON response from metrics API"
+                log_info "Response preview: $(echo "$metrics_result" | head -c 200)"
+                ((TESTS_WARNED++)) || true
             fi
-            ((TESTS_WARNED++)) || true
+        else
+            log_error "Failed to query metrics API"
+            log_info "Troubleshooting:"
+            log_info "  1. Check pod status: oc get pod $query_pod -n $NAMESPACE"
+            log_info "  2. Check pod logs: oc logs $query_pod -n $NAMESPACE --tail=50"
+            log_info "  3. Try direct query: oc exec -n $NAMESPACE $query_pod -- curl -s $query_url"
+            ((TESTS_FAILED++)) || true
+            EXIT_CODE=1
         fi
     else
-        log_error "Neither ThanosQuerier route/pod nor Prometheus pod found"
+        log_error "Neither ThanosQuerier nor Prometheus pod found"
         log_info "Available pods in namespace:"
         oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | head -10 | sed 's/^/  /' || true
         ((TESTS_FAILED++)) || true
