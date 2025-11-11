@@ -104,7 +104,7 @@ This document analyzes the effects of refactoring duplicate pod-finding and help
    - **Prometheus finding:** Inline code
    - **Estimated LOC reduction:** ~10 lines
 
-8. **`scripts/build-and-deploy.sh`**
+8. **`scripts/deploy-eip.sh`**
    - **Prometheus finding:** Inline code (lines 1409-1418)
    - **Estimated LOC reduction:** ~10 lines
 
@@ -227,7 +227,7 @@ This document analyzes the effects of refactoring duplicate pod-finding and help
 7. `scripts/diagnose-uwm-metrics.sh`
 
 #### Phase 3: Low Priority (Future)
-8. `scripts/build-and-deploy.sh`
+8. `scripts/deploy-eip.sh`
 9. Other scripts as needed
 
 ### 5.2 Migration Steps Per File
