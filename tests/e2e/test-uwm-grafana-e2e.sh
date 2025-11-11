@@ -325,43 +325,46 @@ test_grafana_deployment() {
     
     # Step 4: Wait for Grafana instance pod
     log_test "Step 4: Waiting for Grafana instance pod..."
-    # Grafana Operator creates pods - try multiple selectors in order of reliability
-    # The instance name is "eip-monitoring-grafana", so pods typically have "grafana" in the name
-    # Try selectors: managed-by operator (most reliable), then app.kubernetes.io/name, then by name pattern
+    # Grafana Operator creates a Deployment for the Grafana instance
+    # The deployment name is typically based on the instance name: eip-monitoring-grafana-deployment
+    # Try multiple approaches: deployment selector, common labels, then name pattern
     local grafana_timeout=120  # 2 minutes for Grafana pod to start
-    if wait_for_pods "$NAMESPACE" "app.kubernetes.io/managed-by=grafana-operator" 1 "$grafana_timeout"; then
+    
+    # First try: use deployment name pattern (most reliable for Grafana Operator)
+    log_info "Checking for Grafana deployment pods..."
+    local waited=0
+    local grafana_pod_found=false
+    while [[ $waited -lt $grafana_timeout ]]; do
+        # Check for pods from the Grafana deployment (deployment name pattern)
+        local grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E "grafana.*deployment" | grep -v operator | head -1 || echo "")
+        if [[ -n "$grafana_pod" ]]; then
+            local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$pod_phase" == "Running" ]]; then
+                grafana_pod_found=true
+                log_success "Found Grafana pod: $grafana_pod"
+                break
+            fi
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [[ $((waited % 30)) -eq 0 ]]; then
+            log_info "Still waiting for Grafana pod... (${waited}s)"
+        fi
+    done
+    
+    if [[ "$grafana_pod_found" == "true" ]]; then
+        ((TESTS_PASSED++)) || true
+    elif wait_for_pods "$NAMESPACE" "app.kubernetes.io/managed-by=grafana-operator" 1 "$grafana_timeout"; then
         ((TESTS_PASSED++)) || true
     elif wait_for_pods "$NAMESPACE" "app.kubernetes.io/name=grafana" 1 "$grafana_timeout"; then
         ((TESTS_PASSED++)) || true
     else
-        # Fallback: check for pods with "grafana" in the name (Grafana Operator typically uses instance name)
-        log_info "Trying to find Grafana pod by name pattern..."
-        local waited=0
-        local grafana_pod_found=false
-        while [[ $waited -lt $grafana_timeout ]]; do
-            local grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i grafana | grep -v operator | head -1 || echo "")
-            if [[ -n "$grafana_pod" ]]; then
-                local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-                if [[ "$pod_phase" == "Running" ]]; then
-                    grafana_pod_found=true
-                    break
-                fi
-            fi
-            sleep 5
-            waited=$((waited + 5))
-        done
-        
-        if [[ "$grafana_pod_found" == "true" ]]; then
-            log_success "Found Grafana pod by name pattern"
-            ((TESTS_PASSED++)) || true
-        else
-            log_warn "Grafana pod not found with any standard selectors"
-            log_info "Checking Grafana instance status..."
-            oc get grafana -n "$NAMESPACE" -o yaml 2>&1 | grep -A 10 "status:" || true
-            log_info "Checking all pods in namespace..."
-            oc get pods -n "$NAMESPACE" 2>&1 || true
-            ((TESTS_WARNED++)) || true
-        fi
+        log_warn "Grafana pod not found with any standard selectors"
+        log_info "Checking Grafana instance status..."
+        oc get grafana -n "$NAMESPACE" -o yaml 2>&1 | grep -A 10 "status:" || true
+        log_info "Checking all pods in namespace..."
+        oc get pods -n "$NAMESPACE" 2>&1 || true
+        ((TESTS_WARNED++)) || true
     fi
     
     # Step 5: Verify Grafana instance (redundant check, but confirms it's still there)
@@ -484,13 +487,17 @@ test_grafana_dashboards() {
     
     # Step 3: Verify Grafana can access dashboards
     log_test "Step 3: Verifying Grafana can access dashboards..."
-    # Try multiple label selectors for Grafana pod (in order of reliability)
-    local grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=grafana-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    # Try multiple approaches to find Grafana pod (in order of reliability)
+    # Grafana Operator creates pods with name pattern: eip-monitoring-grafana-deployment-*
+    local grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E "grafana.*deployment" | grep -v operator | head -1 || echo "")
+    if [[ -z "$grafana_pod" ]]; then
+        grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=grafana-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    fi
     if [[ -z "$grafana_pod" ]]; then
         grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
     fi
     if [[ -z "$grafana_pod" ]]; then
-        # Fallback: find by name pattern
+        # Final fallback: find by name pattern (any grafana pod except operator)
         grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i grafana | grep -v operator | head -1 || echo "")
     fi
     
