@@ -8,9 +8,10 @@ set -euo pipefail
 
 # Configuration
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
-MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
+MONITORING_TYPE="${MONITORING_TYPE:-}"  # No default - must be explicitly specified
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 VERBOSE="${VERBOSE:-false}"
+DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete COO CRDs during cleanup (requires cluster-admin)
 
 # Colors for output
 RED='\033[0;31m'
@@ -63,28 +64,32 @@ Usage: $0 [options]
 
 Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
-  --monitoring-type TYPE    Monitoring type: coo or uwm (default: uwm)
-  --remove-monitoring       Remove monitoring infrastructure
+  --monitoring-type TYPE    Monitoring type: coo, uwm, or all (required for deployment)
+  --all                     Deploy both COO and UWM monitoring (same as --monitoring-type all)
+  --remove-monitoring [TYPE] Remove monitoring infrastructure (TYPE: coo, uwm, or all - required)
+  --delete-crds              Delete COO CRDs during cleanup (requires cluster-admin, only for COO removal)
   -v, --verbose            Show verbose output (raw oc command output)
   -h, --help               Show this help message
 
 Environment Variables:
   NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
-  MONITORING_TYPE           Monitoring type: coo or uwm (default: uwm)
+  MONITORING_TYPE           Monitoring type: coo or uwm (required)
   REMOVE_MONITORING         Set to true to remove monitoring (default: false)
   VERBOSE                   Set to true to show verbose output (default: false)
 
 Examples:
   $0 --monitoring-type uwm
   $0 --monitoring-type coo -n my-namespace
-  $0 --remove-monitoring
+  $0 --monitoring-type all              # Deploy both COO and UWM
+  $0 --all                               # Deploy both COO and UWM
+  $0 --remove-monitoring coo
+  $0 --remove-monitoring --monitoring-type uwm
+  $0 --remove-monitoring all
   $0 --remove-monitoring --verbose
+  $0 --remove-monitoring coo --delete-crds  # Also delete COO CRDs (requires cluster-admin)
 
-Note: To deploy both COO and UWM simultaneously:
-  1. Deploy COO: $0 --monitoring-type coo
-  2. Deploy UWM: $0 --monitoring-type uwm
-  3. Apply combined NetworkPolicy: oc apply -f k8s/monitoring/networkpolicy-combined.yaml
-     (This replaces the individual NetworkPolicies to avoid conflicts)
+Note: The combined NetworkPolicy (eip-monitor-combined) is always applied,
+      which supports both COO and UWM monitoring simultaneously.
 
 EOF
 }
@@ -648,11 +653,49 @@ verify_federation() {
         return 1
     fi
     
+    # Check prerequisites before verifying federation
+    local token_secret_name="eip-monitoring-stack-prometheus-token"
+    local service_account="eip-monitoring-stack-prometheus"
+    
+    # Check if token secret exists
+    if ! oc get secret "$token_secret_name" -n "$NAMESPACE" &>/dev/null; then
+        log_error "Federation token secret '$token_secret_name' not found!"
+        log_info "Attempting to create federation token..."
+        setup_federation_token || {
+            log_error "Failed to create federation token. Federation will not work."
+            log_info "To fix manually:"
+            log_info "  1. Ensure service account exists: oc get sa $service_account -n $NAMESPACE"
+            log_info "  2. Create token: oc create token $service_account -n $NAMESPACE --duration=8760h"
+            log_info "  3. Create secret: oc create secret generic $token_secret_name -n $NAMESPACE --from-literal=token=<token>"
+            log_info "  4. Restart Prometheus pods: oc delete pods -n $NAMESPACE -l app.kubernetes.io/name=prometheus"
+            return 1
+        }
+    fi
+    
+    # Check if RBAC is applied
+    if ! oc get clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null; then
+        log_warn "Federation RBAC ClusterRoleBinding not found!"
+        log_info "Applying federation RBAC..."
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local project_root="$(dirname "$script_dir")"
+        local rbac_file="${project_root}/k8s/monitoring/coo/rbac/prometheus-federation-rbac.yaml"
+        if [[ -f "$rbac_file" ]]; then
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc apply -f "$rbac_file" || log_warn "Failed to apply federation RBAC"
+            else
+                oc apply -f "$rbac_file" &>/dev/null || log_warn "Failed to apply federation RBAC"
+            fi
+        else
+            log_warn "Federation RBAC file not found: $rbac_file"
+        fi
+    fi
+    
     # Check federation target health
     log_info "Checking federation target health..."
     local max_retries=12
     local retry=0
     local federation_healthy=false
+    local auth_error_count=0
     
     while [[ $retry -lt $max_retries ]]; do
         local targets_json
@@ -670,7 +713,7 @@ try:
     if fed_targets:
         health = fed_targets[0].get('health', 'unknown')
         error = fed_targets[0].get('lastError', '')
-        print(f'{health}|{error[:100]}')
+        print(f'{health}|{error[:200]}')
     else:
         print('not_found|')
 except:
@@ -686,7 +729,27 @@ except:
                 break
             elif [[ "$health" == "down" ]]; then
                 if [[ -n "$error" ]]; then
-                    log_warn "Federation target is down: $error"
+                    # Check for authentication errors
+                    if echo "$error" | grep -qiE "401|unauthorized|authentication|forbidden"; then
+                        auth_error_count=$((auth_error_count + 1))
+                        if [[ $auth_error_count -ge 3 ]]; then
+                            log_error "Federation authentication failed (401 Unauthorized) - persistent auth issue detected"
+                            log_info "Diagnostics:"
+                            log_info "  1. Check token secret exists: oc get secret $token_secret_name -n $NAMESPACE"
+                            log_info "  2. Check token is valid: oc get secret $token_secret_name -n $NAMESPACE -o jsonpath='{.data.token}' | base64 -d | wc -c"
+                            log_info "  3. Check RBAC is applied: oc get clusterrolebinding eip-monitoring-stack-prometheus-federation"
+                            log_info "  4. Check service account: oc get sa $service_account -n $NAMESPACE"
+                            log_info "  5. Recreate token: oc create token $service_account -n $NAMESPACE --duration=8760h"
+                            log_info "  6. Update secret: oc create secret generic $token_secret_name -n $NAMESPACE --from-literal=token=<new-token> --dry-run=client -o yaml | oc apply -f -"
+                            log_info "  7. Restart Prometheus pods to pick up new token: oc delete pods -n $NAMESPACE -l app.kubernetes.io/name=prometheus"
+                            return 1
+                        else
+                            log_warn "Federation target is down: $error"
+                            log_info "Authentication error detected (attempt $auth_error_count/3). Will retry..."
+                        fi
+                    else
+                        log_warn "Federation target is down: $error"
+                    fi
                 else
                     log_warn "Federation target is down (checking again...)"
                 fi
@@ -726,7 +789,11 @@ except:
         fi
     else
         log_warn "Federation target verification failed after $max_retries retries"
-        log_warn "Federation may still be initializing, or there may be a configuration issue"
+        if [[ $auth_error_count -ge 3 ]]; then
+            log_error "Persistent authentication errors detected. Please fix authentication issues before retrying."
+        else
+            log_warn "Federation may still be initializing, or there may be a configuration issue"
+        fi
         log_warn "You can check federation status with: oc exec -n $NAMESPACE $prometheus_pod -- curl -s http://localhost:9090/api/v1/targets | grep -i federation"
         return 1
     fi
@@ -825,7 +892,105 @@ remove_coo_monitoring() {
         oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
     fi
     
-    # Delete COO operator subscription
+    # Delete ThanosQuerier
+    if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO ThanosQuerier..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" || true
+        else
+            oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" 2>/dev/null || true
+        fi
+    fi
+    
+    # Delete ThanosQuerier Route
+    if oc get route thanos-querier-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO ThanosQuerier route..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete route thanos-querier-coo -n "$NAMESPACE" || true
+        else
+            oc delete route thanos-querier-coo -n "$NAMESPACE" 2>/dev/null || true
+        fi
+    fi
+    
+    # Delete ScrapeConfig (federation)
+    if oc get scrapeconfig platform-monitoring-federation -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO federation ScrapeConfig..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete scrapeconfig platform-monitoring-federation -n "$NAMESPACE" || true
+        else
+            oc delete scrapeconfig platform-monitoring-federation -n "$NAMESPACE" 2>/dev/null || true
+        fi
+    fi
+    
+    # Delete AlertmanagerConfig
+    # COO uses monitoring.rhobs API group
+    if oc get alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO AlertmanagerConfig..."
+        # Delete all AlertmanagerConfigs in namespace (COO typically has one)
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" --all || true
+        else
+            oc delete alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" --all 2>/dev/null || true
+        fi
+    fi
+    # Also check standard API group as fallback
+    if oc get alertmanagerconfig -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting AlertmanagerConfig (standard API group)..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete alertmanagerconfig -n "$NAMESPACE" --all || true
+        else
+            oc delete alertmanagerconfig -n "$NAMESPACE" --all 2>/dev/null || true
+        fi
+    fi
+    
+    # Delete federation token secret if it exists
+    if oc get secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting federation token secret..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" || true
+        else
+            oc delete secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" 2>/dev/null || true
+        fi
+    fi
+    
+    # Delete federation RBAC ClusterRoleBinding
+    if oc get clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null; then
+        log_info "Deleting federation RBAC ClusterRoleBinding..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation || true
+        else
+            oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null || true
+        fi
+    fi
+    
+    # Remove individual NetworkPolicies (if they exist)
+    log_info "Removing individual NetworkPolicies..."
+    oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+    
+    # Delete combined NetworkPolicy only if no monitoring resources remain
+    if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
+        # Check if any monitoring resources still exist
+        local has_monitoring_resources=false
+        if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            has_monitoring_resources=true
+        fi
+        
+        if [[ "$has_monitoring_resources" == "false" ]]; then
+            log_info "Deleting combined NetworkPolicy (no monitoring resources remaining)..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" || true
+            else
+                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null || true
+            fi
+        else
+            log_info "Keeping combined NetworkPolicy (monitoring resources still exist)..."
+        fi
+    fi
+    
+    # Delete COO operator subscription (after all resources are deleted)
     if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
         log_info "Deleting COO operator subscription..."
         if [[ "$VERBOSE" == "true" ]]; then
@@ -833,28 +998,99 @@ remove_coo_monitoring() {
         else
             oc delete subscription cluster-observability-operator -n openshift-operators &>/dev/null || log_warn "Failed to delete COO operator subscription"
         fi
+        
+        # Wait a bit for operator to clean up CSVs automatically
+        log_info "Waiting for operator to clean up CSVs (if supported)..."
+        sleep 10
     fi
     
-    # Delete ThanosQuerier
-    if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO ThanosQuerier..."
-        oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" 2>/dev/null || true
-    fi
+    # Delete orphaned CSVs (CSVs not owned by a subscription)
+    # Orphaned CSVs can block new installations
+    log_info "Checking for orphaned COO CSVs..."
+    local csv_list=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | "\(.metadata.name)|\(if .metadata.ownerReferences then (.metadata.ownerReferences[0].kind // "none") else "none" end)"' 2>/dev/null || echo "")
     
-    # Check if combined NetworkPolicy exists and handle it
-    # Only delete combined NetworkPolicy if UWM is not also deployed
-    if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
-        # Check if UWM resources still exist
-        if ! oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
-            log_info "Deleting combined NetworkPolicy (UWM not detected)..."
-            if [[ "$VERBOSE" == "true" ]]; then
-                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" || true
-            else
-                oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null || true
+    if [[ -n "$csv_list" ]]; then
+        echo "$csv_list" | while IFS='|' read -r csv_name csv_owner; do
+            if [[ "$csv_owner" == "none" ]] || [[ -z "$csv_owner" ]]; then
+                log_warn "Found orphaned CSV: $csv_name (not owned by subscription)"
+                log_info "Deleting orphaned CSV: $csv_name..."
+                
+                # Remove finalizers first if they exist (CSVs can get stuck with finalizers)
+                local finalizers=$(oc get csv "$csv_name" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+                if [[ -n "$finalizers" ]]; then
+                    log_info "Removing finalizers from CSV: $csv_name..."
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge || log_warn "Failed to remove finalizers from CSV: $csv_name"
+                    else
+                        oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || log_warn "Failed to remove finalizers from CSV: $csv_name"
+                    fi
+                    sleep 2
+                fi
+                
+                # Delete the CSV
+                if [[ "$VERBOSE" == "true" ]]; then
+                    oc delete csv "$csv_name" -n openshift-operators || log_warn "Failed to delete CSV: $csv_name"
+                else
+                    oc delete csv "$csv_name" -n openshift-operators &>/dev/null || log_warn "Failed to delete CSV: $csv_name"
+                fi
             fi
-        else
-            log_info "Keeping combined NetworkPolicy (UWM still deployed)..."
-        fi
+        done
+    fi
+    
+    # Also check for any CSVs that might be stuck (have deletionTimestamp but not deleted)
+    local stuck_csvs=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | select(.metadata.deletionTimestamp != null) | .metadata.name' 2>/dev/null || echo "")
+    if [[ -n "$stuck_csvs" ]]; then
+        log_warn "Found CSVs stuck in deletion:"
+        echo "$stuck_csvs" | while read -r csv_name; do
+            log_info "  - $csv_name"
+            # Remove finalizers to allow deletion
+            log_info "Removing finalizers from stuck CSV: $csv_name..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge || true
+            else
+                oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || true
+            fi
+        done
+    fi
+    
+    # Wait a bit for operator to clean up CRDs automatically
+    log_info "Waiting for operator to clean up CRDs (if supported)..."
+    sleep 5
+    
+    # Optionally delete COO CRDs if they still exist (requires cluster-admin)
+    # Note: CRDs are typically cleaned up by the operator, but may remain if operator cleanup fails
+    # CRDs must be deleted AFTER all resources using them are deleted
+    if [[ "${DELETE_CRDS:-false}" == "true" ]]; then
+        log_info "Deleting COO CRDs (requires cluster-admin permissions)..."
+        local coo_crds=(
+            "monitoringstacks.monitoring.rhobs"
+            "thanosqueriers.monitoring.rhobs"
+            "alertmanagerconfigs.monitoring.rhobs"
+            "scrapeconfigs.monitoring.rhobs"
+            "alertmanagers.monitoring.rhobs"
+            "podmonitors.monitoring.rhobs"
+            "probes.monitoring.rhobs"
+            "prometheusagents.monitoring.rhobs"
+            "prometheuses.monitoring.rhobs"
+            "prometheusrules.monitoring.rhobs"
+            "servicemonitors.monitoring.rhobs"
+            "thanosrulers.monitoring.rhobs"
+        )
+        
+        for crd in "${coo_crds[@]}"; do
+            if oc get crd "$crd" &>/dev/null; then
+                log_info "Deleting CRD: $crd..."
+                if [[ "$VERBOSE" == "true" ]]; then
+                    oc delete crd "$crd" || log_warn "Failed to delete CRD: $crd (may require cluster-admin or CRD may be in use)"
+                else
+                    oc delete crd "$crd" &>/dev/null || log_warn "Failed to delete CRD: $crd (may require cluster-admin or CRD may be in use)"
+                fi
+            fi
+        done
+    else
+        log_info "COO CRDs will not be deleted (operator should clean them up automatically)"
+        log_info "To force CRD deletion, use: $0 --remove-monitoring coo --delete-crds"
+        log_info "Note: CRD deletion requires cluster-admin permissions"
     fi
     
     log_success "COO monitoring infrastructure removed"
@@ -939,19 +1175,30 @@ remove_uwm_monitoring() {
         oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring &>/dev/null || true
     fi
     
-    # Check if combined NetworkPolicy exists and handle it
-    # Only delete combined NetworkPolicy if COO is not also deployed
+    # Remove individual NetworkPolicies (if they exist)
+    log_info "Removing individual NetworkPolicies..."
+    oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+    
+    # Delete combined NetworkPolicy only if no monitoring resources remain
     if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
-        # Check if COO resources still exist
-        if ! oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
-            log_info "Deleting combined NetworkPolicy (COO not detected)..."
+        # Check if any monitoring resources still exist
+        local has_monitoring_resources=false
+        if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            has_monitoring_resources=true
+        fi
+        
+        if [[ "$has_monitoring_resources" == "false" ]]; then
+            log_info "Deleting combined NetworkPolicy (no monitoring resources remaining)..."
             if [[ "$VERBOSE" == "true" ]]; then
                 oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" || true
             else
                 oc delete networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null || true
             fi
         else
-            log_info "Keeping combined NetworkPolicy (COO still deployed)..."
+            log_info "Keeping combined NetworkPolicy (monitoring resources still exist)..."
         fi
     fi
     
@@ -968,40 +1215,85 @@ deploy_monitoring() {
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     
-    # Validate monitoring type
-    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]]; then
-        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo' or 'uwm'"
-        exit 1
-    fi
-    
-    # Detect current monitoring type
-    local current_type=$(detect_current_monitoring_type)
-    
     # If removing monitoring
     if [[ "$REMOVE_MONITORING" == "true" ]]; then
-        if [[ "$current_type" == "none" ]]; then
-            log_warn "No monitoring infrastructure detected to remove"
-            return 0
+        # Require explicit monitoring type specification - no defaults or auto-detection
+        if [[ -z "$MONITORING_TYPE" ]]; then
+            log_error "Monitoring type must be explicitly specified when removing"
+            log_error "Use: --remove-monitoring --monitoring-type <coo|uwm|all>"
+            log_error "Or:  --remove-monitoring <coo|uwm|all>"
+            exit 1
         fi
         
-        if [[ "$current_type" == "coo" ]]; then
+        # Validate monitoring type
+        if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]] && [[ "$MONITORING_TYPE" != "all" ]]; then
+            log_error "Invalid monitoring type: $MONITORING_TYPE"
+            log_error "Must be 'coo', 'uwm', or 'all'"
+            exit 1
+        fi
+        
+        # Remove the specified type(s)
+        if [[ "$MONITORING_TYPE" == "coo" ]]; then
+            log_info "Removing COO monitoring..."
             remove_coo_monitoring
-        elif [[ "$current_type" == "uwm" ]]; then
+        elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+            log_info "Removing UWM monitoring..."
+            remove_uwm_monitoring
+        elif [[ "$MONITORING_TYPE" == "all" ]]; then
+            log_info "Removing all monitoring (COO and UWM)..."
+            remove_coo_monitoring
             remove_uwm_monitoring
         fi
         return 0
     fi
     
-    # If switching types, remove current first
-    if [[ "$current_type" != "none" ]] && [[ "$current_type" != "$MONITORING_TYPE" ]]; then
+    # Validate monitoring type for deployment
+    if [[ -z "$MONITORING_TYPE" ]]; then
+        log_error "Monitoring type must be specified"
+        log_error "Use: --monitoring-type <coo|uwm|all> or --all"
+        exit 1
+    fi
+    
+    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]] && [[ "$MONITORING_TYPE" != "all" ]]; then
+        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo', 'uwm', or 'all'"
+        exit 1
+    fi
+    
+    # Handle "all" - deploy both COO and UWM
+    if [[ "$MONITORING_TYPE" == "all" ]]; then
+        log_info "Deploying both COO and UWM monitoring..."
+        echo ""
+        
+        # Deploy COO first
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "Deploying COO monitoring..."
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        local original_monitoring_type="$MONITORING_TYPE"
+        MONITORING_TYPE="coo"
+        deploy_monitoring
+        
+        # Deploy UWM second
+        log_info ""
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "Deploying UWM monitoring..."
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        MONITORING_TYPE="uwm"
+        deploy_monitoring
+        
+        # Restore original type for final summary
+        MONITORING_TYPE="$original_monitoring_type"
+        
+        log_success "Both COO and UWM monitoring are now installed!"
+        return 0
+    fi
+    
+    # Detect current monitoring type for deployment logic
+    local current_type=$(detect_current_monitoring_type)
+    
+    # If switching types, remove current first (but allow coexistence)
+    if [[ "$current_type" != "none" ]] && [[ "$current_type" != "$MONITORING_TYPE" ]] && [[ "$current_type" != "both" ]]; then
         log_warn "Detected $current_type monitoring, but requested $MONITORING_TYPE"
-        log_info "Removing existing $current_type monitoring before installing $MONITORING_TYPE..."
-        if [[ "$current_type" == "coo" ]]; then
-            remove_coo_monitoring
-        elif [[ "$current_type" == "uwm" ]]; then
-            remove_uwm_monitoring
-        fi
-        sleep 10  # Wait a bit before installing new type
+        log_info "Installing $MONITORING_TYPE alongside $current_type (both will coexist)..."
     fi
     
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1021,18 +1313,27 @@ deploy_monitoring() {
         if [[ "$VERBOSE" == "true" ]]; then
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/coo/rbac/grafana-rbac-coo.yaml" 2>/dev/null
         fi
+        
+        # Always apply combined NetworkPolicy (works for both COO and UWM)
+        log_info "Applying combined NetworkPolicy (supports both COO and UWM)..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
+        else
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>/dev/null
+        fi
+        
+        # Remove individual NetworkPolicies if they exist (to avoid conflicts)
+        log_info "Removing individual NetworkPolicies (if present) to avoid conflicts..."
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
         
         # Deploy Route for ThanosQuerier (for Inspect links in Perses dashboards)
         log_info "Deploying ThanosQuerier route..."
@@ -1050,6 +1351,21 @@ deploy_monitoring() {
         local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
         if [[ -f "$scrapeconfig_file" ]]; then
             log_info "Applying federation ScrapeConfig..."
+            
+            # Apply federation RBAC first (required for authentication)
+            local rbac_file="${project_root}/k8s/monitoring/coo/rbac/prometheus-federation-rbac.yaml"
+            if [[ -f "$rbac_file" ]]; then
+                log_info "Applying federation RBAC..."
+                if [[ "$VERBOSE" == "true" ]]; then
+                    oc apply -f "$rbac_file" || log_warn "Failed to apply federation RBAC"
+                else
+                    oc apply -f "$rbac_file" &>/dev/null || log_warn "Failed to apply federation RBAC"
+                fi
+            else
+                log_warn "Federation RBAC file not found: $rbac_file"
+                log_warn "Federation may fail without proper RBAC permissions"
+            fi
+            
             if [[ "$VERBOSE" == "true" ]]; then
                 oc apply -f "$scrapeconfig_file"
             else
@@ -1227,12 +1543,23 @@ deploy_monitoring() {
         if [[ "$VERBOSE" == "true" ]]; then
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null
         fi
+        
+        # Always apply combined NetworkPolicy (works for both COO and UWM)
+        log_info "Applying combined NetworkPolicy (supports both COO and UWM)..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
+        else
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>/dev/null
+        fi
+        
+        # Remove individual NetworkPolicies if they exist (to avoid conflicts)
+        log_info "Removing individual NetworkPolicies (if present) to avoid conflicts..."
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
         
         # Add UWM monitoring labels to deployment and service for service discovery
         log_info "Adding UWM monitoring labels to eip-monitor deployment and service..."
@@ -1299,15 +1626,32 @@ parse_args() {
                 ;;
             --monitoring-type)
                 if [[ $# -lt 2 ]]; then
-                    log_error "Option $1 requires a value (coo or uwm)"
+                    log_error "Option $1 requires a value (coo, uwm, or all)"
                     show_usage
                     exit 1
                 fi
-                MONITORING_TYPE="$2"
+                if [[ "$2" == "all" ]]; then
+                    MONITORING_TYPE="all"
+                else
+                    MONITORING_TYPE="$2"
+                fi
                 shift 2
+                ;;
+            --all)
+                MONITORING_TYPE="all"
+                shift
                 ;;
             --remove-monitoring)
                 REMOVE_MONITORING="true"
+                shift
+                # Check if next argument is a monitoring type (coo, uwm, or all) - allow positional syntax
+                if [[ $# -gt 0 ]] && [[ "$1" == "coo" || "$1" == "uwm" || "$1" == "all" ]]; then
+                    MONITORING_TYPE="$1"
+                    shift
+                fi
+                ;;
+            --delete-crds)
+                DELETE_CRDS="true"
                 shift
                 ;;
             -v|--verbose)
