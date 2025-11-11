@@ -266,10 +266,10 @@ Deploy this comprehensive monitoring solution:
 
 ```bash
 # Automated deployment with registry
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+./scripts/deploy-eip.sh all -r quay.io/your-registry
 
 # Or for manifest updates only (keeps existing image)
-./scripts/build-and-deploy.sh deploy
+./scripts/deploy-eip.sh deploy
 
 # Create test EgressIPs for monitoring validation  
 ./scripts/deploy-test-eips.sh deploy

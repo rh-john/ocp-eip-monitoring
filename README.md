@@ -12,7 +12,7 @@ A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CP
 
 ```bash
 # Build and deploy
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+./scripts/deploy-eip.sh all -r quay.io/your-registry
 
 # Or deploy with existing image
 oc apply -f k8s/deployment/k8s-manifests.yaml
@@ -139,7 +139,7 @@ EOF
 ```bash
 git clone https://github.com/rh-john/ocp-eip-monitoring.git
 cd ocp-eip-monitoring
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+./scripts/deploy-eip.sh all -r quay.io/your-registry
 ```
 
 ### Method 2: Deploy with Pre-built Image
@@ -278,7 +278,7 @@ ocp-eip-monitoring/
 │   ├── monitoring/                # Monitoring infrastructure (COO/UWM)
 │   └── grafana/                   # Grafana dashboards and configuration
 ├── scripts/                       # Operational scripts
-│   ├── build-and-deploy.sh        # Build and deployment
+│   ├── deploy-eip.sh              # Build and deployment
 │   ├── deploy-monitoring.sh       # Deploy monitoring infrastructure (COO/UWM)
 │   ├── deploy-grafana.sh          # Deploy Grafana operator and dashboards
 │   ├── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution

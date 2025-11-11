@@ -17,7 +17,7 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 - **Testing**: Integration tests run here
 
 ### `eip-monitor`
-- **Purpose**: EIP monitoring tool development (src/ directory, k8s-manifests.yaml, build-and-deploy.sh)
+- **Purpose**: EIP monitoring tool development (src/ directory, k8s-manifests.yaml, deploy-eip.sh)
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
 - **Scope**: Core application code, deployment manifests, build scripts

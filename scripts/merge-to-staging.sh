@@ -67,7 +67,7 @@ Options:
   --help, -h         Show this help message
 
 Feature Branches:
-  - eip-monitor  (EIP monitoring tool: src/, k8s-manifests.yaml, build-and-deploy.sh)
+  - eip-monitor  (EIP monitoring tool: src/, k8s-manifests.yaml, deploy-eip.sh)
   - dev          (General development and integration work)
   - grafana      (Grafana dashboards and deployment)
   - monitoring   (COO monitoring infrastructure)
