@@ -98,14 +98,14 @@ Deploy Grafana operator, instance, and dashboards.
 
 ## Testing Scripts
 
-### `test-monitoring-deployment.sh`
+### `test/test-monitoring-deployment.sh`
 
 Comprehensive monitoring deployment verification.
 
 **Usage:**
 ```bash
 # Test COO deployment
-./scripts/test-monitoring-deployment.sh --monitoring-type coo
+./scripts/test/test-monitoring-deployment.sh --monitoring-type coo
 
 # Test UWM deployment
 ./scripts/test-monitoring-deployment.sh --monitoring-type uwm
