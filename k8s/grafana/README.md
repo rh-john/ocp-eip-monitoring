@@ -1,6 +1,6 @@
 # Grafana Dashboards for EIP Monitoring
 
-This directory contains comprehensive Grafana dashboards for visualizing EgressIP (EIP) monitoring data in OpenShift clusters.
+This directory contains Grafana dashboards for visualizing EgressIP (EIP) monitoring data in OpenShift clusters.
 
 ## Dashboard Screenshots
 
@@ -34,7 +34,7 @@ Screenshots can be added by deploying the dashboards, taking screenshots, and pl
 **File:** `grafana-dashboard.yaml`
 
 **Description:**  
-The primary dashboard providing a comprehensive overview of EIP monitoring metrics. Displays key statistics, trends, and status information.
+The primary dashboard providing an overview of EIP monitoring metrics. Displays key statistics, trends, and status information.
 
 **Key Panels:**
 - EIP Overview (Configured, Assigned, Unassigned counts)
@@ -57,7 +57,7 @@ The primary dashboard providing a comprehensive overview of EIP monitoring metri
 **File:** `grafana-dashboard-eip-distribution.yaml`
 
 **Description:**  
-Advanced heatmap and distribution analysis showing how EIPs are distributed across nodes and over time.
+Heatmap and distribution analysis showing how EIPs are distributed across nodes and over time.
 
 **Key Panels:**
 - EIP Distribution Heatmap by Node
@@ -168,13 +168,13 @@ Cluster-wide health overview with aggregated metrics and system status.
 
 ---
 
-### Advanced Plugin Dashboards
+### Plugin Dashboards
 
 #### 7. State Visualization Dashboard
 **File:** `grafana-dashboard-state-visualization.yaml`
 
 **Description:**  
-Advanced state visualization using discrete panels and state timeline to show EIP assignment states over time.
+State visualization using discrete panels and state timeline to show EIP assignment states over time.
 
 **Key Panels:**
 - EIP Assignment States Over Time (Discrete Panel)
@@ -202,7 +202,7 @@ Advanced state visualization using discrete panels and state timeline to show EI
 **File:** `grafana-dashboard-enhanced-tables.yaml`
 
 **Description:**  
-Advanced table visualizations with multi-level thresholds, color coding, and enhanced data presentation.
+Table visualizations with multi-level thresholds, color coding, and enhanced data presentation.
 
 **Key Panels:**
 - EIP Assignment Table with Thresholds
@@ -257,7 +257,7 @@ Visual architecture diagrams showing EIP assignment flow, node topology, and sys
 **File:** `grafana-dashboard-custom-gauges.yaml`
 
 **Description:**  
-Custom gauge visualizations for key metrics with advanced threshold configuration and visual styling.
+Custom gauge visualizations for key metrics with threshold configuration and visual styling.
 
 **Key Panels:**
 - Overall EIP Utilization Gauge
@@ -287,7 +287,7 @@ Custom gauge visualizations for key metrics with advanced threshold configuratio
 **File:** `grafana-dashboard-timeline-events.yaml`
 
 **Description:**  
-Comprehensive timeline and event visualization for tracking EIP assignment events and state changes.
+Timeline and event visualization for tracking EIP assignment events and state changes.
 
 **Key Panels:**
 - EIP Assignment Timeline (State Timeline)
@@ -317,7 +317,7 @@ Comprehensive timeline and event visualization for tracking EIP assignment event
 **File:** `grafana-dashboard-node-health-grid.yaml`
 
 **Description:**  
-Comprehensive node health status grid with detailed metrics and visual indicators.
+Node health status grid with detailed metrics and visual indicators.
 
 **Key Panels:**
 - Node Health Status Grid (Table)
@@ -345,7 +345,7 @@ Comprehensive node health status grid with detailed metrics and visual indicator
 **File:** `grafana-dashboard-network-topology.yaml`
 
 **Description:**  
-Interactive network topology visualization showing node relationships, EIP distribution, and network structure.
+Network topology visualization showing node relationships, EIP distribution, and network structure.
 
 **Key Panels:**
 - Node Network Graph (Interactive)
@@ -498,7 +498,7 @@ All dashboards use built-in Grafana panels that work out of the box:
 
 ## Optional Community Plugins
 
-For even more advanced visualizations, you can install these community plugins:
+For additional visualizations, you can install these community plugins:
 
 ### Recommended Plugins
 
@@ -511,7 +511,7 @@ For even more advanced visualizations, you can install these community plugins:
    - Install: `grafana-cli plugins install yesoreyeram-boomtable-panel`
 
 3. **FlowCharting** (`grafana-flowcharting-panel`)
-   - Advanced diagramming with draw.io
+   - Diagramming with draw.io
    - Install: `grafana-cli plugins install agenty-flowcharting-panel`
 
 4. **D3 Gauge** (`grafana-d3-gauge-panel`)
