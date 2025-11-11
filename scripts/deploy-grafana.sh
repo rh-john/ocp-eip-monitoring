@@ -11,6 +11,7 @@ NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-}"
 REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
 REMOVE_OPERATOR="${REMOVE_OPERATOR:-false}"
+DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete Grafana CRDs during cleanup (requires cluster-admin)
 
 # Colors for output
 RED='\033[0;31m'
@@ -49,6 +50,7 @@ Options:
   -r, --remove              Remove Grafana resources (dashboards, datasources, instances, RBAC)
   --remove-operator         Also remove Grafana Operator subscription (requires --remove)
   --all                     Remove all Grafana resources including operator (equivalent to --remove --remove-operator)
+  --delete-crds             Delete Grafana CRDs during cleanup (requires cluster-admin, only with --remove-operator or --all)
   -h, --help               Show this help message
 
 Environment Variables:
@@ -56,6 +58,7 @@ Environment Variables:
   MONITORING_TYPE           Monitoring type: coo or uwm (required for deployment)
   REMOVE_GRAFANA            Set to 'true' to remove Grafana resources
   REMOVE_OPERATOR           Set to 'true' to also remove Grafana Operator subscription
+  DELETE_CRDS               Set to 'true' to delete Grafana CRDs (requires cluster-admin)
 
 Examples:
   # Deploy Grafana for COO
@@ -72,6 +75,9 @@ Examples:
   
   # Remove everything (Grafana resources and operator)
   $0 --all --monitoring-type coo
+  
+  # Remove everything including CRDs (for E2E tests, requires cluster-admin)
+  $0 --all --monitoring-type uwm --delete-crds
 
 EOF
 }
@@ -105,6 +111,10 @@ check_prerequisites() {
 deploy_grafana() {
     log_info "Deploying Grafana for EIP monitoring..."
     
+    # Calculate project root once at the beginning of the function
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
     # Ensure namespace exists first
     if ! oc get namespace "$NAMESPACE" &>/dev/null; then
         log_warn "Namespace '$NAMESPACE' not found, creating it..."
@@ -125,12 +135,51 @@ deploy_grafana() {
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
-        local operator_file="k8s/grafana/grafana-operator.yaml"
+        
+        # Check for multiple OperatorGroups (this prevents subscription resolution)
+        local operatorgroup_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [[ "$operatorgroup_count" -gt 1 ]]; then
+            log_warn "Multiple OperatorGroups found in namespace $NAMESPACE (this prevents operator installation)"
+            log_info "Checking for duplicate OperatorGroups..."
+            local operatorgroups=$(oc get operatorgroup -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+            log_info "Found OperatorGroups: $operatorgroups"
+            
+            # Check which OperatorGroup has the MultipleOperatorGroup condition
+            local duplicate_og=""
+            for og in $operatorgroups; do
+                local condition=$(oc get operatorgroup "$og" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="MultipleOperatorGroup")].status}' 2>/dev/null || echo "")
+                if [[ "$condition" == "True" ]]; then
+                    # Check if this is NOT the one we're about to create
+                    if [[ "$og" != "eip-monitoring-operatorgroup" ]]; then
+                        duplicate_og="$og"
+                        log_warn "Found duplicate OperatorGroup: $og (will be deleted)"
+                        break
+                    fi
+                fi
+            done
+            
+            # Delete duplicate OperatorGroups (keep eip-monitoring-operatorgroup if it exists)
+            if [[ -n "$duplicate_og" ]]; then
+                log_info "Deleting duplicate OperatorGroup: $duplicate_og"
+                oc delete operatorgroup "$duplicate_og" -n "$NAMESPACE" 2>/dev/null || true
+                log_success "Deleted duplicate OperatorGroup"
+                sleep 3  # Wait for OLM to reconcile
+            else
+                # If we can't identify which one to delete, warn and try to proceed
+                log_warn "Could not identify which OperatorGroup to delete"
+                log_info "You may need to manually delete duplicate OperatorGroups:"
+                log_info "  oc get operatorgroup -n $NAMESPACE"
+                log_info "  oc delete operatorgroup <duplicate-name> -n $NAMESPACE"
+            fi
+        fi
+        
+        local operator_file="${project_root}/k8s/grafana/grafana-operator.yaml"
         if [[ ! -f "$operator_file" ]]; then
             log_error "Grafana operator file not found: $operator_file"
             log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
             return 1
         fi
+        
         if oc apply -f "$operator_file" &>/dev/null; then
             log_success "Grafana Operator subscription and OperatorGroup created"
             log_info "Waiting for Grafana Operator to be installed (this may take a few minutes)..."
@@ -139,25 +188,80 @@ deploy_grafana() {
             local max_wait=300
             local waited=0
             while [[ $waited -lt $max_wait ]]; do
-                namespace_csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
-                if [[ "$namespace_csv_phase" == "Succeeded" ]]; then
+                local csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
+                
+                # Check subscription status for better diagnostics
+                local subscription_state=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+                local current_csv=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.currentCSV}' 2>/dev/null || echo "")
+                local installplan_pending=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="InstallPlanPending")].status}' 2>/dev/null || echo "")
+                
+                if [[ "$csv_phase" == "Succeeded" ]]; then
                     log_success "Grafana Operator installed successfully (CSV phase: Succeeded)"
                     break
                 elif oc get crd grafanas.integreatly.org &>/dev/null; then
                     log_success "Grafana Operator CRD available"
                     break
                 fi
+                
                 sleep 5
                 waited=$((waited + 5))
                 if [[ $((waited % 30)) -eq 0 ]]; then
-                    log_info "Still waiting for Grafana Operator... (${waited}s, CSV phase: ${namespace_csv_phase:-none})"
+                    local status_info="CSV phase: ${csv_phase:-none}"
+                    if [[ -n "$subscription_state" ]]; then
+                        status_info="$status_info, Subscription state: $subscription_state"
+                    fi
+                    if [[ -n "$current_csv" ]]; then
+                        status_info="$status_info, CSV: $current_csv"
+                    fi
+                    if [[ "$installplan_pending" == "True" ]]; then
+                        status_info="$status_info, InstallPlan pending"
+                    fi
+                    log_info "Still waiting for Grafana Operator... (${waited}s, $status_info)"
+                    
+                    # If CSV phase is still "none" after 60s, check for common issues
+                    if [[ $waited -ge 60 ]] && ([[ -z "$csv_phase" ]] || [[ "$csv_phase" == "none" ]]); then
+                        # Check for multiple OperatorGroups again
+                        local og_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+                        if [[ "$og_count" -gt 1 ]]; then
+                            log_warn "Multiple OperatorGroups still detected - this prevents CSV creation"
+                            log_info "Run: oc get operatorgroup -n $NAMESPACE"
+                            log_info "Delete duplicates: oc delete operatorgroup <name> -n $NAMESPACE"
+                        fi
+                        
+                        # Check InstallPlan status
+                        local installplan=$(oc get installplan -n "$NAMESPACE" --no-headers 2>/dev/null | head -1 || echo "")
+                        if [[ -z "$installplan" ]]; then
+                            log_warn "No InstallPlan found - subscription may not be resolving"
+                            log_info "Check subscription: oc get subscription grafana-operator -n $NAMESPACE -o yaml"
+                        fi
+                    fi
                 fi
             done
             
             if [[ $waited -ge $max_wait ]]; then
                 log_warn "Grafana Operator may not be fully ready yet (waited ${max_wait}s)"
-                log_info "Current CSV phase: ${namespace_csv_phase:-unknown}"
+                log_info "Current CSV phase: ${csv_phase:-unknown}"
+                
+                # Provide diagnostic information
+                local final_state=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+                local final_csv=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.currentCSV}' 2>/dev/null || echo "")
+                if [[ -n "$final_state" ]]; then
+                    log_info "Subscription state: $final_state"
+                fi
+                if [[ -n "$final_csv" ]]; then
+                    log_info "Expected CSV: $final_csv"
+                fi
+                
+                # Check for common issues
+                local og_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+                if [[ "$og_count" -gt 1 ]]; then
+                    log_error "Multiple OperatorGroups detected - this prevents operator installation"
+                    log_info "Fix: oc get operatorgroup -n $NAMESPACE"
+                    log_info "Delete duplicates: oc delete operatorgroup <name> -n $NAMESPACE"
+                fi
+                
                 log_info "It may take several minutes to fully install"
+                log_info "Check status: oc get csv,installplan,subscription -n $NAMESPACE"
             fi
         else
             log_error "Failed to install Grafana Operator"
@@ -182,8 +286,6 @@ deploy_grafana() {
     fi
     
     # Determine RBAC and datasource files based on monitoring type
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
     local rbac_file=""
     local datasource_file=""
     local service_account_name=""
@@ -250,7 +352,7 @@ deploy_grafana() {
     
     # Deploy Grafana Instance FIRST (DataSource and Dashboards depend on it via instanceSelector)
     log_info "Deploying Grafana Instance..."
-    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
+    local instance_output=$(oc apply -f "${project_root}/k8s/grafana/grafana-instance.yaml" 2>&1)
     local instance_exit=$?
     if [[ $instance_exit -eq 0 ]]; then
         log_success "Grafana Instance deployed"
@@ -293,23 +395,23 @@ deploy_grafana() {
     log_info "Deploying Grafana Dashboards..."
     local dashboard_files=(
         # Original dashboards
-        "k8s/grafana/dashboards/grafana-dashboard.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
         # Event correlation dashboard (node/cluster metrics with EIP metrics)
-        "k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
         # New advanced plugin dashboards
-        "k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
     )
     
     local dashboards_deployed=0
@@ -366,45 +468,58 @@ remove_grafana() {
     
     # Delete Grafana resources in correct dependency order
     # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
-    log_info "Deleting GrafanaDashboards..."
-    oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Wait a moment for dashboards to start deletion
-    sleep 2
-    
-    log_info "Deleting GrafanaDataSources..."
-    oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Wait a moment for datasources to start deletion
-    sleep 2
-    
-    log_info "Deleting Grafana Instances..."
-    oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Force delete if finalizers are blocking (common issue with Grafana CRDs)
-    log_info "Checking for resources stuck with finalizers..."
-    local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_dashboards" ]]; then
-        log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
-        echo "$stuck_dashboards" | while read -r name; do
-            oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
+    # Check if CRDs exist before attempting deletion (operator may not be installed)
+    if oc get crd grafanadashboards.integreatly.org &>/dev/null; then
+        log_info "Deleting GrafanaDashboards..."
+        oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
+        
+        # Wait a moment for dashboards to start deletion
+        sleep 2
+        
+        # Force delete if finalizers are blocking (common issue with Grafana CRDs)
+        log_info "Checking for resources stuck with finalizers..."
+        local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+        if [[ -n "$stuck_dashboards" ]]; then
+            log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
+            echo "$stuck_dashboards" | while read -r name; do
+                oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            done
+        fi
+    else
+        log_info "GrafanaDashboards CRD not found (operator not installed), skipping dashboard cleanup"
     fi
     
-    local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_datasources" ]]; then
-        log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
-        echo "$stuck_datasources" | while read -r name; do
-            oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
+    if oc get crd grafanadatasources.integreatly.org &>/dev/null; then
+        log_info "Deleting GrafanaDataSources..."
+        oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
+        
+        # Wait a moment for datasources to start deletion
+        sleep 2
+        
+        local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+        if [[ -n "$stuck_datasources" ]]; then
+            log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
+            echo "$stuck_datasources" | while read -r name; do
+                oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            done
+        fi
+    else
+        log_info "GrafanaDataSources CRD not found (operator not installed), skipping datasource cleanup"
     fi
     
-    local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_instances" ]]; then
-        log_warn "Found Grafana Instances with finalizers, removing finalizers..."
-        echo "$stuck_instances" | while read -r name; do
-            oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
+    if oc get crd grafanas.integreatly.org &>/dev/null; then
+        log_info "Deleting Grafana Instances..."
+        oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
+        
+        local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+        if [[ -n "$stuck_instances" ]]; then
+            log_warn "Found Grafana Instances with finalizers, removing finalizers..."
+            echo "$stuck_instances" | while read -r name; do
+                oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            done
+        fi
+    else
+        log_info "Grafana CRD not found (operator not installed), skipping instance cleanup"
     fi
     
     # Wait a moment for finalizer removal to take effect
@@ -576,6 +691,94 @@ remove_grafana_operator() {
         oc delete pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana-operator --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found|Warning: Immediate deletion)" || true
     fi
     
+    # Optionally delete Grafana CRDs if they still exist (requires cluster-admin)
+    # Note: CRDs are typically cleaned up by the operator, but may remain if operator cleanup fails
+    # CRDs must be deleted AFTER all resources using them are deleted and operator is removed
+    if [[ "${DELETE_CRDS:-false}" == "true" ]]; then
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "Deleting Grafana CRDs (requires cluster-admin permissions)..."
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Wait longer to ensure all resources are fully deleted before attempting CRD deletion
+        log_info "Waiting for all Grafana resources to be fully deleted..."
+        sleep 10
+        
+        # Verify no resources are still using the CRDs
+        log_info "Verifying no resources are using Grafana CRDs..."
+        local resources_remaining=false
+        for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
+            if oc get "$crd_type" --all-namespaces --no-headers 2>/dev/null | grep -v "^$" >/dev/null; then
+                log_warn "Found remaining $crd_type resources, waiting for deletion..."
+                resources_remaining=true
+            fi
+        done
+        
+        if [[ "$resources_remaining" == "true" ]]; then
+            log_info "Waiting additional 15 seconds for resource cleanup..."
+            sleep 15
+        fi
+        
+        local grafana_crds=(
+            "grafanas.integreatly.org"
+            "grafanadashboards.integreatly.org"
+            "grafanadatasources.integreatly.org"
+        )
+        
+        local crds_deleted=0
+        local crds_failed=0
+        
+        for crd in "${grafana_crds[@]}"; do
+            if oc get crd "$crd" &>/dev/null; then
+                log_info "Deleting CRD: $crd..."
+                
+                # Check if CRD has finalizers and remove them first
+                local crd_finalizers=$(oc get crd "$crd" -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+                if [[ -n "$crd_finalizers" ]]; then
+                    log_info "  Removing finalizers from CRD $crd..."
+                    oc patch crd "$crd" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || {
+                        log_warn "  Failed to remove finalizers from CRD $crd"
+                    }
+                    sleep 2
+                fi
+                
+                local delete_output=$(oc delete crd "$crd" 2>&1)
+                local delete_exit=$?
+                
+                if [[ $delete_exit -eq 0 ]]; then
+                    log_success "  ✓ CRD $crd deleted successfully"
+                    ((crds_deleted++)) || true
+                else
+                    # Check if error is just "not found" (already deleted)
+                    if echo "$delete_output" | grep -qE "(not found|No resources found)"; then
+                        log_info "  ℹ CRD $crd not found (may have been already deleted)"
+                    else
+                        log_error "  ✗ Failed to delete CRD: $crd"
+                        echo "$delete_output" | sed 's/^/    /'
+                        log_warn "    This may require cluster-admin permissions or CRD may be in use"
+                        log_info "    Attempting force delete..."
+                        oc delete crd "$crd" --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found)" || {
+                            log_warn "    Force delete also failed for CRD: $crd"
+                            ((crds_failed++)) || true
+                        }
+                    fi
+                fi
+            else
+                log_info "  ℹ CRD $crd not found (may have been already deleted)"
+            fi
+        done
+        
+        if [[ $crds_failed -eq 0 ]]; then
+            log_success "Grafana CRD deletion completed (${crds_deleted} CRD(s) deleted)"
+        else
+            log_warn "Grafana CRD deletion completed with ${crds_failed} failure(s) (${crds_deleted} CRD(s) deleted)"
+            log_warn "Failed CRDs may require cluster-admin permissions or may be in use by other resources"
+        fi
+    else
+        log_info "Grafana CRDs will not be deleted (operator should clean them up automatically)"
+        log_info "To force CRD deletion, use: $0 --all --monitoring-type <coo|uwm> --delete-crds"
+        log_info "Note: CRD deletion requires cluster-admin permissions"
+    fi
+    
     log_success "Grafana Operator removal completed"
     echo ""
 }
@@ -598,6 +801,10 @@ parse_args() {
                 ;;
             --remove-operator)
                 REMOVE_OPERATOR="true"
+                shift
+                ;;
+            --delete-crds)
+                DELETE_CRDS="true"
                 shift
                 ;;
             --all)
@@ -625,10 +832,18 @@ main() {
     check_prerequisites
     
     log_info "Connected to OpenShift as: $(oc whoami)"
-    log_info "Deploying to namespace: $NAMESPACE"
+    log_info "Namespace: $NAMESPACE"
     
     # Handle removal
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then
+        # Validate --delete-crds is only used with --remove-operator or --all
+        if [[ "$DELETE_CRDS" == "true" ]] && [[ "$REMOVE_OPERATOR" != "true" ]]; then
+            log_error "--delete-crds requires --remove-operator or --all"
+            log_error "CRDs can only be deleted when the operator is removed"
+            show_usage
+            exit 1
+        fi
+        
         # Monitoring type is helpful for RBAC cleanup but not strictly required
         if [[ -z "$MONITORING_TYPE" ]]; then
             log_warn "Monitoring type not specified for removal"

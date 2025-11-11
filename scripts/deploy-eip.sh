@@ -146,17 +146,17 @@ check_prerequisites() {
 calculate_source_hash() {
     local current_hash
     
-    # Calculate hash of source files only
+    # Calculate hash of source files only (from project root)
     if command -v sha256sum &>/dev/null; then
-        current_hash=$(find src/ -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
+        current_hash=$(find "$PROJECT_ROOT/src/" -type f 2>/dev/null | sort | xargs sha256sum 2>/dev/null | sha256sum | cut -d' ' -f1)
     elif command -v shasum &>/dev/null; then
-        current_hash=$(find src/ -type f 2>/dev/null | sort | xargs shasum -a 256 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
+        current_hash=$(find "$PROJECT_ROOT/src/" -type f 2>/dev/null | sort | xargs shasum -a 256 2>/dev/null | shasum -a 256 | cut -d' ' -f1)
     else
         # Fallback: use file modification times (works on both macOS and Linux)
         if [[ "$(uname)" == "Darwin" ]]; then
-            current_hash=$(find src/ -type f 2>/dev/null -exec stat -f "%m %N" {} \; 2>/dev/null | sort | shasum -a 256 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+            current_hash=$(find "$PROJECT_ROOT/src/" -type f 2>/dev/null -exec stat -f "%m %N" {} \; 2>/dev/null | sort | shasum -a 256 2>/dev/null | cut -d' ' -f1 || echo "unknown")
         else
-            current_hash=$(find src/ -type f 2>/dev/null -exec stat -c "%Y %n" {} \; 2>/dev/null | sort | sha256sum 2>/dev/null | cut -d' ' -f1 || echo "unknown")
+            current_hash=$(find "$PROJECT_ROOT/src/" -type f 2>/dev/null -exec stat -c "%Y %n" {} \; 2>/dev/null | sort | sha256sum 2>/dev/null | cut -d' ' -f1 || echo "unknown")
         fi
     fi
     
@@ -167,11 +167,11 @@ calculate_source_hash() {
 calculate_dockerfile_hash() {
     local current_hash
     
-    if [[ -f "Dockerfile" ]]; then
+    if [[ -f "$PROJECT_ROOT/Dockerfile" ]]; then
         if command -v sha256sum &>/dev/null; then
-            current_hash=$(sha256sum Dockerfile 2>/dev/null | cut -d' ' -f1)
+            current_hash=$(sha256sum "$PROJECT_ROOT/Dockerfile" 2>/dev/null | cut -d' ' -f1)
         elif command -v shasum &>/dev/null; then
-            current_hash=$(shasum -a 256 Dockerfile 2>/dev/null | cut -d' ' -f1)
+            current_hash=$(shasum -a 256 "$PROJECT_ROOT/Dockerfile" 2>/dev/null | cut -d' ' -f1)
         else
             current_hash="unknown"
         fi
@@ -184,7 +184,7 @@ calculate_dockerfile_hash() {
 
 # Check if source files have changed since last build
 has_source_changed() {
-    local hash_file=".build-hash-source-${IMAGE_TAG:-latest}"
+    local hash_file="$PROJECT_ROOT/.build-hash-source-${IMAGE_TAG:-latest}"
     local current_hash=$(calculate_source_hash)
     local last_hash=""
     
@@ -201,7 +201,7 @@ has_source_changed() {
 
 # Check if Dockerfile has changed since last build
 has_dockerfile_changed() {
-    local hash_file=".build-hash-dockerfile-${IMAGE_TAG:-latest}"
+    local hash_file="$PROJECT_ROOT/.build-hash-dockerfile-${IMAGE_TAG:-latest}"
     local current_hash=$(calculate_dockerfile_hash)
     local last_hash=""
     
@@ -218,8 +218,8 @@ has_dockerfile_changed() {
 
 # Save hashes after successful build
 save_build_hashes() {
-    local source_hash_file=".build-hash-source-${IMAGE_TAG:-latest}"
-    local dockerfile_hash_file=".build-hash-dockerfile-${IMAGE_TAG:-latest}"
+    local source_hash_file="$PROJECT_ROOT/.build-hash-source-${IMAGE_TAG:-latest}"
+    local dockerfile_hash_file="$PROJECT_ROOT/.build-hash-dockerfile-${IMAGE_TAG:-latest}"
     local current_source_hash=$(calculate_source_hash)
     local current_dockerfile_hash=$(calculate_dockerfile_hash)
     
@@ -272,7 +272,7 @@ build_image() {
         use_cache=""
     fi
     
-    $CONTAINER_RUNTIME build $use_cache --platform linux/amd64 -t "$full_image_name" .
+    $CONTAINER_RUNTIME build $use_cache --platform linux/amd64 -t "$full_image_name" "$PROJECT_ROOT"
     
     if [[ $? -eq 0 ]]; then
         save_build_hashes
