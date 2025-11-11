@@ -7,6 +7,11 @@
 
 set -e
 
+# Source common functions (pod finding, prerequisites)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 UWM_NAMESPACE="openshift-user-workload-monitoring"
 EXIT_CODE=0
@@ -181,7 +186,8 @@ test_coo() {
     prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
     if [[ "$prom_pods" -gt 0 ]]; then
         log_success "Found $prom_pods COO Prometheus pod(s)"
-        prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        # Use common function to find Prometheus pod (prefer COO labels for COO deployments)
+        prom_pod=$(find_prometheus_pod "$NAMESPACE" "true")
         if [[ -n "$prom_pod" ]]; then
             pod_status=$(oc get pod "$prom_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
             if [[ "$pod_status" == "Running" ]]; then
@@ -466,33 +472,20 @@ test_coo() {
     log_test "12. Checking metrics..."
     
     # For COO, prefer ThanosQuerier pod for metrics queries (consistent with existing scripts)
+    # Use common function to find query pod (prefers ThanosQuerier for COO)
+    local query_result=$(find_query_pod "$NAMESPACE" "true")
     local query_pod=""
     local query_port="9090"
     local query_url=""
     
-    # Try to find ThanosQuerier pod first (preferred for COO)
-    local thanos_pod=""
-    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    if [[ -z "$thanos_pod" ]]; then
-        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    fi
-    
-    if [[ -n "$thanos_pod" ]]; then
-        local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-        if [[ "$thanos_phase" == "Running" ]]; then
-            query_pod="$thanos_pod"
-            query_port="10902"  # ThanosQuerier uses port 10902 (Prometheus-compatible API)
-            log_info "Using ThanosQuerier pod for metrics: $thanos_pod (port 10902)"
+    if [[ -n "$query_result" ]]; then
+        query_pod=$(echo "$query_result" | cut -d'|' -f1)
+        query_port=$(echo "$query_result" | cut -d'|' -f2)
+        if [[ "$query_port" == "10902" ]]; then
+            log_info "Using ThanosQuerier pod for metrics: $query_pod (port 10902)"
+        else
+            log_info "Using Prometheus pod for metrics: $query_pod (port 9090)"
         fi
-    fi
-    
-    # Fallback to Prometheus pod if ThanosQuerier not available
-    # This works because ThanosQuerier implements Prometheus HTTP v1 API
-    # Same endpoint (/api/v1/query), same format, just different port
-    if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
-        query_pod="$prom_pod"
-        query_port="9090"  # Prometheus uses port 9090
-        log_info "Using Prometheus pod for metrics: $prom_pod (port 9090)"
     fi
     
     if [[ -n "$query_pod" ]]; then

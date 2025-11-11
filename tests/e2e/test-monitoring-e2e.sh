@@ -175,11 +175,8 @@ test_coo_deployment() {
     
     # Verify ServiceMonitor is discovered by Prometheus
     log_info "Checking if Prometheus has discovered the ServiceMonitor..."
-    local prom_pod=""
-    prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    if [[ -z "$prom_pod" ]]; then
-        prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    fi
+    # Use common function to find Prometheus pod (prefer COO labels for COO deployments)
+    local prom_pod=$(find_prometheus_pod "$NAMESPACE" "true")
     
     if [[ -n "$prom_pod" ]]; then
         # Check Prometheus targets to see if eip-monitor is being scraped
@@ -216,30 +213,19 @@ except:
     
     # For COO, prefer querying via ThanosQuerier pod (consistent with verify-prometheus-metrics.sh pattern)
     # Fallback to Prometheus pod if ThanosQuerier not available
+    # Use common function to find query pod (prefers ThanosQuerier for COO)
+    local query_result=$(find_query_pod "$NAMESPACE" "true")
     local query_pod=""
     local query_port="9090"
     
-    # Try to find ThanosQuerier pod first (preferred for COO)
-    local thanos_pod=""
-    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    if [[ -z "$thanos_pod" ]]; then
-        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    fi
-    
-    if [[ -n "$thanos_pod" ]]; then
-        local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-        if [[ "$thanos_phase" == "Running" ]]; then
-            query_pod="$thanos_pod"
-            query_port="10902"  # ThanosQuerier uses port 10902
-            log_info "Using ThanosQuerier pod for metrics query: $thanos_pod"
+    if [[ -n "$query_result" ]]; then
+        query_pod=$(echo "$query_result" | cut -d'|' -f1)
+        query_port=$(echo "$query_result" | cut -d'|' -f2)
+        if [[ "$query_port" == "10902" ]]; then
+            log_info "Using ThanosQuerier pod for metrics query: $query_pod"
+        else
+            log_info "Using Prometheus pod for metrics query: $query_pod"
         fi
-    fi
-    
-    # Fallback to Prometheus pod if ThanosQuerier not available
-    if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
-        query_pod="$prom_pod"
-        query_port="9090"
-        log_info "Using Prometheus pod for metrics query: $prom_pod"
     fi
     
     if [[ -n "$query_pod" ]]; then
@@ -385,7 +371,9 @@ test_uwm_deployment() {
     
     # Step 7: Verify metrics are being scraped
     log_test "Step 7: Verifying metrics are being scraped..."
-    local prom_pod=$(oc get pods -n "$uwm_namespace" -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local uwm_namespace="openshift-user-workload-monitoring"
+    # Use common function to find UWM Prometheus pod (UWM uses standard labels, not COO-specific)
+    local prom_pod=$(find_prometheus_pod "$uwm_namespace" "false")
     if [[ -n "$prom_pod" ]]; then
         # Wait a bit for scraping to start
         sleep 30
