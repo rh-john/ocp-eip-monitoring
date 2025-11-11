@@ -1078,16 +1078,48 @@ test_grafana() {
     
     run_test "Grafana Instance exists" "oc get grafana eip-monitoring-grafana -n \"$NAMESPACE\" &>/dev/null"
     
-    # Check Grafana pods
-    local grafana_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    # Check Grafana pods (try multiple label selectors)
+    local grafana_pod=""
+    local grafana_pods=0
+    
+    # Try standard label first
+    grafana_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
     if [[ "$grafana_pods" -gt 0 ]]; then
-        local grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-        if [[ -n "$grafana_pod" ]]; then
-            local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            run_test "Grafana pod running" "[[ \"$pod_phase\" == \"Running\" ]]"
+        grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    fi
+    
+    # Try alternative label if not found
+    if [[ -z "$grafana_pod" ]]; then
+        grafana_pods=$(oc get pods -n "$NAMESPACE" -l app=eip-monitoring-grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$grafana_pods" -gt 0 ]]; then
+            grafana_pod=$(oc get pods -n "$NAMESPACE" -l app=eip-monitoring-grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
         fi
+    fi
+    
+    # Try finding by name pattern if still not found
+    if [[ -z "$grafana_pod" ]]; then
+        grafana_pod=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -i "grafana.*deployment" | awk '{print $1}' | head -1 || echo "")
+        if [[ -n "$grafana_pod" ]]; then
+            grafana_pods=1
+        fi
+    fi
+    
+    if [[ "$grafana_pods" -gt 0 ]] && [[ -n "$grafana_pod" ]]; then
+        local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [[ "$pod_phase" == "Running" ]]; then
+            log_success "Grafana pod running"
+            log_info "  Pod: $grafana_pod"
+            ((tests_passed++))
+        else
+            log_error "Grafana pod running"
+            log_info "  Pod: $grafana_pod (Status: $pod_phase)"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
     else
         log_error "Grafana pods not found"
+        log_info "  Checked labels: app.kubernetes.io/name=grafana, app=eip-monitoring-grafana"
+        log_info "  Grafana Instance exists but no pods found. Pods may still be starting."
         ((tests_failed++))
         ((total_tests++))
     fi
@@ -1117,9 +1149,54 @@ test_grafana() {
     if [[ "$dashboard_count" -gt 0 ]]; then
         run_test "Dashboards exist ($dashboard_count found)" "[[ \"$dashboard_count\" -gt 0 ]]"
         
-        # Test a few specific dashboards
-        run_test "Main dashboard exists" "oc get grafanadashboard grafana-dashboard -n \"$NAMESPACE\" &>/dev/null"
-        run_test "EIP distribution dashboard exists" "oc get grafanadashboard grafana-dashboard-eip-distribution -n \"$NAMESPACE\" &>/dev/null"
+        # Test a few specific dashboards (check multiple possible names)
+        local main_dashboard_found=false
+        local main_dashboard_name=""
+        
+        # Try different possible main dashboard names
+        for dashboard_name in "eip-monitoring-dashboard" "grafana-dashboard" "eip-dashboard"; do
+            if oc get grafanadashboard "$dashboard_name" -n "$NAMESPACE" &>/dev/null; then
+                main_dashboard_found=true
+                main_dashboard_name="$dashboard_name"
+                break
+            fi
+        done
+        
+        if [[ "$main_dashboard_found" == "true" ]]; then
+            log_success "Main dashboard exists"
+            log_info "  Dashboard: $main_dashboard_name"
+            ((tests_passed++))
+        else
+            log_error "Main dashboard exists"
+            log_info "  Checked names: eip-monitoring-dashboard, grafana-dashboard, eip-dashboard"
+            log_info "  Found $dashboard_count dashboard(s) but none match expected main dashboard names"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Test EIP distribution dashboard (check multiple possible names)
+        local eip_dist_found=false
+        local eip_dist_name=""
+        
+        for dashboard_name in "grafana-dashboard-eip-distribution" "eip-distribution" "eip-distribution-dashboard"; do
+            if oc get grafanadashboard "$dashboard_name" -n "$NAMESPACE" &>/dev/null; then
+                eip_dist_found=true
+                eip_dist_name="$dashboard_name"
+                break
+            fi
+        done
+        
+        if [[ "$eip_dist_found" == "true" ]]; then
+            log_success "EIP distribution dashboard exists"
+            log_info "  Dashboard: $eip_dist_name"
+            ((tests_passed++))
+        else
+            log_warn "EIP distribution dashboard exists"
+            log_info "  Checked names: grafana-dashboard-eip-distribution, eip-distribution, eip-distribution-dashboard"
+            log_info "  This is optional, continuing..."
+            ((tests_failed++))
+        fi
+        ((total_tests++))
     else
         log_error "No dashboards found"
         ((tests_failed++))
