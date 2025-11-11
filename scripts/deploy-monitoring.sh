@@ -17,6 +17,7 @@ MONITORING_TYPE="${MONITORING_TYPE:-}"  # No default - must be explicitly specif
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 VERBOSE="${VERBOSE:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete COO CRDs during cleanup (requires cluster-admin)
+PERSISTENT_STORAGE="${PERSISTENT_STORAGE:-false}"  # Enable persistent storage for Prometheus
 
 # Note: Logging functions (log_info, log_success, log_warn, log_error) are now sourced from scripts/lib/common.sh
 # Note: oc_cmd() and oc_cmd_silent() are now sourced from scripts/lib/common.sh
@@ -34,6 +35,7 @@ Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
   --monitoring-type TYPE    Monitoring type: coo, uwm, or all (required for deployment)
   --all                     Deploy both COO and UWM monitoring (same as --monitoring-type all)
+  --persistent              Enable persistent storage for Prometheus (both COO and UWM)
   --remove-monitoring [TYPE] Remove monitoring infrastructure (TYPE: coo, uwm, or all - required)
   --delete-crds              Delete COO CRDs during cleanup (requires cluster-admin, only for COO removal)
   -v, --verbose            Show verbose output (raw oc command output)
@@ -44,12 +46,15 @@ Environment Variables:
   MONITORING_TYPE           Monitoring type: coo or uwm (required)
   REMOVE_MONITORING         Set to true to remove monitoring (default: false)
   VERBOSE                   Set to true to show verbose output (default: false)
+  PERSISTENT_STORAGE        Set to true to enable persistent storage (default: false)
 
 Examples:
   $0 --monitoring-type uwm
   $0 --monitoring-type coo -n my-namespace
   $0 --monitoring-type all              # Deploy both COO and UWM
   $0 --all                               # Deploy both COO and UWM
+  $0 --monitoring-type coo --persistent  # Deploy COO with persistent storage
+  $0 --monitoring-type all --persistent  # Deploy both with persistent storage
   $0 --remove-monitoring coo
   $0 --remove-monitoring --monitoring-type uwm
   $0 --remove-monitoring all
@@ -833,6 +838,94 @@ except:
     fi
 }
 
+# Configure UWM persistent storage
+configure_uwm_persistent_storage() {
+    log_info "Configuring persistent storage for UWM Prometheus..."
+    
+    # Get current config
+    local uwm_config=$(oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
+    
+    # Check if persistent storage is already configured
+    if echo "$uwm_config" | grep -qE "prometheus:\s*$" && echo "$uwm_config" | grep -A 10 "^prometheus:" | grep -qE "^\s*volumeClaimTemplate:"; then
+        log_info "Persistent storage already configured for UWM Prometheus"
+        return 0
+    fi
+    
+    # Use a temporary file to safely update the YAML
+    local temp_config=$(mktemp)
+    if [[ -n "$uwm_config" ]]; then
+        echo "$uwm_config" > "$temp_config"
+    else
+        # Create empty config
+        echo "" > "$temp_config"
+    fi
+    
+    local temp_config_new="${temp_config}.new"
+    
+    # Add or update prometheus section with persistent storage
+    if grep -q "^prometheus:" "$temp_config" 2>/dev/null; then
+        # Update existing prometheus section - add volumeClaimTemplate if missing
+        if ! grep -A 10 "^prometheus:" "$temp_config" | grep -qE "^\s*volumeClaimTemplate:"; then
+            # Add volumeClaimTemplate after prometheus:
+            awk '
+            /^prometheus:/ {
+                print
+                print "  volumeClaimTemplate:"
+                print "    spec:"
+                print "      accessModes:"
+                print "      - ReadWriteOnce"
+                print "      resources:"
+                print "        requests:"
+                print "          storage: 50Gi"
+                next
+            }
+            { print }
+            ' "$temp_config" > "$temp_config_new" 2>/dev/null || {
+                log_error "Failed to update UWM config with persistent storage"
+                rm -f "$temp_config" "$temp_config_new"
+                return 1
+            }
+        else
+            # volumeClaimTemplate already exists, just log
+            log_info "Persistent storage already configured in UWM config"
+            rm -f "$temp_config" "$temp_config_new"
+            return 0
+        fi
+    else
+        # Add new prometheus section
+        cat "$temp_config" > "$temp_config_new"
+        if [[ -n "$uwm_config" ]]; then
+            echo "" >> "$temp_config_new"
+        fi
+        echo "prometheus:" >> "$temp_config_new"
+        echo "  volumeClaimTemplate:" >> "$temp_config_new"
+        echo "    spec:" >> "$temp_config_new"
+        echo "      accessModes:" >> "$temp_config_new"
+        echo "      - ReadWriteOnce" >> "$temp_config_new"
+        echo "      resources:" >> "$temp_config_new"
+        echo "        requests:" >> "$temp_config_new"
+        echo "          storage: 50Gi" >> "$temp_config_new"
+    fi
+    
+    # Update the ConfigMap
+    local updated_config=$(cat "$temp_config_new")
+    # Escape special characters for JSON
+    updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
+    updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+    
+    if oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge \
+        -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" &>/dev/null; then
+        log_success "Persistent storage configured for UWM Prometheus (50Gi)"
+        rm -f "$temp_config" "$temp_config_new"
+        return 0
+    else
+        log_error "Failed to configure persistent storage for UWM Prometheus"
+        log_error "This requires cluster-admin permissions"
+        rm -f "$temp_config" "$temp_config_new"
+        return 1
+    fi
+}
+
 # Configure COO monitoring stack
 configure_coo_monitoring_stack() {
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -848,6 +941,39 @@ configure_coo_monitoring_stack() {
         log_error "Failed to deploy COO MonitoringStack"
         return 1
     }
+    
+    # Configure persistent storage if requested
+    if [[ "${PERSISTENT_STORAGE:-false}" == "true" ]]; then
+        log_info "Configuring persistent storage for COO Prometheus..."
+        # Patch MonitoringStack to enable persistent storage
+        # Default: 50Gi storage, ReadWriteOnce access mode
+        oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
+            -p '{
+                "spec": {
+                    "prometheusConfig": {
+                        "persistentVolumeClaim": {
+                            "accessModes": ["ReadWriteOnce"],
+                            "resources": {
+                                "requests": {
+                                    "storage": "50Gi"
+                                }
+                            }
+                        }
+                    }
+                }
+            }' || {
+            log_warn "Failed to configure persistent storage for COO MonitoringStack"
+        }
+        log_success "Persistent storage configured for COO Prometheus (50Gi)"
+    else
+        # Remove persistent storage if it exists (disable it)
+        log_info "Disabling persistent storage for COO Prometheus (using ephemeral storage)..."
+        oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type json \
+            -p '[{"op": "remove", "path": "/spec/prometheusConfig/persistentVolumeClaim"}]' 2>/dev/null || {
+            # If patch fails, it might be because persistentVolumeClaim doesn't exist (which is fine)
+            log_info "Persistent storage not configured (using default ephemeral storage)"
+        }
+    fi
     
     # Ensure MonitoringStack has the required label for ThanosQuerier discovery
     local part_of_label=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || echo "")
@@ -1669,6 +1795,11 @@ deploy_monitoring() {
         enable_user_workload_monitoring
         enable_user_workload_alertmanager
         
+        # Configure persistent storage for UWM if requested
+        if [[ "${PERSISTENT_STORAGE:-false}" == "true" ]]; then
+            configure_uwm_persistent_storage
+        fi
+        
         # Apply UWM manifests
         oc_cmd_silent apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
         oc_cmd_silent apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
@@ -1753,6 +1884,10 @@ parse_args() {
                 ;;
             --delete-crds)
                 DELETE_CRDS="true"
+                shift
+                ;;
+            --persistent)
+                PERSISTENT_STORAGE="true"
                 shift
                 ;;
             -v|--verbose)
