@@ -273,10 +273,16 @@ merge_branch() {
         return 0
     fi
     
-    # Perform merge
-    if git merge "$branch_ref" --no-ff -m "Merge $branch into $TARGET_BRANCH: integration" 2>&1; then
-        log_success "Successfully merged $branch (from $branch_source)"
-        return 0
+    # Perform squash merge to keep history clean
+    if git merge "$branch_ref" --squash 2>&1; then
+        # Squash merge requires explicit commit
+        if git commit -m "Merge $branch into $TARGET_BRANCH: integration" 2>&1; then
+            log_success "Successfully merged $branch (from $branch_source) with squash"
+            return 0
+        else
+            log_error "Failed to commit squash merge"
+            return 1
+        fi
     else
         local merge_status=$?
         log_error "Merge conflict with $branch"
