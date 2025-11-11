@@ -12,12 +12,18 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 
 ### `staging`
 - **Purpose**: Integration branch for testing before main
-- **Merges**: From component branches (`dev`, `monitoring`, `grafana`)
+- **Merges**: From component branches (`eip-monitor`, `dev`, `monitoring`, `grafana`)
 - **Automation**: Auto-bumps version, creates pre-release tags
 - **Testing**: Integration tests run here
 
+### `eip-monitor`
+- **Purpose**: EIP monitoring tool development (src/ directory, k8s-manifests.yaml, build-and-deploy.sh)
+- **Workflow**: Work directly on this branch
+- **Merges**: To `staging` when ready
+- **Scope**: Core application code, deployment manifests, build scripts
+
 ### `dev`
-- **Purpose**: eip-monitor tool development
+- **Purpose**: General development and integration work
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
 
@@ -34,7 +40,7 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 ## Workflow
 
 ### Daily Development
-1. Work directly on `dev`, `monitoring`, or `grafana` branches
+1. Work directly on `eip-monitor`, `dev`, `monitoring`, or `grafana` branches
 2. Commit and push as usual
 3. No feature branches required (but optional for larger features)
 
