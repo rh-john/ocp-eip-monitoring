@@ -298,10 +298,41 @@ test_coo() {
         log_warn "Cannot check Prometheus config - pod not found"
     fi
     
-    # 11. Check Prometheus targets (for COO, use ThanosQuerier)
+    # 11. Check Prometheus targets
+    # NOTE: /api/v1/targets is Prometheus-specific - ThanosQuerier doesn't expose this endpoint
+    # We must query Prometheus directly for targets, not ThanosQuerier
     log_test "11. Checking Prometheus targets..."
+    if [[ -n "$prom_pod" ]]; then
+        targets_json=$(oc exec -n "$NAMESPACE" "$prom_pod" -- wget -qO- http://localhost:9090/api/v1/targets 2>/dev/null || echo "")
+        if [[ -n "$targets_json" ]]; then
+            eip_targets=$(echo "$targets_json" | jq -r '.data.activeTargets[] | select(.labels.job | contains("eip")) | {job: .labels.job, health: .health, lastError: .lastError}' 2>/dev/null || echo "")
+            if [[ -n "$eip_targets" ]]; then
+                health=$(echo "$eip_targets" | jq -r '.health' 2>/dev/null | head -1)
+                if [[ "$health" == "up" ]]; then
+                    log_success "eip-monitor target is healthy"
+                else
+                    log_error "eip-monitor target health: $health"
+                    error_msg=$(echo "$eip_targets" | jq -r '.lastError' 2>/dev/null | head -1)
+                    if [[ -n "$error_msg" ]] && [[ "$error_msg" != "null" ]]; then
+                        log_info "  Error: $error_msg"
+                    fi
+                fi
+            else
+                log_error "No eip-monitor targets found in Prometheus"
+            fi
+        else
+            log_error "Failed to query Prometheus targets API"
+        fi
+    else
+        log_warn "Cannot check targets - Prometheus pod not found"
+    fi
     
-    # For COO, prefer ThanosQuerier route or pod
+    # 12. Check metrics (for COO, use ThanosQuerier - aggregates multiple Prometheus replicas)
+    # NOTE: For metrics queries, use ThanosQuerier when available (better for HA setups)
+    # ThanosQuerier aggregates and deduplicates data from all Prometheus instances
+    log_test "12. Checking metrics..."
+    
+    # For COO, prefer ThanosQuerier route or pod for metrics queries
     local query_url=""
     local query_host=""
     local query_port=""
@@ -314,7 +345,7 @@ test_coo() {
         query_host="https://${thanos_route}"
         query_port=""
         use_route=true
-        log_info "Using ThanosQuerier route: $query_host"
+        log_info "Using ThanosQuerier route for metrics: $query_host"
     else
         # Fallback to ThanosQuerier pod
         local thanos_pod=""
@@ -330,7 +361,7 @@ test_coo() {
                 query_port="10902"
                 use_route=false
                 pod_name="$thanos_pod"
-                log_info "Using ThanosQuerier pod: $thanos_pod (port 10902)"
+                log_info "Using ThanosQuerier pod for metrics: $thanos_pod (port 10902)"
             fi
         fi
         
@@ -340,49 +371,10 @@ test_coo() {
             query_port="9090"
             use_route=false
             pod_name="$prom_pod"
-            log_info "Using Prometheus pod: $prom_pod (port 9090)"
+            log_info "Using Prometheus pod for metrics: $prom_pod (port 9090)"
         fi
     fi
     
-    if [[ -n "$query_host" ]]; then
-        local base_url="${query_host}"
-        if [[ -n "$query_port" ]]; then
-            base_url="${query_host}:${query_port}"
-        fi
-        
-        if [[ "$use_route" == "true" ]]; then
-            # Use route - need to handle TLS and authentication
-            targets_json=$(curl -sk "${base_url}/api/v1/targets" 2>/dev/null || echo "")
-        else
-            # Use pod exec
-            targets_json=$(oc exec -n "$NAMESPACE" "$pod_name" -- wget -qO- "${base_url}/api/v1/targets" 2>/dev/null || echo "")
-        fi
-        
-        if [[ -n "$targets_json" ]]; then
-            eip_targets=$(echo "$targets_json" | jq -r '.data.activeTargets[] | select(.labels.job | contains("eip")) | {job: .labels.job, health: .health, lastError: .lastError}' 2>/dev/null || echo "")
-            if [[ -n "$eip_targets" ]]; then
-                health=$(echo "$eip_targets" | jq -r '.health' 2>/dev/null | head -1)
-                if [[ "$health" == "up" ]]; then
-                    log_success "eip-monitor target is healthy"
-                else
-                    log_error "eip-monitor target health: $health"
-                    error_msg=$(echo "$eip_targets" | jq -r '.lastError' 2>/dev/null | head -1)
-                    if [[ -n "$error_msg" ]] && [[ "$error_msg" != "null" ]]; then
-                        log_info "  Error: $error_msg"
-                    fi
-                fi
-            else
-                log_error "No eip-monitor targets found"
-            fi
-        else
-            log_error "Failed to query targets API"
-        fi
-    else
-        log_warn "Cannot check targets - neither ThanosQuerier nor Prometheus pod found"
-    fi
-    
-    # 12. Check metrics (for COO, use ThanosQuerier)
-    log_test "12. Checking metrics..."
     if [[ -n "$query_host" ]]; then
         local base_url="${query_host}"
         if [[ -n "$query_port" ]]; then
