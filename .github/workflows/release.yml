@@ -51,17 +51,28 @@ jobs:
             fi
             TAG="v${VERSION}"
             
-            # Check if tag exists and points to current commit
+            # Check if tag exists and is in current branch history
             if git rev-parse "$TAG" >/dev/null 2>&1; then
               TAG_COMMIT=$(git rev-parse "$TAG")
               HEAD_COMMIT=$(git rev-parse HEAD)
-              if [[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]]; then
-                echo "Tag $TAG exists and points to current commit"
-                echo "tag=${TAG}" >> $GITHUB_OUTPUT
-                echo "version=${VERSION}" >> $GITHUB_OUTPUT
-                echo "should_build=true" >> $GITHUB_OUTPUT
+              
+              # Check if tag commit is in current branch history (ancestor of HEAD)
+              if git merge-base --is-ancestor "$TAG_COMMIT" "$HEAD_COMMIT" 2>/dev/null; then
+                # Tag is in history - check if it's the latest tag for this version
+                LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+                if [[ "$LATEST_TAG" == "$TAG" ]] || [[ "$TAG_COMMIT" == "$HEAD_COMMIT" ]]; then
+                  echo "Tag $TAG exists and is the latest tag (or points to HEAD)"
+                  echo "tag=${TAG}" >> $GITHUB_OUTPUT
+                  echo "version=${VERSION}" >> $GITHUB_OUTPUT
+                  echo "should_build=true" >> $GITHUB_OUTPUT
+                else
+                  echo "Tag $TAG exists but is not the latest tag ($LATEST_TAG), skipping build"
+                  echo "tag=${TAG}" >> $GITHUB_OUTPUT
+                  echo "version=${VERSION}" >> $GITHUB_OUTPUT
+                  echo "should_build=false" >> $GITHUB_OUTPUT
+                fi
               else
-                echo "Tag $TAG exists but points to different commit ($TAG_COMMIT vs $HEAD_COMMIT), skipping build"
+                echo "Tag $TAG exists but is not in current branch history, skipping build"
                 echo "tag=${TAG}" >> $GITHUB_OUTPUT
                 echo "version=${VERSION}" >> $GITHUB_OUTPUT
                 echo "should_build=false" >> $GITHUB_OUTPUT
