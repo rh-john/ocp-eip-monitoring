@@ -83,10 +83,20 @@ merge_staging_to_main() {
         return 1
     }
     
-    log_info "Pulling latest main..."
-    git pull origin main || {
-        log_warn "Could not pull main, continuing with local version"
+    log_info "Updating main from remote..."
+    # Use fetch + merge instead of pull to avoid rebase (git pull respects pull.rebase config)
+    git fetch origin main || {
+        log_warn "Could not fetch main, continuing with local version"
     }
+    # Merge remote changes if any (git merge never rebases, unlike git pull)
+    if git merge-base --is-ancestor "origin/main" "main" 2>/dev/null; then
+        log_info "main is up to date with remote"
+    else
+        log_info "Merging remote changes into main..."
+        git merge "origin/main" --no-ff -m "Update main from remote" || {
+            log_warn "Could not merge remote main, continuing with local version"
+        }
+    fi
     
     log_info "Merging staging into main..."
     if git merge staging --no-edit; then
