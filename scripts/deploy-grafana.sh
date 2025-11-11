@@ -543,6 +543,57 @@ remove_grafana() {
 }
 
 # Remove Grafana Operator subscription
+# Cleanup Grafana CRDs after operator and resources are removed
+cleanup_grafana_crds() {
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Cleaning up Grafana CRDs..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Wait a bit for resources to be fully deleted
+    sleep 5
+    
+    # List of Grafana CRDs to check and delete
+    local grafana_crds=(
+        "grafanas.integreatly.org"
+        "grafanadashboards.integreatly.org"
+        "grafanadatasources.integreatly.org"
+        "grafanafolders.integreatly.org"
+        "grafanalibrarypanels.integreatly.org"
+        "grafanaalertrulegroups.integreatly.org"
+        "grafanacontactpoints.integreatly.org"
+        "grafanamutetimings.integreatly.org"
+        "grafananotificationpolicies.integreatly.org"
+        "grafananotificationpolicyroutes.integreatly.org"
+        "grafananotificationtemplates.integreatly.org"
+        "grafanaserviceaccounts.integreatly.org"
+    )
+    
+    for crd in "${grafana_crds[@]}"; do
+        # Check if CRD exists
+        if ! oc get crd "$crd" &>/dev/null; then
+            continue
+        fi
+        
+        # Get the resource kind from CRD (e.g., "grafanas" from "grafanas.integreatly.org")
+        local resource_kind=$(echo "$crd" | cut -d'.' -f1)
+        
+        # Check if there are any instances of this resource in the cluster
+        local resource_count=$(oc get "$resource_kind" --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        
+        if [[ "$resource_count" == "0" ]] || [[ -z "$resource_count" ]]; then
+            log_info "No instances of $resource_kind found, deleting CRD $crd..."
+            oc delete crd "$crd" 2>&1 | grep -vE "(not found|No resources found)" || {
+                log_warn "Failed to delete CRD $crd (may require cluster-admin or CRD may be protected)"
+            }
+        else
+            log_warn "Found $resource_count instance(s) of $resource_kind, skipping CRD deletion"
+        fi
+    done
+    
+    log_success "Grafana CRD cleanup completed"
+    echo ""
+}
+
 remove_grafana_operator() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Removing Grafana Operator subscription..."
@@ -668,6 +719,9 @@ remove_grafana_operator() {
     
     log_success "Grafana Operator removal completed"
     echo ""
+    
+    # Clean up CRDs after operator is removed
+    cleanup_grafana_crds
 }
 
 # Parse command line arguments
