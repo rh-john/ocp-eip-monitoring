@@ -104,7 +104,7 @@ The `deploy-eip.sh` script handles deployment:
 # Result:
 # - Uses current deployment's image (no pull errors)
 # - Applies all manifests (deployment, ServiceMonitor, ConfigMap, etc.)
-# - Perfect for manifest updates (alert rules, config changes)
+# - Suitable for manifest updates (alert rules, config changes)
 ```
 
 #### With Registry (Production Deployment):
@@ -607,7 +607,7 @@ The script supports enterprise-scale testing scenarios with up to 200 egress IPs
 This creates:
 - **200 namespaces**: `test-ns-1` through `test-ns-200`
 - **200 EgressIPs**: One per namespace with diverse labels
-- **200 IPs total**: 1 IP per namespace (perfect 1:1 mapping)
+- **200 IPs total**: 1 IP per namespace (1:1 mapping)
 - **Diverse labels**: Databases, monitoring, CI/CD, microservices, protocols, security, testing infrastructure
 
 #### **Namespace Categories**
@@ -650,7 +650,7 @@ For large-scale deployments:
 
 For maximum granularity and namespace isolation testing, you can deploy with a 1:1 mapping where each namespace gets exactly one egress IP:
 
-#### **Perfect Namespace Isolation**
+#### **Namespace Isolation with 1:1 Mapping**
 
 ```bash
 # Deploy with 1:1 mapping (200 IPs, 200 namespaces, 1 EIP each)
@@ -658,7 +658,7 @@ For maximum granularity and namespace isolation testing, you can deploy with a 1
 ```
 
 This configuration provides:
-- **Perfect Isolation**: Each namespace has its own dedicated egress IP
+- **Complete Isolation**: Each namespace has its own dedicated egress IP
 - **Individual Testing**: Test egress behavior per namespace independently
 - **Maximum Granularity**: 200 unique egress endpoints for testing
 - **Real-world Scenarios**: Simulates production environments with dedicated egress per application
@@ -718,7 +718,7 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 # This creates:
 # - 5 namespaces with diverse labels
 # - 5 EgressIPs with exactly 3 IPs each
-# - Perfect for testing capacity limits per namespace
+# - Suitable for testing capacity limits per namespace
 ```
 
 #### Scenario 4: Maximum Granularity Testing
@@ -729,7 +729,7 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 # This creates:
 # - 200 namespaces with diverse labels
 # - 200 EgressIPs with 1 IP each
-# - Perfect for testing namespace isolation
+# - Suitable for testing namespace isolation
 ```
 
 #### Scenario 5: Load Testing

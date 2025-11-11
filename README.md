@@ -317,8 +317,6 @@ All scripts use the shared `common.sh` library for consistent behavior and reduc
 
 - [Deployment Guide](docs/CONTAINER_DEPLOYMENT.md) - Deployment instructions
 - [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) - Metrics and alerts catalog
-- [Branch Strategy](docs/BRANCH_STRATEGY.md) - Git workflow
-- [Release Process](docs/RELEASE_PROCESS.md) - Release workflow
 - [E2E Tests](tests/e2e/README.md) - End-to-end testing
 - [Grafana Dashboards](k8s/grafana/README.md) - Dashboard documentation
 
