@@ -422,7 +422,7 @@ spec:
       "y": 20
       },
       "options": {
-      "content": "## Quick Navigation\n\n- [Enhanced Tables](./eip-enhanced-tables)\n- [Node Health Grid](./eip-node-health-grid)\n- [Timeline Events](./eip-timeline-events)\n- [Network Topology](./eip-network-topology)\n- [Custom Gauges](./eip-custom-gauges)\n- [State Visualization](./eip-state-visualization)\n- [Architecture Diagram](./eip-architecture-diagram)\n",
+        "content": "## Quick Navigation\n\n- [Enhanced Tables](./eip-enhanced-tables)\n- [Node Health Grid](./eip-node-health-grid)\n- [Timeline Events](./eip-timeline-events)\n- [Network Topology](./eip-network-topology)\n- [Custom Gauges](./eip-custom-gauges)\n- [State Visualization](./eip-state-visualization)\n- [Architecture Diagram](./eip-architecture-diagram)\n",
         "mode": "markdown"
       }
     }
