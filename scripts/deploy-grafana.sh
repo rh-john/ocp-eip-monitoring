@@ -914,11 +914,57 @@ show_grafana_status() {
         log_warn "Grafana Operator not found"
     fi
     
-    # Check if CRDs exist
-    if check_crd_exists grafanas.integreatly.org; then
+    # Check if CRDs exist (with retry since they may take a moment after CSV Succeeded)
+    local crd_found=false
+    local crd_names=(
+        "grafanas.integreatly.org"
+        "grafanadashboards.integreatly.org"
+        "grafanadatasources.integreatly.org"
+    )
+    
+    # Try checking CRDs with a small retry (up to 3 attempts, 2 seconds apart)
+    local attempt=1
+    while [[ $attempt -le 3 ]] && [[ "$crd_found" == "false" ]]; do
+        for crd in "${crd_names[@]}"; do
+            if check_crd_exists "$crd"; then
+                crd_found=true
+                break  # Break out of inner loop
+            fi
+        done
+        
+        if [[ "$crd_found" == "false" ]] && [[ $attempt -lt 3 ]]; then
+            sleep 2
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    # Also try to find any Grafana-related CRD as fallback
+    if [[ "$crd_found" == "false" ]]; then
+        local grafana_crds=$(oc get crd 2>/dev/null | grep -iE "(grafana|integreatly)" | awk '{print $1}' || echo "")
+        if [[ -n "$grafana_crds" ]]; then
+            crd_found=true
+        fi
+    fi
+    
+    if [[ "$crd_found" == "true" ]]; then
         log_success "Grafana CRDs are available"
+        # Show which CRDs are found
+        local found_crds=""
+        for crd in "${crd_names[@]}"; do
+            if check_crd_exists "$crd"; then
+                found_crds="${found_crds}${crd} "
+            fi
+        done
+        if [[ -n "$found_crds" ]]; then
+            log_info "  Found: $found_crds"
+        fi
     else
         log_warn "Grafana CRDs not found"
+        log_info "  Expected CRDs: grafanas.integreatly.org, grafanadashboards.integreatly.org, grafanadatasources.integreatly.org"
+        log_info "  Note: CRDs may take a moment to become available after operator installation"
+        if [[ -n "$namespace_csv" ]] || [[ -n "$cluster_csv" ]]; then
+            log_info "  Operator CSV is installed - CRDs should be available soon"
+        fi
     fi
     
     echo ""

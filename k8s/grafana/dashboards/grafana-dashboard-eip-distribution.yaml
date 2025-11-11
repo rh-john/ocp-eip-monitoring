@@ -3,7 +3,7 @@
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: eip-distribution-heatmap
+  name: eip-distribution
   namespace: eip-monitoring
   labels:
     app: eip-monitor
