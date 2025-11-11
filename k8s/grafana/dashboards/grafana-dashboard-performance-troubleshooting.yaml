@@ -1,0 +1,589 @@
+---
+# EIP Performance & Troubleshooting Dashboard
+# Focuses on API performance, error analysis, and recovery metrics
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-performance-troubleshooting
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "EIP Performance & Troubleshooting",
+      "tags": ["eip", "performance", "troubleshooting", "errors", "api"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "title": "API Performance Heatmap (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(api_response_time_seconds)",
+              "legendFormat": "{{operation}}",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "s"
+            }
+          },
+          "options": {
+            "colorScheme": "Oranges",
+            "cellSize": 12,
+            "showLegend": true,
+            "showValues": true,
+            "xAxis": {
+              "show": true,
+              "label": "Time"
+            },
+            "yAxis": {
+              "show": true,
+              "label": "Operation"
+            }
+          }
+        },
+        {
+          "id": 2,
+          "title": "API Success Rate Trends (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(api_success_rate_percent)",
+              "legendFormat": "{{operation}}",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "min": 0,
+              "max": 100,
+              "unit": "percent"
+            }
+          },
+          "options": {
+            "colorScheme": "RdYlGn",
+            "cellSize": 12,
+            "showLegend": true,
+            "showValues": false,
+            "xAxis": {
+              "show": true
+            },
+            "yAxis": {
+              "show": true
+            }
+          }
+        },
+        {
+          "id": 3,
+          "title": "API Performance Degradation",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+          "targets": [
+            {
+              "expr": "(sum(api_response_time_seconds) - sum(api_response_time_seconds offset 1h)) / sum(api_response_time_seconds offset 1h) * 100",
+              "legendFormat": "{{operation}} - Change %",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 30
+              },
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 10, "color": "yellow"},
+                  {"value": 20, "color": "orange"},
+                  {"value": 50, "color": "red"}
+                ]
+              }
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 4,
+          "title": "Error Correlation Analysis",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+          "targets": [
+            {
+              "expr": "sum(cpic_error_total)",
+              "legendFormat": "CPIC Errors",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(api_success_rate_percent) < 95",
+              "legendFormat": "API Success < 95%",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(eip_nodes_with_errors_total)",
+              "legendFormat": "Nodes with Errors",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 80
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 5,
+          "title": "CPIC Error Duration Heatmap (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 0, "y": 18},
+          "targets": [
+            {
+              "expr": "sum(cpic_error_duration_seconds)",
+              "legendFormat": "{{resource_name}}",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "s"
+            }
+          },
+          "options": {
+            "colorScheme": "Reds",
+            "cellSize": 10,
+            "showLegend": true,
+            "showValues": true,
+            "xAxis": {
+              "show": true,
+              "label": "Time"
+            },
+            "yAxis": {
+              "show": true,
+              "label": "Resource"
+            }
+          }
+        },
+        {
+          "id": 6,
+          "title": "CPIC Pending Duration Heatmap (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 10, "w": 12, "x": 12, "y": 18},
+          "targets": [
+            {
+              "expr": "sum(cpic_pending_duration_seconds)",
+              "legendFormat": "{{resource_name}}",
+              "refId": "A",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "s"
+            }
+          },
+          "options": {
+            "colorScheme": "Oranges",
+            "cellSize": 10,
+            "showLegend": true,
+            "showValues": true,
+            "xAxis": {
+              "show": true,
+              "label": "Time"
+            },
+            "yAxis": {
+              "show": true,
+              "label": "Resource"
+            }
+          }
+        },
+        {
+          "id": 7,
+          "title": "Recovery Efficiency",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "targets": [
+            {
+              "expr": "cpic_recoveries_last_hour / (sum(cpic_error_total) + 1)",
+              "legendFormat": "Recovery Efficiency",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(cpic_recoveries_last_hour)",
+              "legendFormat": "Recoveries",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(cpic_error_total)",
+              "legendFormat": "Current Errors",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 40
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 8,
+          "title": "API Calls Breakdown (Funnel)",
+          "type": "mckn-funnel-panel",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "targets": [
+            {
+              "expr": "sum(api_calls_total)",
+              "legendFormat": "Total Calls",
+              "refId": "A",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "sum(api_calls_total{status=\"success\"})",
+              "legendFormat": "Success",
+              "refId": "B",
+              "instant": true,
+              "format": "table"
+            },
+            {
+              "expr": "sum(api_calls_total{status=\"error\"})",
+              "legendFormat": "Errors",
+              "refId": "C",
+              "instant": true,
+              "format": "table"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 10, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "orientation": "vertical",
+            "showValues": true,
+            "showPercentages": true,
+            "colorMode": "threshold"
+          }
+        },
+        {
+          "id": 9,
+          "title": "Change Rate vs Health Correlation (Mosaic)",
+          "type": "boazreicher-mosaicplot-panel",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+          "targets": [
+            {
+              "expr": "sum(eip_changes_last_hour)",
+              "legendFormat": "EIP Changes",
+              "refId": "A",
+              "format": "time_series"
+            },
+            {
+              "expr": "sum(cluster_eip_health_score)",
+              "legendFormat": "Health Score",
+              "refId": "B",
+              "format": "time_series"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "spectrum"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "colorScheme": "Spectral",
+            "cellSize": 12,
+            "showLegend": true,
+            "showValues": false,
+            "xAxis": {
+              "show": true
+            },
+            "yAxis": {
+              "show": true
+            }
+          }
+        },
+        {
+          "id": 10,
+          "title": "Composite Health Indicator",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 36},
+          "targets": [
+            {
+              "expr": "(sum(cluster_eip_health_score) + sum(cluster_eip_stability_score)) / 2",
+              "legendFormat": "Composite Health",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(cluster_eip_health_score)",
+              "legendFormat": "Health Score",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(cluster_eip_stability_score)",
+              "legendFormat": "Stability Score",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 30
+              },
+              "min": 0,
+              "max": 100,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"},
+                  {"value": 50, "color": "orange"},
+                  {"value": 70, "color": "yellow"},
+                  {"value": 90, "color": "green"}
+                ]
+              }
+            }
+          },
+          "options": {
+            "tooltip": {
+              "mode": "multi"
+            },
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            }
+          }
+        },
+        {
+          "id": 11,
+          "title": "Scrape Performance",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 44},
+          "targets": [
+            {
+              "expr": "sum(eip_scrape_duration_seconds)",
+              "legendFormat": "Duration",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 5, "color": "yellow"},
+                  {"value": 10, "color": "red"}
+                ]
+              },
+              "unit": "s"
+            }
+          },
+          "options": {
+            "graphMode": "area",
+            "colorMode": "value"
+          }
+        },
+        {
+          "id": 12,
+          "title": "Scrape Errors",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 44},
+          "targets": [
+            {
+              "expr": "sum(eip_scrape_errors_total)",
+              "legendFormat": "Errors",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 5, "color": "red"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "graphMode": "area",
+            "colorMode": "value"
+          }
+        },
+        {
+          "id": 13,
+          "title": "Last Scrape Time",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 44},
+          "targets": [
+            {
+              "expr": "time() - eip_last_scrape_timestamp_seconds",
+              "legendFormat": "Seconds Ago",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 60, "color": "yellow"},
+                  {"value": 120, "color": "red"}
+                ]
+              },
+              "unit": "s"
+            }
+          },
+          "options": {
+            "graphMode": "area",
+            "colorMode": "value"
+          }
+        },
+        {
+          "id": 14,
+          "title": "Monitoring System Status",
+          "type": "vonage-status-panel",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 44},
+          "targets": [
+            {
+              "expr": "sum(eip_scrape_errors_total) == 0",
+              "legendFormat": "Healthy",
+              "refId": "A",
+              "instant": true
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "red"},
+                  {"value": 1, "color": "green"}
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "valueName": "last",
+            "colorMode": "thresholds"
+          }
+        }
+      ],
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {
+        "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h", "2h", "1d"]
+      }
+    }
+

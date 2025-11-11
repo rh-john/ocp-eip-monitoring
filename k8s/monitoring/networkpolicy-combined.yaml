@@ -1,8 +1,9 @@
 ---
 # Combined NetworkPolicy for EIP monitor supporting both COO and UWM
-# This policy allows both monitoring stacks to scrape metrics simultaneously
-# Use this when deploying both COO and UWM, or use the individual policies
-# (networkpolicy-coo.yaml or networkpolicy-uwm.yaml) for single-stack deployments
+# This policy is always applied by deploy-monitoring.sh and works for both
+# single-stack (COO-only or UWM-only) and dual-stack deployments.
+# The individual NetworkPolicies (networkpolicy-coo.yaml and networkpolicy-uwm.yaml)
+# are deprecated and should not be used.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
