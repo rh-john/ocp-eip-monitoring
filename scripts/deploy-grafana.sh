@@ -111,6 +111,10 @@ check_prerequisites() {
 deploy_grafana() {
     log_info "Deploying Grafana for EIP monitoring..."
     
+    # Calculate project root once at the beginning of the function
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local project_root="$(dirname "$script_dir")"
+    
     # Ensure namespace exists first
     if ! oc get namespace "$NAMESPACE" &>/dev/null; then
         log_warn "Namespace '$NAMESPACE' not found, creating it..."
@@ -169,7 +173,7 @@ deploy_grafana() {
             fi
         fi
         
-        local operator_file="k8s/grafana/grafana-operator.yaml"
+        local operator_file="${project_root}/k8s/grafana/grafana-operator.yaml"
         if [[ ! -f "$operator_file" ]]; then
             log_error "Grafana operator file not found: $operator_file"
             log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
@@ -282,8 +286,6 @@ deploy_grafana() {
     fi
     
     # Determine RBAC and datasource files based on monitoring type
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
     local rbac_file=""
     local datasource_file=""
     local service_account_name=""
@@ -350,7 +352,7 @@ deploy_grafana() {
     
     # Deploy Grafana Instance FIRST (DataSource and Dashboards depend on it via instanceSelector)
     log_info "Deploying Grafana Instance..."
-    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
+    local instance_output=$(oc apply -f "${project_root}/k8s/grafana/grafana-instance.yaml" 2>&1)
     local instance_exit=$?
     if [[ $instance_exit -eq 0 ]]; then
         log_success "Grafana Instance deployed"
@@ -393,23 +395,23 @@ deploy_grafana() {
     log_info "Deploying Grafana Dashboards..."
     local dashboard_files=(
         # Original dashboards
-        "k8s/grafana/dashboards/grafana-dashboard.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
         # Event correlation dashboard (node/cluster metrics with EIP metrics)
-        "k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
         # New advanced plugin dashboards
-        "k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
-        "k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
     )
     
     local dashboards_deployed=0
@@ -467,45 +469,58 @@ remove_grafana() {
     
     # Delete Grafana resources in correct dependency order
     # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
-    log_info "Deleting GrafanaDashboards..."
-    oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Wait a moment for dashboards to start deletion
-    sleep 2
-    
-    log_info "Deleting GrafanaDataSources..."
-    oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Wait a moment for datasources to start deletion
-    sleep 2
-    
-    log_info "Deleting Grafana Instances..."
-    oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Force delete if finalizers are blocking (common issue with Grafana CRDs)
-    log_info "Checking for resources stuck with finalizers..."
-    local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_dashboards" ]]; then
-        log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
-        echo "$stuck_dashboards" | while read -r name; do
-            oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
+    # Check if CRDs exist before attempting deletion (operator may not be installed)
+    if oc get crd grafanadashboards.integreatly.org &>/dev/null; then
+        log_info "Deleting GrafanaDashboards..."
+        oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
+        
+        # Wait a moment for dashboards to start deletion
+        sleep 2
+        
+        # Force delete if finalizers are blocking (common issue with Grafana CRDs)
+        log_info "Checking for resources stuck with finalizers..."
+        local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+        if [[ -n "$stuck_dashboards" ]]; then
+            log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
+            echo "$stuck_dashboards" | while read -r name; do
+                oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            done
+        fi
+    else
+        log_info "GrafanaDashboards CRD not found (operator not installed), skipping dashboard cleanup"
     fi
     
-    local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_datasources" ]]; then
-        log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
-        echo "$stuck_datasources" | while read -r name; do
-            oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
+    if oc get crd grafanadatasources.integreatly.org &>/dev/null; then
+        log_info "Deleting GrafanaDataSources..."
+        oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
+        
+        # Wait a moment for datasources to start deletion
+        sleep 2
+        
+        local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+        if [[ -n "$stuck_datasources" ]]; then
+            log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
+            echo "$stuck_datasources" | while read -r name; do
+                oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            done
+        fi
+    else
+        log_info "GrafanaDataSources CRD not found (operator not installed), skipping datasource cleanup"
     fi
     
-    local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_instances" ]]; then
-        log_warn "Found Grafana Instances with finalizers, removing finalizers..."
-        echo "$stuck_instances" | while read -r name; do
-            oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
+    if oc get crd grafanas.integreatly.org &>/dev/null; then
+        log_info "Deleting Grafana Instances..."
+        oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
+        
+        local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
+        if [[ -n "$stuck_instances" ]]; then
+            log_warn "Found Grafana Instances with finalizers, removing finalizers..."
+            echo "$stuck_instances" | while read -r name; do
+                oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+            done
+        fi
+    else
+        log_info "Grafana CRD not found (operator not installed), skipping instance cleanup"
     fi
     
     # Wait a moment for finalizer removal to take effect
