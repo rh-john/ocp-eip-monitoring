@@ -1639,71 +1639,6 @@ show_logs() {
     oc logs -f deployment/eip-monitor -n "$NAMESPACE"
 }
 
-# Clean up Grafana resources
-cleanup_grafana() {
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Step 1: Removing Grafana resources..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
-    
-    # Delete Grafana resources in correct dependency order
-    # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
-    log_info "Deleting GrafanaDashboards (depends on DataSources)..."
-    oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Wait a moment for dashboards to start deletion
-    sleep 2
-    
-    log_info "Deleting GrafanaDataSources (depends on Grafana Instance)..."
-    oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Wait a moment for datasources to start deletion
-    sleep 2
-    
-    log_info "Deleting Grafana Instances..."
-    oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -v "No resources found" || true
-    
-    # Force delete if finalizers are blocking (common issue with Grafana CRDs)
-    log_info "Checking for resources stuck with finalizers..."
-    local stuck_dashboards=$(oc get grafanadashboard -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_dashboards" ]]; then
-        log_warn "Found GrafanaDashboards with finalizers, removing finalizers..."
-        echo "$stuck_dashboards" | while read -r name; do
-            oc patch grafanadashboard "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
-    fi
-    
-    local stuck_datasources=$(oc get grafanadatasource -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_datasources" ]]; then
-        log_warn "Found GrafanaDataSources with finalizers, removing finalizers..."
-        echo "$stuck_datasources" | while read -r name; do
-            oc patch grafanadatasource "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
-    fi
-    
-    local stuck_instances=$(oc get grafana -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.finalizers != null and (.metadata.finalizers | length > 0)) | .metadata.name' 2>/dev/null || echo "")
-    if [[ -n "$stuck_instances" ]]; then
-        log_warn "Found Grafana Instances with finalizers, removing finalizers..."
-        echo "$stuck_instances" | while read -r name; do
-            oc patch grafana "$name" -n "$NAMESPACE" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-        done
-    fi
-    
-    # Wait a moment for finalizer removal to take effect
-    sleep 2
-    
-    # Force delete any remaining resources (in case they're still stuck after finalizer removal)
-    log_info "Force deleting any remaining Grafana resources..."
-    oc delete grafanadashboard -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
-    oc delete grafanadatasource -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
-    oc delete grafana -n "$NAMESPACE" --all --force --grace-period=0 2>&1 | grep -vE "(No resources found|Warning: Immediate deletion)" || true
-    
-    log_success "Grafana resources removed"
-    echo ""
-}
-
 # Clean up eip-monitor deployment
 cleanup_eip_monitor() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1825,83 +1760,8 @@ cleanup_operators() {
         log_info "COO operator subscription not found"
     fi
     
-    # Remove Grafana operator subscription (cluster-scoped)
-    if oc get subscription grafana-operator -n openshift-operators &>/dev/null; then
-        log_info "Removing Grafana Operator subscription (cluster-scoped)..."
-        oc delete subscription grafana-operator -n openshift-operators 2>/dev/null || {
-            log_warn "Failed to delete Grafana operator subscription (may require cluster-admin)"
-        }
-        
-        # Wait for CSV to be removed, or delete it directly if stuck
-        log_info "Waiting for Grafana operator CSV to be removed..."
-        local max_wait=30
-        local waited=0
-        while [[ $waited -lt $max_wait ]]; do
-            local csv_info=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | "\(.metadata.name)|\(.metadata.deletionTimestamp // "active")"' | head -1 || echo "")
-            if [[ -z "$csv_info" ]]; then
-                log_success "Grafana operator removed"
-                break
-            fi
-            
-            # Check if CSV is being deleted
-            local csv_name=$(echo "$csv_info" | cut -d'|' -f1)
-            local deletion_status=$(echo "$csv_info" | cut -d'|' -f2)
-            
-            if [[ "$deletion_status" != "active" ]]; then
-                log_info "Grafana operator CSV is being deleted (deletionTimestamp: $deletion_status), waiting..."
-            fi
-            
-            sleep 2
-            waited=$((waited + 2))
-        done
-        
-        # If CSV still exists after waiting, try to delete it directly
-        local remaining_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
-        if [[ -n "$remaining_csv" ]]; then
-            log_warn "Grafana operator CSV still exists after subscription deletion, deleting CSV directly..."
-            oc delete csv "$remaining_csv" -n openshift-operators --force --grace-period=0 2>/dev/null || {
-                log_warn "Failed to delete Grafana operator CSV directly (may require cluster-admin or CSV may be stuck)"
-            }
-            
-            # Remove finalizers if CSV is stuck
-            local csv_finalizers=$(oc get csv "$remaining_csv" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
-            if [[ -n "$csv_finalizers" ]]; then
-                log_info "Removing finalizers from Grafana operator CSV..."
-                oc patch csv "$remaining_csv" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
-            fi
-        else
-            log_success "Grafana operator removed successfully"
-        fi
-    else
-        log_info "Grafana operator subscription (cluster-scoped) not found"
-    fi
-    
-    # Also check for namespace-scoped Grafana operator
-    if oc get subscription grafana-operator -n "$NAMESPACE" &>/dev/null; then
-        log_info "Removing namespace-scoped Grafana Operator subscription..."
-        oc delete subscription grafana-operator -n "$NAMESPACE" 2>/dev/null || true
-        
-        # Wait for CSV to be removed
-        log_info "Waiting for namespace-scoped Grafana operator CSV to be removed..."
-        local max_wait=30
-        local waited=0
-        while [[ $waited -lt $max_wait ]]; do
-            local csv_exists=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
-            if [[ -z "$csv_exists" ]]; then
-                log_success "Namespace-scoped Grafana operator removed"
-                break
-            fi
-            sleep 2
-            waited=$((waited + 2))
-        done
-        
-        if [[ $waited -ge $max_wait ]]; then
-            log_warn "Namespace-scoped Grafana operator removal may still be in progress"
-        fi
-    else
-        log_info "Namespace-scoped Grafana operator subscription not found"
-    fi
-    
+    # Note: Grafana operator is removed by deploy-grafana.sh --all in Step 1
+    # Only removing COO operator here
     log_success "Operators removed"
     echo ""
 }
@@ -1921,7 +1781,34 @@ cleanup_all() {
     echo ""
     
     # Step 1: Remove Grafana resources
-    cleanup_grafana
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "🗑️  Step 1: Removing Grafana resources..."
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Use deploy-grafana.sh to remove Grafana resources and operator
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local deploy_grafana_script="${script_dir}/deploy-grafana.sh"
+    
+    if [[ ! -f "$deploy_grafana_script" ]]; then
+        log_warn "deploy-grafana.sh not found, skipping Grafana cleanup"
+    else
+        # Try to detect monitoring type for proper RBAC cleanup
+        local monitoring_type=""
+        if oc get clusterrolebinding grafana-prometheus-eip-monitoring &>/dev/null; then
+            monitoring_type="uwm"
+        elif oc get rolebinding grafana-prometheus-coo -n "$NAMESPACE" &>/dev/null; then
+            monitoring_type="coo"
+        fi
+        
+        if [[ -n "$monitoring_type" ]]; then
+            log_info "Detected monitoring type: $monitoring_type"
+            "$deploy_grafana_script" --all --monitoring-type "$monitoring_type" -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+        else
+            log_info "Monitoring type not detected, removing all Grafana resources..."
+            "$deploy_grafana_script" --all -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+        fi
+    fi
+    echo ""
     
     # Step 2: Remove eip-monitor deployment
     cleanup_eip_monitor
@@ -1929,7 +1816,7 @@ cleanup_all() {
     # Step 3: Remove monitoring infrastructure (COO/UWM)
     cleanup_monitoring
     
-    # Step 4: Remove operators (COO and Grafana)
+    # Step 4: Remove operators (COO only - Grafana was removed in Step 1)
     cleanup_operators
     
     # Step 5: Delete namespace if empty (optional, but clean)
