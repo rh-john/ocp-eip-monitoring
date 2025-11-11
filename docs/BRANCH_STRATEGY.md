@@ -12,7 +12,7 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 
 ### `staging`
 - **Purpose**: Integration branch for testing before main
-- **Merges**: From component branches (`dev`, `coo`, `grafana`)
+- **Merges**: From component branches (`dev`, `monitoring`, `grafana`)
 - **Automation**: Auto-bumps version, creates pre-release tags
 - **Testing**: Integration tests run here
 
@@ -21,7 +21,7 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
 
-### `coo`
+### `monitoring`
 - **Purpose**: Monitoring infrastructure (COO/UWM) development
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
@@ -34,7 +34,7 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 ## Workflow
 
 ### Daily Development
-1. Work directly on `dev`, `coo`, or `grafana` branches
+1. Work directly on `dev`, `monitoring`, or `grafana` branches
 2. Commit and push as usual
 3. No feature branches required (but optional for larger features)
 
