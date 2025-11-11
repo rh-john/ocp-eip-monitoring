@@ -36,7 +36,7 @@ Prometheus typically needs 1-2 scrape intervals to ingest metrics. With a 30s sc
 
 ```bash
 # Use the verification script
-./scripts/verify-prometheus-metrics.sh
+./scripts/debug/verify-prometheus-metrics.sh
 ```
 
 #### 2. Verify ServiceMonitor Configuration
@@ -123,10 +123,10 @@ Use the provided verification script:
 
 ```bash
 # Run verification script
-./scripts/verify-prometheus-metrics.sh
+./scripts/debug/verify-prometheus-metrics.sh
 
 # Or with custom namespace/monitoring type
-MONITORING_TYPE=coo NAMESPACE=eip-monitoring ./scripts/verify-prometheus-metrics.sh
+MONITORING_TYPE=coo NAMESPACE=eip-monitoring ./scripts/debug/verify-prometheus-metrics.sh
 ```
 
 The script will:

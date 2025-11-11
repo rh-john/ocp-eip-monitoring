@@ -133,7 +133,7 @@ oc apply -f k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml
 Inspect links are automatically added to dashboard panels using the `add-perses-inspect-links.sh` script:
 
 ```bash
-./scripts/add-perses-inspect-links.sh
+./scripts/debug/add-perses-inspect-links.sh
 ```
 
 This script:

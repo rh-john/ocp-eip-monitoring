@@ -257,8 +257,8 @@ run_tests() {
     
     log_info "Running tests..."
     
-    if [[ -f "$PROJECT_ROOT/scripts/test-deployment.sh" ]]; then
-        if "$PROJECT_ROOT/scripts/test-deployment.sh"; then
+    if [[ -f "$PROJECT_ROOT/scripts/debug/test-deployment.sh" ]]; then
+        if "$PROJECT_ROOT/scripts/debug/test-deployment.sh"; then
             log_success "Tests passed"
             return 0
         else
