@@ -81,22 +81,22 @@ This document analyzes the effects of refactoring duplicate pod-finding and help
    - **Query pod logic:** 1 instance (lines 217-243)
    - **Estimated LOC reduction:** ~40 lines
 
-3. **`scripts/test-monitoring-deployment.sh`**
+3. **`scripts/test/test-monitoring-deployment.sh`**
    - **Prometheus finding:** Multiple instances
    - **Query pod logic:** Embedded in test flow
    - **Estimated LOC reduction:** ~30 lines
 
 #### Medium Impact (1-2 duplicate instances):
 
-4. **`scripts/verify-prometheus-metrics.sh`**
+4. **`scripts/debug/verify-prometheus-metrics.sh`**
    - **Prometheus finding:** Custom function `get_prometheus_pod()` (lines 54-65)
    - **Estimated LOC reduction:** ~15 lines
 
-5. **`scripts/verify-uwm-metrics.sh`**
+5. **`scripts/debug/verify-uwm-metrics.sh`**
    - **Prometheus finding:** Inline code (lines 35-39)
    - **Estimated LOC reduction:** ~10 lines
 
-6. **`scripts/fix-prometheus-discovery.sh`**
+6. **`scripts/debug/fix-prometheus-discovery.sh`**
    - **Prometheus finding:** Custom function `get_prometheus_pod()` (lines 54-65)
    - **Estimated LOC reduction:** ~15 lines
 
@@ -113,7 +113,7 @@ This document analyzes the effects of refactoring duplicate pod-finding and help
 9. **`tests/e2e/test-uwm-grafana-e2e.sh`**
    - May benefit from pod finding functions in future enhancements
 
-10. **`scripts/test-dashboard-queries.sh`**
+10. **`scripts/test/test-dashboard-queries.sh`**
     - Python script, but could benefit from bash wrapper using common functions
 
 **Total estimated LOC reduction:** ~190 lines across all scripts
@@ -218,12 +218,12 @@ This document analyzes the effects of refactoring duplicate pod-finding and help
 #### Phase 1: High Priority (Immediate Benefits)
 1. `scripts/deploy-monitoring.sh` - Largest impact
 2. `tests/e2e/test-monitoring-e2e.sh` - Test script, high visibility
-3. `scripts/test-monitoring-deployment.sh` - Test script, high visibility
+3. `scripts/test/test-monitoring-deployment.sh` - Test script, high visibility
 
 #### Phase 2: Medium Priority (Cleanup)
-4. `scripts/verify-prometheus-metrics.sh`
-5. `scripts/verify-uwm-metrics.sh`
-6. `scripts/fix-prometheus-discovery.sh`
+4. `scripts/debug/verify-prometheus-metrics.sh`
+5. `scripts/debug/verify-uwm-metrics.sh`
+6. `scripts/debug/fix-prometheus-discovery.sh`
 7. `scripts/diagnose-uwm-metrics.sh`
 
 #### Phase 3: Low Priority (Future)
@@ -356,13 +356,13 @@ This document analyzes the effects of refactoring duplicate pod-finding and help
 
 3. **E2E Tests:**
    - [ ] `test-monitoring-e2e.sh` passes with new functions
-   - [ ] `test-monitoring-deployment.sh` passes with new functions
+   - [ ] `test/test-monitoring-deployment.sh` passes with new functions
    - [ ] Metrics queries work correctly
 
 4. **Verification Scripts:**
-   - [ ] `verify-prometheus-metrics.sh` works with new functions
-   - [ ] `verify-uwm-metrics.sh` works with new functions
-   - [ ] `fix-prometheus-discovery.sh` works with new functions
+   - [ ] `debug/verify-prometheus-metrics.sh` works with new functions
+   - [ ] `debug/verify-uwm-metrics.sh` works with new functions
+   - [ ] `debug/fix-prometheus-discovery.sh` works with new functions
 
 ### 6.3 Regression Testing
 
