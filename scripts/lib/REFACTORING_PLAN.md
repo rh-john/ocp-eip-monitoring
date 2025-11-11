@@ -19,8 +19,8 @@
 **Current location:** Duplicated in multiple places:
 - `deploy-monitoring.sh` line 664
 - `test-monitoring-e2e.sh` lines 179-182
-- `test-monitoring-deployment.sh` (multiple places)
-- `verify-prometheus-metrics.sh` (multiple places)
+- `test/test-monitoring-deployment.sh` (multiple places)
+- `debug/verify-prometheus-metrics.sh` (multiple places)
 
 **Proposed function signature:**
 ```bash
@@ -56,7 +56,7 @@ find_thanosquerier_pod() {
 ### 5. **`find_query_pod()` (Composite function)**
 **Current location:** Logic duplicated in:
 - `test-monitoring-e2e.sh` lines 217-243
-- `test-monitoring-deployment.sh` lines 468-490
+- `test/test-monitoring-deployment.sh` lines 468-490
 
 **Proposed function signature:**
 ```bash
@@ -119,7 +119,7 @@ wait_for_pod_phase() {
 
 1. Add functions to `common.sh`
 2. Update `deploy-monitoring.sh` to source and use common functions
-3. Update other scripts (`test-monitoring-e2e.sh`, `test-monitoring-deployment.sh`, etc.) to use common functions
+3. Update other scripts (`test-monitoring-e2e.sh`, `test/test-monitoring-deployment.sh`, etc.) to use common functions
 4. Remove duplicate code
 5. Test all scripts to ensure they still work
 

@@ -108,10 +108,10 @@ Comprehensive monitoring deployment verification.
 ./scripts/test/test-monitoring-deployment.sh --monitoring-type coo
 
 # Test UWM deployment
-./scripts/test-monitoring-deployment.sh --monitoring-type uwm
+./scripts/test/test-monitoring-deployment.sh --monitoring-type uwm
 
 # Test both
-./scripts/test-monitoring-deployment.sh --monitoring-type all
+./scripts/test/test-monitoring-deployment.sh --monitoring-type all
 ```
 
 **Features:**
