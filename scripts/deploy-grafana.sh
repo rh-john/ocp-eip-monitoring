@@ -705,17 +705,37 @@ remove_grafana_operator() {
         
         # Verify no resources are still using the CRDs
         log_info "Verifying no resources are using Grafana CRDs..."
-        local resources_remaining=false
-        for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
-            if oc get "$crd_type" --all-namespaces --no-headers 2>/dev/null | grep -v "^$" >/dev/null; then
-                log_warn "Found remaining $crd_type resources, waiting for deletion..."
-                resources_remaining=true
+        local max_wait=60
+        local waited=0
+        local resources_remaining=true
+        
+        while [[ $waited -lt $max_wait ]] && [[ "$resources_remaining" == "true" ]]; do
+            resources_remaining=false
+            for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
+                local resource_count=$(oc get "$crd_type" --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+                if [[ "$resource_count" -gt 0 ]]; then
+                    log_warn "Found $resource_count remaining $crd_type resource(s), waiting for deletion..."
+                    resources_remaining=true
+                fi
+            done
+            
+            if [[ "$resources_remaining" == "true" ]]; then
+                sleep 5
+                waited=$((waited + 5))
+                if [[ $((waited % 15)) -eq 0 ]]; then
+                    log_info "Still waiting for resources to be deleted... (${waited}s/${max_wait}s)"
+                fi
             fi
         done
         
         if [[ "$resources_remaining" == "true" ]]; then
-            log_info "Waiting additional 15 seconds for resource cleanup..."
-            sleep 15
+            log_warn "Some resources may still exist after waiting ${max_wait}s, attempting CRD deletion anyway..."
+            log_info "Listing remaining resources:"
+            for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
+                oc get "$crd_type" --all-namespaces 2>/dev/null || true
+            done
+        else
+            log_success "All Grafana resources have been deleted"
         fi
         
         local grafana_crds=(
@@ -741,12 +761,18 @@ remove_grafana_operator() {
                     sleep 2
                 fi
                 
+                # Try to delete the CRD
                 local delete_output=$(oc delete crd "$crd" 2>&1)
                 local delete_exit=$?
                 
                 if [[ $delete_exit -eq 0 ]]; then
                     log_success "  ✓ CRD $crd deleted successfully"
                     ((crds_deleted++)) || true
+                    # Wait a moment to verify it's actually deleted
+                    sleep 2
+                    if oc get crd "$crd" &>/dev/null; then
+                        log_warn "  ⚠ CRD $crd still exists after deletion, may have finalizers or be in use"
+                    fi
                 else
                     # Check if error is just "not found" (already deleted)
                     if echo "$delete_output" | grep -qE "(not found|No resources found)"; then
@@ -755,11 +781,27 @@ remove_grafana_operator() {
                         log_error "  ✗ Failed to delete CRD: $crd"
                         echo "$delete_output" | sed 's/^/    /'
                         log_warn "    This may require cluster-admin permissions or CRD may be in use"
+                        
+                        # Check if CRD has resources still using it
+                        local crd_name_short=$(echo "$crd" | cut -d'.' -f1)
+                        local resources_using_crd=$(oc get "$crd_name_short" --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+                        if [[ "$resources_using_crd" -gt 0 ]]; then
+                            log_error "    CRD $crd is still in use by $resources_using_crd resource(s)"
+                            log_info "    Resources using this CRD:"
+                            oc get "$crd_name_short" --all-namespaces 2>/dev/null | head -5 || true
+                        fi
+                        
                         log_info "    Attempting force delete..."
-                        oc delete crd "$crd" --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found)" || {
+                        local force_output=$(oc delete crd "$crd" --force --grace-period=0 2>&1)
+                        local force_exit=$?
+                        if [[ $force_exit -eq 0 ]]; then
+                            log_success "  ✓ CRD $crd force deleted successfully"
+                            ((crds_deleted++)) || true
+                        else
+                            echo "$force_output" | sed 's/^/    /'
                             log_warn "    Force delete also failed for CRD: $crd"
                             ((crds_failed++)) || true
-                        }
+                        fi
                     fi
                 fi
             else
