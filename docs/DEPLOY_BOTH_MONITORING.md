@@ -209,7 +209,5 @@ If you only want to deploy one monitoring stack:
 
 ## See Also
 
-- [COO ServiceMonitor Discovery Issue](./COO_SERVICEMONITOR_DISCOVERY_ISSUE.md)
-- [Prometheus Metrics Troubleshooting](./PROMETHEUS_METRICS_TROUBLESHOOTING.md)
 - [Container Deployment Guide](./CONTAINER_DEPLOYMENT.md)
 
