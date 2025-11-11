@@ -36,15 +36,17 @@ cleanup() {
         local project_root="$PROJECT_ROOT"
         
         log_info "Removing Grafana resources..."
-        # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC and operator)
-        # Note: Grafana CRDs are cluster-wide and only deleted if --delete-crds is specified
+        # Use deploy-grafana.sh --remove-all for comprehensive cleanup (includes RBAC, operator, and CRDs)
+        # Note: Grafana CRDs are cluster-wide and only deleted if --remove-all or --crds is specified
         if [[ -f "${project_root}/scripts/deploy-grafana.sh" ]]; then
             if [[ "$DELETE_CRDS" == "true" ]]; then
                 log_info "CRD deletion enabled (requires cluster-admin permissions)"
-                "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm --delete-crds -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+                # Use --remove-all to remove everything including CRDs
+                "${project_root}/scripts/deploy-grafana.sh" --remove-all --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
             else
                 log_info "CRD deletion disabled (DELETE_CRDS=false)"
-                "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+                # Remove resources and operator, but not CRDs
+                "${project_root}/scripts/deploy-grafana.sh" --remove --operator --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
             fi
         else
             # Fallback to manual cleanup if script not found
