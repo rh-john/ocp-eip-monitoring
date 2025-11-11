@@ -35,7 +35,8 @@ cleanup() {
         local project_root="$PROJECT_ROOT"
         
         log_info "Removing Grafana resources..."
-        # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC, operator, and CRDs)
+        # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC and operator)
+        # Note: Grafana CRDs are cluster-wide and not deleted (they're managed by the operator)
         if [[ -f "${project_root}/scripts/deploy-grafana.sh" ]]; then
             "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
         else
@@ -429,20 +430,16 @@ test_grafana_dashboards() {
     if [[ -n "$grafana_pod" ]]; then
         log_success "Grafana pod '$grafana_pod' is running"
         ((TESTS_PASSED++)) || true
-            
-            # Try to check Grafana API (if accessible)
-            local grafana_ready=$(oc exec -n "$NAMESPACE" "$grafana_pod" -- wget -qO- http://localhost:3000/api/health 2>/dev/null | \
-                python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('database', 'unknown'))" 2>/dev/null || echo "")
-            
-            if [[ "$grafana_ready" == "ok" ]]; then
-                log_success "Grafana API is accessible"
-                ((TESTS_PASSED++)) || true
-            else
-                log_warn "Grafana API may not be ready yet"
-                ((TESTS_WARNED++)) || true
-            fi
+        
+        # Try to check Grafana API (if accessible)
+        local grafana_ready=$(oc exec -n "$NAMESPACE" "$grafana_pod" -- wget -qO- http://localhost:3000/api/health 2>/dev/null | \
+            python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('database', 'unknown'))" 2>/dev/null || echo "")
+        
+        if [[ "$grafana_ready" == "ok" ]]; then
+            log_success "Grafana API is accessible"
+            ((TESTS_PASSED++)) || true
         else
-            log_warn "Grafana pod status: $pod_status"
+            log_warn "Grafana API may not be ready yet"
             ((TESTS_WARNED++)) || true
         fi
     else

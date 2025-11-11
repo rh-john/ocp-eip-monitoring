@@ -15,6 +15,7 @@ source "${PROJECT_ROOT}/scripts/lib/common.sh"
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-coo}"  # coo, uwm, or all
 CLEANUP="${CLEANUP:-true}"  # Set to false to keep resources after test
+DELETE_CRDS="${DELETE_CRDS:-true}"  # Set to false to skip CRD deletion (requires cluster-admin)
 TIMEOUT="${TIMEOUT:-300}"  # Timeout in seconds for resource readiness
 
 # E2E-specific logging function
@@ -34,15 +35,33 @@ cleanup() {
         # Use PROJECT_ROOT from sourced common.sh
         local project_root="$PROJECT_ROOT"
         
+        # Check if CRD deletion is enabled
+        if [[ "$DELETE_CRDS" == "true" ]]; then
+            log_info "CRD deletion enabled (requires cluster-admin permissions)"
+        else
+            log_info "CRD deletion disabled (DELETE_CRDS=false)"
+        fi
+        
         # Use --remove-monitoring all if testing both, otherwise use specific type
         if [[ "$MONITORING_TYPE" == "all" ]]; then
             log_info "Removing all monitoring (COO and UWM)..."
-            "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring all || true
+            # For "all", delete CRDs only for COO (UWM doesn't have CRDs to delete)
+            if [[ "$DELETE_CRDS" == "true" ]]; then
+                "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring coo --delete-crds || true
+                "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring uwm || true
+            else
+                "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring all || true
+            fi
         elif [[ "$MONITORING_TYPE" == "coo" ]]; then
             log_info "Removing COO monitoring..."
-            "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring coo || true
+            if [[ "$DELETE_CRDS" == "true" ]]; then
+                "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring coo --delete-crds || true
+            else
+                "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring coo || true
+            fi
         elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
             log_info "Removing UWM monitoring..."
+            # UWM doesn't have CRDs to delete, so --delete-crds flag is not needed
             "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring uwm || true
         fi
         
@@ -414,6 +433,7 @@ main() {
     log_info "Namespace: $NAMESPACE"
     log_info "Monitoring Type: $MONITORING_TYPE"
     log_info "Cleanup: $CLEANUP"
+    log_info "Delete CRDs: $DELETE_CRDS (requires cluster-admin for COO)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
