@@ -12,513 +12,513 @@ spec:
     matchLabels:
       app: eip-monitor
   json: |
-{
-  "id": null,
-  "title": "EIP Distribution & Heatmap Analysis",
-  "tags": [
-    "eip",
-    "distribution",
-    "heatmap",
-    "nodes"
-  ],
-  "style": "dark",
-  "timezone": "browser",
-  "refresh": "30s",
-  "schemaVersion": 16,
-  "version": 1,
-  "panels": [
-    {
+      {
+      "id": null,
+      "title": "EIP Distribution & Heatmap Analysis",
+      "tags": [
+      "eip",
+      "distribution",
+      "heatmap",
+      "nodes"
+      ],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+      {
       "id": 1,
       "title": "EIP Distribution Heatmap by Node",
       "type": "heatmap",
       "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 0
+      "h": 10,
+      "w": 24,
+      "x": 0,
+      "y": 0
       },
       "targets": [
-        {
-          "expr": "sum by (node) (sum(node_eip_assigned_total))",
-          "format": "heatmap",
-          "legendFormat": "{{node}}",
-          "refId": "A",
-          "instant": false
-        }
+      {
+      "expr": "sum by (node) (sum(node_eip_assigned_total))",
+      "format": "heatmap",
+      "legendFormat": "{{node}}",
+      "refId": "A",
+      "instant": false
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "spectrum"
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "color": {
+      "mode": "spectrum"
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "calculate": true,
-        "cellGap": 2,
-        "cellValues": {
-          "unit": "short"
-        },
-        "color": {
-          "exponent": 0.5,
-          "fill": "#b4f441",
-          "mode": "spectrum",
-          "reverse": false,
-          "scale": "exponential",
-          "scheme": "Spectral",
-          "steps": 64
-        },
-        "exemplars": {
-          "color": "rgba(255,0,255,0.7)"
-        },
-        "filterValues": {
-          "le": 1e-09
-        },
-        "legend": {
-          "show": true
-        },
-        "rowsFrame": {
-          "layout": "auto"
-        },
-        "tooltip": {
-          "show": true,
-          "yHistogram": false
-        },
-        "yAxis": {
-          "axisPlacement": "left",
-          "reverse": false,
-          "unit": "short"
-        }
+      "calculate": true,
+      "cellGap": 2,
+      "cellValues": {
+      "unit": "short"
+      },
+      "color": {
+      "exponent": 0.5,
+      "fill": "#b4f441",
+      "mode": "spectrum",
+      "reverse": false,
+      "scale": "exponential",
+      "scheme": "Spectral",
+      "steps": 64
+      },
+      "exemplars": {
+      "color": "rgba(255,0,255,0.7)"
+      },
+      "filterValues": {
+      "le": 1e-09
+      },
+      "legend": {
+      "show": true
+      },
+      "rowsFrame": {
+      "layout": "auto"
+      },
+      "tooltip": {
+      "show": true,
+      "yHistogram": false
+      },
+      "yAxis": {
+      "axisPlacement": "left",
+      "reverse": false,
+      "unit": "short"
       }
-    },
-    {
+      }
+      },
+      {
       "id": 2,
       "title": "EIP Distribution Histogram",
       "type": "histogram",
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 10
+      "h": 8,
+      "w": 12,
+      "x": 0,
+      "y": 10
       },
       "targets": [
-        {
-          "expr": "sum(node_eip_assigned_total)",
-          "refId": "A",
-          "instant": false
-        }
+      {
+      "expr": "sum(node_eip_assigned_total)",
+      "refId": "A",
+      "instant": false
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "tooltip": false,
-              "viz": false,
-              "legend": false
-            }
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "color": {
+      "mode": "palette-classic"
+      },
+      "custom": {
+      "hideFrom": {
+      "tooltip": false,
+      "viz": false,
+      "legend": false
+      }
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "bucketOffset": 0,
-        "bucketSize": 5
+      "bucketOffset": 0,
+      "bucketSize": 5
       }
-    },
-    {
+      },
+      {
       "id": 3,
       "title": "Node EIP Capacity Utilization",
       "type": "bargauge",
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 10
+      "h": 8,
+      "w": 12,
+      "x": 12,
+      "y": 10
       },
       "targets": [
-        {
-          "expr": "sum(node_eip_utilization_percent)",
-          "legendFormat": "{{node}}",
-          "refId": "A",
-          "instant": false
-        }
+      {
+      "expr": "sum(node_eip_utilization_percent)",
+      "legendFormat": "{{node}}",
+      "refId": "A",
+      "instant": false
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "min": 0,
-          "max": 100,
-          "unit": "percent",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "value": null,
-                "color": "green"
-              },
-              {
-                "value": 50,
-                "color": "yellow"
-              },
-              {
-                "value": 75,
-                "color": "orange"
-              },
-              {
-                "value": 90,
-                "color": "red"
-              }
-            ]
-          }
-        }
+      "defaults": {
+      "min": 0,
+      "max": 100,
+      "unit": "percent",
+      "thresholds": {
+      "mode": "absolute",
+      "steps": [
+      {
+      "value": null,
+      "color": "green"
+      },
+      {
+      "value": 50,
+      "color": "yellow"
+      },
+      {
+      "value": 75,
+      "color": "orange"
+      },
+      {
+      "value": 90,
+      "color": "red"
+      }
+      ]
+      }
+      }
       },
       "options": {
-        "orientation": "horizontal",
-        "displayMode": "gradient",
-        "showUnfilled": true
+      "orientation": "horizontal",
+      "displayMode": "gradient",
+      "showUnfilled": true
       }
-    },
-    {
+      },
+      {
       "id": 4,
       "title": "EIP Distribution Over Time (Stacked Area)",
       "type": "timeseries",
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 18
+      "h": 8,
+      "w": 12,
+      "x": 0,
+      "y": 18
       },
       "targets": [
-        {
-          "expr": "sum by (node) (sum(node_eip_assigned_total))",
-          "legendFormat": "{{node}}",
-          "refId": "A",
-          "instant": false
-        }
+      {
+      "expr": "sum by (node) (sum(node_eip_assigned_total))",
+      "legendFormat": "{{node}}",
+      "refId": "A",
+      "instant": false
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "fillOpacity": 80,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "axisPlacement": "auto",
-            "pointSize": 5
-          },
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "custom": {
+      "drawStyle": "line",
+      "lineInterpolation": "smooth",
+      "fillOpacity": 80,
+      "stacking": {
+      "group": "A",
+      "mode": "normal"
+      },
+      "axisPlacement": "auto",
+      "pointSize": 5
+      },
+      "color": {
+      "mode": "palette-classic"
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
+      "tooltip": {
+      "mode": "multi"
+      },
+      "legend": {
+      "displayMode": "table",
+      "placement": "bottom"
       }
-    },
-    {
+      }
+      },
+      {
       "id": 9,
       "title": "Primary vs Secondary EIP Distribution",
       "type": "timeseries",
       "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 18
+      "h": 8,
+      "w": 12,
+      "x": 12,
+      "y": 18
       },
       "targets": [
-        {
-          "expr": "sum by (node) (sum(node_eip_primary_total))",
-          "legendFormat": "Primary - {{node}}",
-          "refId": "A",
-          "instant": false
-        },
-        {
-          "expr": "sum by (node) (sum(node_eip_secondary_total))",
-          "legendFormat": "Secondary - {{node}}",
-          "refId": "B",
-          "instant": false
-        }
+      {
+      "expr": "sum by (node) (sum(node_eip_primary_total))",
+      "legendFormat": "Primary - {{node}}",
+      "refId": "A",
+      "instant": false
+      },
+      {
+      "expr": "sum by (node) (sum(node_eip_secondary_total))",
+      "legendFormat": "Secondary - {{node}}",
+      "refId": "B",
+      "instant": false
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "fillOpacity": 50,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "pointSize": 5
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "color": {
+      "mode": "palette-classic"
+      },
+      "custom": {
+      "drawStyle": "line",
+      "lineInterpolation": "smooth",
+      "fillOpacity": 50,
+      "stacking": {
+      "group": "A",
+      "mode": "normal"
+      },
+      "pointSize": 5
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "tooltip": {
-          "mode": "multi"
-        },
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom"
-        }
+      "tooltip": {
+      "mode": "multi"
+      },
+      "legend": {
+      "displayMode": "table",
+      "placement": "bottom"
       }
-    },
-    {
+      }
+      },
+      {
       "id": 5,
       "title": "EIP Distribution Variance",
       "type": "stat",
       "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 26
+      "h": 4,
+      "w": 6,
+      "x": 0,
+      "y": 26
       },
       "targets": [
-        {
-          "expr": "eip_distribution_stddev",
-          "legendFormat": "Std Dev",
-          "refId": "A",
-          "instant": true
-        },
-        {
-          "expr": "sum(eip_distribution_gini_coefficient)",
-          "legendFormat": "Gini",
-          "refId": "B",
-          "instant": true
-        }
+      {
+      "expr": "eip_distribution_stddev",
+      "legendFormat": "Std Dev",
+      "refId": "A",
+      "instant": true
+      },
+      {
+      "expr": "sum(eip_distribution_gini_coefficient)",
+      "legendFormat": "Gini",
+      "refId": "B",
+      "instant": true
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "value": null,
-                "color": "green"
-              },
-              {
-                "value": 10,
-                "color": "yellow"
-              },
-              {
-                "value": 20,
-                "color": "red"
-              }
-            ]
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "color": {
+      "mode": "thresholds"
+      },
+      "mappings": [],
+      "thresholds": {
+      "mode": "absolute",
+      "steps": [
+      {
+      "value": null,
+      "color": "green"
+      },
+      {
+      "value": 10,
+      "color": "yellow"
+      },
+      {
+      "value": 20,
+      "color": "red"
+      }
+      ]
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "graphMode": "area",
-        "colorMode": "value",
-        "orientation": "auto"
+      "graphMode": "area",
+      "colorMode": "value",
+      "orientation": "auto"
       }
-    },
-    {
+      },
+      {
       "id": 6,
       "title": "Top 10 Nodes by EIP Count",
       "type": "bargauge",
       "gridPos": {
-        "h": 6,
-        "w": 6,
-        "x": 6,
-        "y": 26
+      "h": 6,
+      "w": 6,
+      "x": 6,
+      "y": 26
       },
       "targets": [
-        {
-          "expr": "topk(10, sum(node_eip_assigned_total))",
-          "legendFormat": "{{node}}",
-          "refId": "A",
-          "instant": false
-        }
+      {
+      "expr": "topk(10, sum(node_eip_assigned_total))",
+      "legendFormat": "{{node}}",
+      "refId": "A",
+      "instant": false
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "color": {
+      "mode": "palette-classic"
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "orientation": "horizontal",
-        "displayMode": "gradient"
+      "orientation": "horizontal",
+      "displayMode": "gradient"
       }
-    },
-    {
+      },
+      {
       "id": 7,
       "title": "EIP Assignment Rate Heatmap (Mosaic)",
       "type": "boazreicher-mosaicplot-panel",
       "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 0,
-        "y": 26
+      "h": 10,
+      "w": 12,
+      "x": 0,
+      "y": 26
       },
       "targets": [
-        {
-          "expr": "sum(eip_assignment_rate_per_minute)",
-          "refId": "A",
-          "instant": true
-        }
+      {
+      "expr": "sum(eip_assignment_rate_per_minute)",
+      "refId": "A",
+      "instant": true
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "spectrum"
-          },
-          "unit": "ops"
-        }
+      "defaults": {
+      "color": {
+      "mode": "spectrum"
+      },
+      "unit": "ops"
+      }
       },
       "options": {
-        "colorScheme": "Oranges",
-        "cellSize": 10,
-        "showLegend": true
+      "colorScheme": "Oranges",
+      "cellSize": 10,
+      "showLegend": true
       }
-    },
-    {
+      },
+      {
       "id": 10,
       "title": "EIP Distribution by Node (Bubble Chart)",
       "type": "digrich-bubblechart-panel",
       "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 36
+      "h": 10,
+      "w": 12,
+      "x": 12,
+      "y": 36
       },
       "targets": [
-        {
-          "expr": "sum(node_eip_assigned_total)",
-          "legendFormat": "{{node}}",
-          "refId": "A",
-          "instant": true
-        },
-        {
-          "expr": "sum(node_eip_utilization_percent)",
-          "legendFormat": "{{node}} - Utilization",
-          "refId": "B",
-          "instant": true
-        }
+      {
+      "expr": "sum(node_eip_assigned_total)",
+      "legendFormat": "{{node}}",
+      "refId": "A",
+      "instant": true
+      },
+      {
+      "expr": "sum(node_eip_utilization_percent)",
+      "legendFormat": "{{node}} - Utilization",
+      "refId": "B",
+      "instant": true
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "short"
-        }
+      "defaults": {
+      "color": {
+      "mode": "palette-classic"
+      },
+      "unit": "short"
+      }
       },
       "options": {
-        "xAxisField": "Value",
-        "yAxisField": "Value",
-        "sizeField": "Value",
-        "colorField": "Value",
-        "groupBy": "node",
-        "showLegend": true
+      "xAxisField": "Value",
+      "yAxisField": "Value",
+      "sizeField": "Value",
+      "colorField": "Value",
+      "groupBy": "node",
+      "showLegend": true
       }
-    },
-    {
+      },
+      {
       "id": 8,
       "title": "Node EIP Distribution Table",
       "type": "table",
       "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 0,
-        "y": 36
+      "h": 10,
+      "w": 12,
+      "x": 0,
+      "y": 36
       },
       "targets": [
-        {
-          "expr": "sum(node_eip_assigned_total)",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "EIPs Assigned",
-          "refId": "A"
-        },
-        {
-          "expr": "sum(node_eip_utilization_percent)",
-          "format": "table",
-          "instant": true,
-          "legendFormat": "Utilization %",
-          "refId": "B"
-        }
+      {
+      "expr": "sum(node_eip_assigned_total)",
+      "format": "table",
+      "instant": true,
+      "legendFormat": "EIPs Assigned",
+      "refId": "A"
+      },
+      {
+      "expr": "sum(node_eip_utilization_percent)",
+      "format": "table",
+      "instant": true,
+      "legendFormat": "Utilization %",
+      "refId": "B"
+      }
       ],
       "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "value": null,
-                "color": "green"
-              }
-            ]
-          }
-        }
+      "defaults": {
+      "custom": {
+      "align": "auto",
+      "displayMode": "auto"
+      },
+      "mappings": [],
+      "thresholds": {
+      "mode": "absolute",
+      "steps": [
+      {
+      "value": null,
+      "color": "green"
+      }
+      ]
+      }
+      }
       },
       "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Value"
-          }
-        ]
+      "showHeader": true,
+      "sortBy": [
+      {
+      "desc": true,
+      "displayName": "Value"
+      }
+      ]
       },
       "transformations": [
-        {
-          "id": "merge",
-          "options": {}
-        },
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "Time": true
-            },
-            "indexByName": {},
-            "renameByName": {
-              "Value #A": "EIPs Assigned",
-              "Value #B": "Utilization %"
-            }
-          }
-        }
+      {
+      "id": "merge",
+      "options": {}
+      },
+      {
+      "id": "organize",
+      "options": {
+      "excludeByName": {
+      "Time": true
+      },
+      "indexByName": {},
+      "renameByName": {
+      "Value #A": "EIPs Assigned",
+      "Value #B": "Utilization %"
+      }
+      }
+      }
       ]
-    }
-  ],
-  "time": {
-    "from": "now-6h",
-    "to": "now"
-  },
-  "timepicker": {
-    "refresh_intervals": [
+      }
+      ],
+      "time": {
+      "from": "now-6h",
+      "to": "now"
+      },
+      "timepicker": {
+      "refresh_intervals": [
       "10s",
       "30s",
       "1m",
@@ -528,6 +528,6 @@ spec:
       "1h",
       "2h",
       "1d"
-    ]
-  }
-}
+      ]
+      }
+      }
