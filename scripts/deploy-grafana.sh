@@ -125,12 +125,51 @@ deploy_grafana() {
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
+        
+        # Check for multiple OperatorGroups (this prevents subscription resolution)
+        local operatorgroup_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+        if [[ "$operatorgroup_count" -gt 1 ]]; then
+            log_warn "Multiple OperatorGroups found in namespace $NAMESPACE (this prevents operator installation)"
+            log_info "Checking for duplicate OperatorGroups..."
+            local operatorgroups=$(oc get operatorgroup -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+            log_info "Found OperatorGroups: $operatorgroups"
+            
+            # Check which OperatorGroup has the MultipleOperatorGroup condition
+            local duplicate_og=""
+            for og in $operatorgroups; do
+                local condition=$(oc get operatorgroup "$og" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="MultipleOperatorGroup")].status}' 2>/dev/null || echo "")
+                if [[ "$condition" == "True" ]]; then
+                    # Check if this is NOT the one we're about to create
+                    if [[ "$og" != "eip-monitoring-operatorgroup" ]]; then
+                        duplicate_og="$og"
+                        log_warn "Found duplicate OperatorGroup: $og (will be deleted)"
+                        break
+                    fi
+                fi
+            done
+            
+            # Delete duplicate OperatorGroups (keep eip-monitoring-operatorgroup if it exists)
+            if [[ -n "$duplicate_og" ]]; then
+                log_info "Deleting duplicate OperatorGroup: $duplicate_og"
+                oc delete operatorgroup "$duplicate_og" -n "$NAMESPACE" 2>/dev/null || true
+                log_success "Deleted duplicate OperatorGroup"
+                sleep 3  # Wait for OLM to reconcile
+            else
+                # If we can't identify which one to delete, warn and try to proceed
+                log_warn "Could not identify which OperatorGroup to delete"
+                log_info "You may need to manually delete duplicate OperatorGroups:"
+                log_info "  oc get operatorgroup -n $NAMESPACE"
+                log_info "  oc delete operatorgroup <duplicate-name> -n $NAMESPACE"
+            fi
+        fi
+        
         local operator_file="k8s/grafana/grafana-operator.yaml"
         if [[ ! -f "$operator_file" ]]; then
             log_error "Grafana operator file not found: $operator_file"
             log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
             return 1
         fi
+        
         if oc apply -f "$operator_file" &>/dev/null; then
             log_success "Grafana Operator subscription and OperatorGroup created"
             log_info "Waiting for Grafana Operator to be installed (this may take a few minutes)..."
@@ -139,25 +178,80 @@ deploy_grafana() {
             local max_wait=300
             local waited=0
             while [[ $waited -lt $max_wait ]]; do
-                namespace_csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
-                if [[ "$namespace_csv_phase" == "Succeeded" ]]; then
+                local csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
+                
+                # Check subscription status for better diagnostics
+                local subscription_state=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+                local current_csv=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.currentCSV}' 2>/dev/null || echo "")
+                local installplan_pending=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="InstallPlanPending")].status}' 2>/dev/null || echo "")
+                
+                if [[ "$csv_phase" == "Succeeded" ]]; then
                     log_success "Grafana Operator installed successfully (CSV phase: Succeeded)"
                     break
                 elif oc get crd grafanas.integreatly.org &>/dev/null; then
                     log_success "Grafana Operator CRD available"
                     break
                 fi
+                
                 sleep 5
                 waited=$((waited + 5))
                 if [[ $((waited % 30)) -eq 0 ]]; then
-                    log_info "Still waiting for Grafana Operator... (${waited}s, CSV phase: ${namespace_csv_phase:-none})"
+                    local status_info="CSV phase: ${csv_phase:-none}"
+                    if [[ -n "$subscription_state" ]]; then
+                        status_info="$status_info, Subscription state: $subscription_state"
+                    fi
+                    if [[ -n "$current_csv" ]]; then
+                        status_info="$status_info, CSV: $current_csv"
+                    fi
+                    if [[ "$installplan_pending" == "True" ]]; then
+                        status_info="$status_info, InstallPlan pending"
+                    fi
+                    log_info "Still waiting for Grafana Operator... (${waited}s, $status_info)"
+                    
+                    # If CSV phase is still "none" after 60s, check for common issues
+                    if [[ $waited -ge 60 ]] && ([[ -z "$csv_phase" ]] || [[ "$csv_phase" == "none" ]]); then
+                        # Check for multiple OperatorGroups again
+                        local og_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+                        if [[ "$og_count" -gt 1 ]]; then
+                            log_warn "Multiple OperatorGroups still detected - this prevents CSV creation"
+                            log_info "Run: oc get operatorgroup -n $NAMESPACE"
+                            log_info "Delete duplicates: oc delete operatorgroup <name> -n $NAMESPACE"
+                        fi
+                        
+                        # Check InstallPlan status
+                        local installplan=$(oc get installplan -n "$NAMESPACE" --no-headers 2>/dev/null | head -1 || echo "")
+                        if [[ -z "$installplan" ]]; then
+                            log_warn "No InstallPlan found - subscription may not be resolving"
+                            log_info "Check subscription: oc get subscription grafana-operator -n $NAMESPACE -o yaml"
+                        fi
+                    fi
                 fi
             done
             
             if [[ $waited -ge $max_wait ]]; then
                 log_warn "Grafana Operator may not be fully ready yet (waited ${max_wait}s)"
-                log_info "Current CSV phase: ${namespace_csv_phase:-unknown}"
+                log_info "Current CSV phase: ${csv_phase:-unknown}"
+                
+                # Provide diagnostic information
+                local final_state=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
+                local final_csv=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.currentCSV}' 2>/dev/null || echo "")
+                if [[ -n "$final_state" ]]; then
+                    log_info "Subscription state: $final_state"
+                fi
+                if [[ -n "$final_csv" ]]; then
+                    log_info "Expected CSV: $final_csv"
+                fi
+                
+                # Check for common issues
+                local og_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
+                if [[ "$og_count" -gt 1 ]]; then
+                    log_error "Multiple OperatorGroups detected - this prevents operator installation"
+                    log_info "Fix: oc get operatorgroup -n $NAMESPACE"
+                    log_info "Delete duplicates: oc delete operatorgroup <name> -n $NAMESPACE"
+                fi
+                
                 log_info "It may take several minutes to fully install"
+                log_info "Check status: oc get csv,installplan,subscription -n $NAMESPACE"
             fi
         else
             log_error "Failed to install Grafana Operator"
@@ -344,6 +438,7 @@ deploy_grafana() {
 
 # Remove Grafana resources
 remove_grafana() {
+<<<<<<< HEAD
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Removing Grafana resources..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -625,7 +720,7 @@ main() {
     check_prerequisites
     
     log_info "Connected to OpenShift as: $(oc whoami)"
-    log_info "Deploying to namespace: $NAMESPACE"
+    log_info "Namespace: $NAMESPACE"
     
     # Handle removal
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then
