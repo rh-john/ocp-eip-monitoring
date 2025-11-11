@@ -444,7 +444,6 @@ deploy_grafana() {
 
 # Remove Grafana resources
 remove_grafana() {
-<<<<<<< HEAD
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Removing Grafana resources..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
