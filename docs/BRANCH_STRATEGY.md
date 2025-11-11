@@ -15,37 +15,38 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 - **Merges**: From component branches (`eip-monitor`, `dev`, `monitoring`, `grafana`)
 - **Automation**: Auto-bumps version, creates pre-release tags
 - **Testing**: Integration tests run here
-- **Note**: Not for active development - only merges and integration testing
 
 ### `eip-monitor`
-- **Purpose**: EIP monitoring tool development (src/ directory, k8s-manifests.yaml, deploy-eip.sh)
+- **Purpose**: EIP monitoring tool development
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
-- **Scope**: Core application code, deployment manifests, build scripts
+- **Scope**: `src/`, `k8s/deployment/k8s-manifests.yaml`, `scripts/deploy-eip.sh` (or `build-and-deploy.sh`)
 
 ### `dev`
 - **Purpose**: Cross-cutting development work and shared infrastructure
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
 - **Scope**:
-  - **E2E tests** (`tests/e2e/`) - Integration tests that span multiple components
-  - **Shared scripts** (`scripts/lib/common.sh`, test scripts) - Utilities used across components
-  - **CI/CD configuration** - GitHub Actions, workflows
-  - **Cross-component documentation** - Docs that cover multiple components
-  - **General tooling** - Scripts and utilities not specific to one component
-  - **Integration helpers** - Scripts that coordinate between components
+  - **E2E Tests**: `tests/e2e/` - Tests that verify integration of multiple components
+  - **Test Scripts**: `scripts/test/` - Test scripts that work across components (`test-deployment.sh`, `test-monitoring-deployment.sh`, `test-dashboard-queries.sh`)
+  - **Shared Library**: `scripts/lib/common.sh` - Shared functions used by deploy and test scripts
+  - **Debug/Validation Scripts**: `scripts/debug/` - Debugging, validation, and troubleshooting scripts (not tracked by git)
+  - **CI/CD**: `.github/workflows/` - GitHub Actions workflows
+  - **Cross-Component Docs**: Documentation covering multiple components
+  - **Integration Scripts**: Scripts that coordinate between components (e.g., `merge-to-staging.sh`, `create-release.sh`, `bump-version.sh`)
+  - **Component Scripts (for testing)**: Component-specific deploy scripts may exist here for integration testing, but primary development happens in component branches
 
 ### `monitoring`
 - **Purpose**: Monitoring infrastructure (COO/UWM) development
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
-- **Scope**: Monitoring manifests, ServiceMonitors, PrometheusRules, deploy-monitoring.sh
+- **Scope**: `k8s/monitoring/`, `scripts/deploy-monitoring.sh`
 
 ### `grafana`
 - **Purpose**: Grafana dashboards and visualization development
 - **Workflow**: Work directly on this branch
 - **Merges**: To `staging` when ready
-- **Scope**: Grafana dashboards, datasources, deploy-grafana.sh
+- **Scope**: `k8s/grafana/`, `scripts/deploy-grafana.sh`
 
 ## Workflow
 
@@ -69,27 +70,6 @@ This document describes the git branch strategy for the OpenShift EIP Monitoring
 2. Automated release tag creation
 3. Container images pushed to quay.io
 
-## What Goes Where?
-
-### Component Branches (Specific Work)
-- **`eip-monitor`**: `src/`, `k8s/deployment/k8s-manifests.yaml`, `scripts/build-and-deploy.sh`
-- **`monitoring`**: `k8s/monitoring/`, `scripts/deploy-monitoring.sh`
-- **`grafana`**: `k8s/grafana/`, `scripts/deploy-grafana.sh`
-
-### `dev` Branch (Cross-Cutting Work)
-- **E2E Tests**: `tests/e2e/` - Tests that verify integration of multiple components
-- **Shared Libraries**: `scripts/lib/common.sh` - Functions used by multiple deploy/test scripts
-- **Test Scripts**: `scripts/test/` - Test scripts that work across components
-- **CI/CD**: `.github/workflows/` - GitHub Actions workflows
-- **Cross-Component Docs**: Documentation covering multiple components
-- **Integration Scripts**: Scripts that coordinate between components (e.g., `merge-to-staging.sh`)
-
-### `staging` Branch (Integration Only)
-- **NOT for active development**
-- **Only merges** from component branches
-- **Integration testing** happens here
-- **Pre-release validation** before merging to `main`
-
 ## Feature Branches (Optional)
 
 For larger features or collaboration:
@@ -98,7 +78,6 @@ For larger features or collaboration:
   - `feature/eip-monitor/new-metric`
   - `feature/monitoring/coo-improvements`
   - `feature/grafana/new-dashboard`
-  - `feature/dev/e2e-test-improvements`
 - Merge to respective component branch when complete
 
 ## Branch Protection
@@ -115,6 +94,28 @@ Recommended GitHub branch protection rules:
 - Require status checks to pass
 - Allow force pushes (for hotfixes if needed)
 
+## What Goes Where?
+
+### Component Branches (Specific Work)
+- **`eip-monitor`**: `src/`, `k8s/deployment/k8s-manifests.yaml`, `scripts/deploy-eip.sh` (or `build-and-deploy.sh`)
+- **`monitoring`**: `k8s/monitoring/`, `scripts/deploy-monitoring.sh`
+- **`grafana`**: `k8s/grafana/`, `scripts/deploy-grafana.sh`
+
+### `dev` Branch (Cross-Cutting Work)
+- **E2E Tests**: `tests/e2e/` - Tests that verify integration of multiple components
+- **Test Scripts**: `scripts/test/` - Test scripts that work across components
+- **Shared Library**: `scripts/lib/common.sh` - Functions used by multiple deploy/test scripts
+- **Debug Scripts**: `scripts/debug/` - Debugging and troubleshooting scripts (not tracked by git)
+- **CI/CD**: `.github/workflows/` - GitHub Actions workflows
+- **Cross-Component Docs**: Documentation covering multiple components
+- **Integration Scripts**: Scripts that coordinate between components (e.g., `merge-to-staging.sh`)
+
+### `staging` Branch (Integration Only)
+- **NOT for active development**
+- **Only merges** from component branches
+- **Integration testing** happens here
+- **Pre-release validation** before merging to `main`
+
 ## Best Practices
 
 1. **Keep branches in sync**: Regularly merge `main` into component branches
@@ -123,3 +124,4 @@ Recommended GitHub branch protection rules:
 4. **Use clear commits**: Meaningful commit messages help with release notes
 5. **Don't develop in staging**: `staging` is for integration, not active development
 6. **E2E tests in dev**: Integration tests belong in `dev` branch, not `staging`
+

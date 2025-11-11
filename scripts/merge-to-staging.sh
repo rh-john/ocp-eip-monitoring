@@ -11,6 +11,7 @@
 #   --dry-run          Show what would be merged without actually merging
 #   --skip-tests       Skip running tests after merge
 #   --push             Automatically push to remote (default: requires confirmation)
+#   --use-local        Merge from local branches if they're ahead of remote (default: only merge from remote)
 #   --help, -h         Show this help message
 #
 
@@ -26,6 +27,7 @@ TARGET_BRANCH="staging"
 DRY_RUN=false
 SKIP_TESTS=false
 AUTO_PUSH=false
+USE_LOCAL=false
 
 # Colors for output
 RED='\033[0;31m'
@@ -64,6 +66,7 @@ Options:
   --dry-run          Show what would be merged without actually merging
   --skip-tests       Skip running tests after merge
   --push             Automatically push to remote (default: requires confirmation)
+  --use-local        Merge from local branches if they're ahead of remote (default: only merge from remote)
   --help, -h         Show this help message
 
 Feature Branches:
@@ -135,22 +138,52 @@ check_merge_status() {
     
     local needs_merge=false
     for branch in "${FEATURE_BRANCHES[@]}"; do
-        if ! git rev-parse --verify "origin/$branch" &>/dev/null; then
-            log_warn "Branch origin/$branch not found, skipping"
-            continue
+        local remote_exists=false
+        local local_exists=false
+        local remote_ahead=0
+        local local_ahead=0
+        
+        # Check remote branch
+        if git rev-parse --verify "origin/$branch" &>/dev/null; then
+            remote_exists=true
+            if ! git merge-base --is-ancestor "origin/$branch" "$TARGET_BRANCH" 2>/dev/null; then
+                remote_ahead=$(git rev-list --count "$TARGET_BRANCH..origin/$branch" 2>/dev/null || echo "0")
+            fi
         fi
         
-        # Check if branch is already merged
-        if git merge-base --is-ancestor "origin/$branch" "$TARGET_BRANCH" 2>/dev/null; then
+        # Check local branch
+        if git rev-parse --verify "$branch" &>/dev/null; then
+            local_exists=true
+            if ! git merge-base --is-ancestor "$branch" "$TARGET_BRANCH" 2>/dev/null; then
+                local_ahead=$(git rev-list --count "$TARGET_BRANCH..$branch" 2>/dev/null || echo "0")
+            fi
+            
+            # Check if local is ahead of remote
+            if [[ "$remote_exists" == "true" ]]; then
+                local local_vs_remote=$(git rev-list --count "origin/$branch..$branch" 2>/dev/null || echo "0")
+                if [[ "$local_vs_remote" -gt 0 ]]; then
+                    log_warn "  ⚠ $branch - local branch has $local_vs_remote unpushed commit(s)"
+                    if [[ "$USE_LOCAL" == "false" ]]; then
+                        log_info "     (Use --use-local to merge from local branch, or push first)"
+                    fi
+                fi
+            fi
+        fi
+        
+        # Determine status
+        if [[ "$remote_exists" == "false" ]] && [[ "$local_exists" == "false" ]]; then
+            log_warn "  ✗ $branch - branch not found (remote or local)"
+            continue
+        elif [[ "$remote_ahead" -gt 0 ]]; then
+            log_warn "  → $branch (remote) - $remote_ahead commit(s) ahead"
+            needs_merge=true
+        elif [[ "$local_ahead" -gt 0 ]] && [[ "$USE_LOCAL" == "true" ]]; then
+            log_warn "  → $branch (local) - $local_ahead commit(s) ahead"
+            needs_merge=true
+        elif [[ "$remote_ahead" -eq 0 ]] && [[ "$local_ahead" -eq 0 ]]; then
             log_info "  ✓ $branch - already merged"
         else
-            local commits_ahead=$(git rev-list --count "$TARGET_BRANCH..origin/$branch" 2>/dev/null || echo "0")
-            if [[ "$commits_ahead" -gt 0 ]]; then
-                log_warn "  → $branch - $commits_ahead commit(s) ahead"
-                needs_merge=true
-            else
-                log_info "  ✓ $branch - up to date"
-            fi
+            log_info "  ✓ $branch - up to date"
         fi
     done
     
@@ -167,15 +200,60 @@ check_merge_status() {
 # Merge a branch
 merge_branch() {
     local branch="$1"
-    local branch_ref="origin/$branch"
+    local branch_ref=""
+    local branch_source=""
     
-    log_info "Merging $branch into $TARGET_BRANCH..."
+    # Determine which branch to merge from
+    local remote_exists=false
+    local local_exists=false
+    local remote_ahead=0
+    local local_ahead=0
+    local local_vs_remote=0
     
-    # Check if branch exists
-    if ! git rev-parse --verify "$branch_ref" &>/dev/null; then
-        log_warn "Branch $branch_ref not found, skipping"
+    # Check remote branch
+    if git rev-parse --verify "origin/$branch" &>/dev/null; then
+        remote_exists=true
+        if ! git merge-base --is-ancestor "origin/$branch" "$TARGET_BRANCH" 2>/dev/null; then
+            remote_ahead=$(git rev-list --count "$TARGET_BRANCH..origin/$branch" 2>/dev/null || echo "0")
+        fi
+    fi
+    
+    # Check local branch
+    if git rev-parse --verify "$branch" &>/dev/null; then
+        local_exists=true
+        if ! git merge-base --is-ancestor "$branch" "$TARGET_BRANCH" 2>/dev/null; then
+            local_ahead=$(git rev-list --count "$TARGET_BRANCH..$branch" 2>/dev/null || echo "0")
+        fi
+        
+        # Check if local is ahead of remote
+        if [[ "$remote_exists" == "true" ]]; then
+            local_vs_remote=$(git rev-list --count "origin/$branch..$branch" 2>/dev/null || echo "0")
+        fi
+    fi
+    
+    # Determine which branch to use
+    if [[ "$USE_LOCAL" == "true" ]] && [[ "$local_exists" == "true" ]] && [[ "$local_ahead" -gt 0 ]]; then
+        # Use local branch if --use-local and local has commits
+        branch_ref="$branch"
+        branch_source="local"
+    elif [[ "$remote_exists" == "true" ]] && [[ "$remote_ahead" -gt 0 ]]; then
+        # Use remote branch if it has commits
+        branch_ref="origin/$branch"
+        branch_source="remote"
+    elif [[ "$local_exists" == "true" ]] && [[ "$local_ahead" -gt 0 ]] && [[ "$remote_exists" == "false" ]]; then
+        # Use local branch if remote doesn't exist
+        branch_ref="$branch"
+        branch_source="local"
+    elif [[ "$remote_exists" == "true" ]]; then
+        # Default to remote
+        branch_ref="origin/$branch"
+        branch_source="remote"
+    else
+        log_warn "Branch $branch not found (remote or local), skipping"
         return 0
     fi
+    
+    log_info "Merging $branch into $TARGET_BRANCH (from $branch_source)..."
     
     # Check if already merged
     if git merge-base --is-ancestor "$branch_ref" "$TARGET_BRANCH" 2>/dev/null; then
@@ -183,15 +261,21 @@ merge_branch() {
         return 0
     fi
     
+    # Warn if local has unpushed commits and we're merging from remote
+    if [[ "$local_vs_remote" -gt 0 ]] && [[ "$branch_source" == "remote" ]]; then
+        log_warn "  ⚠ Local $branch has $local_vs_remote unpushed commit(s) that will NOT be merged"
+        log_info "     (Use --use-local to merge from local branch instead)"
+    fi
+    
     if [[ "$DRY_RUN" == "true" ]]; then
         local commits=$(git rev-list --count "$TARGET_BRANCH..$branch_ref" 2>/dev/null || echo "0")
-        log_info "  [DRY RUN] Would merge $commits commit(s) from $branch"
+        log_info "  [DRY RUN] Would merge $commits commit(s) from $branch ($branch_source)"
         return 0
     fi
     
     # Perform merge
     if git merge "$branch_ref" --no-ff -m "Merge $branch into $TARGET_BRANCH: integration" 2>&1; then
-        log_success "Successfully merged $branch"
+        log_success "Successfully merged $branch (from $branch_source)"
         return 0
     else
         local merge_status=$?
@@ -326,6 +410,10 @@ parse_args() {
                 ;;
             --push)
                 AUTO_PUSH=true
+                shift
+                ;;
+            --use-local)
+                USE_LOCAL=true
                 shift
                 ;;
             --help|-h)
