@@ -49,6 +49,8 @@ cleanup() {
             log_info "Removing UWM monitoring..."
             "${project_root}/scripts/deploy-monitoring.sh" --remove-monitoring uwm || true
         fi
+        
+        # Note: If Grafana was deployed separately, deploy-grafana.sh --all will handle CRD cleanup
     else
         log_info "Skipping cleanup (CLEANUP=false)"
     fi

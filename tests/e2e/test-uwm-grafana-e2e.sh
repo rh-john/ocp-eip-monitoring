@@ -39,7 +39,7 @@ cleanup() {
         local project_root="$(dirname "$(dirname "$script_dir")")"
         
         log_info "Removing Grafana resources..."
-        # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC and operator)
+        # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC, operator, and CRDs)
         if [[ -f "${project_root}/scripts/deploy-grafana.sh" ]]; then
             "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
         else
