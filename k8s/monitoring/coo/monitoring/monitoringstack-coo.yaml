@@ -1,0 +1,29 @@
+---
+# COO MonitoringStack CR
+# Deploys Prometheus and Alertmanager instances managed by COO
+apiVersion: monitoring.rhobs/v1alpha1
+kind: MonitoringStack
+metadata:
+  name: eip-monitoring-stack
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    coo: eip-monitoring
+    app.kubernetes.io/part-of: eip-monitoring-stack
+spec:
+  logLevel: info
+  retention: 15d
+  resourceSelector:
+    matchLabels:
+      app: eip-monitor
+  prometheusConfig:
+    # Persistent storage for Prometheus data
+    # This ensures metrics are retained across pod restarts
+    persistentVolumeClaim:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi  # Adjust size based on retention period and metrics volume
+      # storageClassName: gp3  # Uncomment and set to your cluster's storage class if needed
+      # If not specified, uses the cluster's default storage class

@@ -273,20 +273,68 @@ oc get prometheusrule eip-monitor-alerts -n eip-monitoring
 ocp-eip-monitoring/
 ├── src/metrics_server.py          # Core monitoring application
 ├── k8s/                           # Kubernetes manifests
-│   └── deployment/
-│       └── k8s-manifests.yaml     # Deployment resources (includes Service, Deployment, RBAC, etc.)
+│   ├── deployment/
+│   │   └── k8s-manifests.yaml     # Deployment resources (includes Service, Deployment, RBAC, etc.)
+│   ├── monitoring/                # Monitoring infrastructure (COO/UWM)
+│   └── grafana/                   # Grafana dashboards and configuration
 ├── scripts/                       # Operational scripts
 │   ├── build-and-deploy.sh        # Build and deployment
-│   └── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
+│   ├── deploy-monitoring.sh       # Deploy monitoring infrastructure (COO/UWM)
+│   ├── deploy-grafana.sh          # Deploy Grafana operator and dashboards
+│   ├── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
+│   ├── test/
+│   │   ├── test-monitoring-deployment.sh  # Comprehensive monitoring tests
+│   └── lib/                       # Shared script library
+│       └── common.sh              # Common functions (pod finding, logging, prerequisites)
+├── tests/                         # Test suites
+│   └── e2e/                       # End-to-end tests
+│       ├── test-monitoring-e2e.sh # E2E monitoring tests
+│       └── test-uwm-grafana-e2e.sh # E2E Grafana tests
 └── docs/                          # Documentation
     ├── CONTAINER_DEPLOYMENT.md    # Deployment guide
     └── ENHANCED_METRICS_GUIDE.md  # Complete metrics and alerts reference (50+ metrics, 30+ alerts)
 ```
 
+## Scripts and Automation
+
+### Shared Library
+
+The project includes a shared library (`scripts/lib/common.sh`) that provides reusable functions for:
+- **Pod Finding**: Locate Prometheus, ThanosQuerier, and Grafana pods using multiple selector strategies
+- **Logging**: Consistent logging functions (`log_info`, `log_success`, `log_warn`, `log_error`)
+- **Prerequisites**: Check for required tools (`oc`, `jq`) and cluster connectivity
+- **Resource Waiting**: Wait for Kubernetes resources and pods to become ready
+- **Helper Functions**: `oc_cmd()` and `oc_cmd_silent()` for verbose mode handling
+
+**Usage in scripts:**
+```bash
+# Source the common library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
+# Use shared functions
+find_prometheus_pod "$NAMESPACE" "true"
+find_query_pod "$NAMESPACE" "true"
+check_prerequisites
+```
+
+### Key Scripts
+
+- **`scripts/deploy-monitoring.sh`**: Deploy COO or UWM monitoring infrastructure
+- **`scripts/deploy-grafana.sh`**: Deploy Grafana operator, instance, and dashboards
+- **`scripts/test/test-monitoring-deployment.sh`**: Comprehensive monitoring verification
+- **`tests/e2e/test-monitoring-e2e.sh`**: End-to-end monitoring tests
+- **`tests/e2e/test-uwm-grafana-e2e.sh`**: End-to-end Grafana deployment tests
+
+All scripts use the shared `common.sh` library for consistent behavior and reduced code duplication.
+
 ## Documentation
 
 - **[Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Complete deployment instructions
 - **[Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md)** - All metrics and alerts
+- **[E2E Tests](tests/e2e/README.md)** - End-to-end testing guide
+- **[Grafana Dashboards](k8s/grafana/README.md)** - Dashboard documentation
 
 ## License
 

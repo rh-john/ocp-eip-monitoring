@@ -3,16 +3,13 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-<<<<<<< HEAD
   name: eip-monitor-uwm
-=======
-  name: eip-monitor
->>>>>>> eda7299 (Add COO/UWM monitoring support with shared Grafana resources)
   namespace: eip-monitoring
   labels:
     app: eip-monitor
     monitoring: "true"
     monitoring-type: "uwm"  # Specific label for selective deletion
+    openshift.io/user-monitoring: "true"  # Required for UWM Prometheus discovery
 spec:
   selector:
     matchLabels:

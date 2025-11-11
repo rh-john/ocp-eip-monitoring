@@ -12,4 +12,7 @@ spec:
   source: redhat-operators
   sourceNamespace: openshift-marketplace
   installPlanApproval: Automatic
+  # Explicitly reference the CSV to fix subscription resolution
+  # This helps OLM link the subscription to the existing CSV
+  startingCSV: cluster-observability-operator.v1.2.2
 

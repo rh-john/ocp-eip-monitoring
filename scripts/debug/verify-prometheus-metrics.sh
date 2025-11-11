@@ -778,7 +778,7 @@ verify_metrics() {
             log_verbose "  3. There's a timing issue with ServiceMonitor discovery"
             log_verbose ""
             log_verbose "Recommended fix:"
-            log_verbose "  Run: ./scripts/fix-prometheus-discovery.sh"
+            log_verbose "  Run: ./scripts/debug/fix-prometheus-discovery.sh"
             log_verbose "  Or manually: oc delete pod $prom_pod -n $prom_namespace"
             log_verbose ""
             log_verbose "Additional troubleshooting:"

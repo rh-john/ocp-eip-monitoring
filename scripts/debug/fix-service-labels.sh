@@ -135,5 +135,5 @@ fi
 
 log_info ""
 log_info "Service labels have been fixed. The ServiceMonitor should now be able to discover the service."
-log_info "Run './scripts/verify-prometheus-metrics.sh' to verify Prometheus discovery."
+log_info "Run './scripts/debug/verify-prometheus-metrics.sh' to verify Prometheus discovery."
 

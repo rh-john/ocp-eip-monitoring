@@ -171,7 +171,7 @@ main() {
     log_info ""
     log_info "Next steps:"
     log_info "  1. Run the verification script to check if ServiceMonitor is discovered:"
-    log_info "     ./scripts/verify-prometheus-metrics.sh"
+    log_info "     ./scripts/debug/verify-prometheus-metrics.sh"
     log_info "  2. Check Prometheus targets:"
     log_info "     oc port-forward <prometheus-pod> 9090:9090 -n $prom_namespace"
     log_info "     Then visit: http://localhost:9090/targets"

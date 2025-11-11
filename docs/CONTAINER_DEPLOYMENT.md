@@ -37,7 +37,7 @@ The containerized EIP monitor provides:
 | `k8s-manifests.yaml` | Complete OpenShift deployment resources (RBAC, ConfigMap, Deployment, Service) |
 | `servicemonitor.yaml` | Prometheus ServiceMonitor and comprehensive alerting rules |
 | `build-and-deploy.sh` | Build, push, and deployment script |
-| `test-deployment.sh` | Deployment validation and health check script |
+| `test-deployment.sh` | Deployment validation and health check script (in `scripts/test/`) |
 | `deploy-test-eips.sh` | Automated test EgressIP creation for monitoring validation |
 
 ## Quick Start

@@ -56,7 +56,7 @@ This creates:
 oc apply -f k8s/monitoring/coo/operator/coo-operator-subscription.yaml
 
 # Deploy COO monitoring resources
-oc apply -f k8s/monitoring/coo/monitoring/coo-monitoringstack.yaml
+oc apply -f k8s/monitoring/coo/monitoring/monitoringstack-coo.yaml
 oc apply -f k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml
 oc apply -f k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml
 oc apply -f k8s/grafana/coo/grafana-rbac-coo.yaml
@@ -154,7 +154,7 @@ labels:
 
 3. **Fix service labels if needed**:
    ```bash
-   ./scripts/fix-service-labels.sh
+   ./scripts/debug/fix-service-labels.sh
    ```
 
 ### NetworkPolicy Blocking Traffic
