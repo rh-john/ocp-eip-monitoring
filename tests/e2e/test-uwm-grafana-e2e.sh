@@ -14,6 +14,7 @@ source "${PROJECT_ROOT}/scripts/lib/common.sh"
 
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 CLEANUP="${CLEANUP:-true}"  # Set to false to keep resources after test
+DELETE_CRDS="${DELETE_CRDS:-true}"  # Set to false to skip CRD deletion (requires cluster-admin)
 TIMEOUT="${TIMEOUT:-120}"  # Timeout in seconds for resource readiness (default: 2 minutes)
 UWM_NAMESPACE="openshift-user-workload-monitoring"
 
@@ -36,9 +37,19 @@ cleanup() {
         
         log_info "Removing Grafana resources..."
         # Use deploy-grafana.sh --all for comprehensive cleanup (includes RBAC and operator)
+<<<<<<< Updated upstream
         # Note: Grafana CRDs are cluster-wide and not deleted (they're managed by the operator)
+=======
+        # Note: Grafana CRDs are cluster-wide and only deleted if --delete-crds is specified
+>>>>>>> Stashed changes
         if [[ -f "${project_root}/scripts/deploy-grafana.sh" ]]; then
-            "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+            if [[ "$DELETE_CRDS" == "true" ]]; then
+                log_info "CRD deletion enabled (requires cluster-admin permissions)"
+                "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm --delete-crds -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+            else
+                log_info "CRD deletion disabled (DELETE_CRDS=false)"
+                "${project_root}/scripts/deploy-grafana.sh" --all --monitoring-type uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+            fi
         else
             # Fallback to manual cleanup if script not found
             log_warn "deploy-grafana.sh not found, using manual cleanup"
@@ -456,6 +467,7 @@ main() {
     log_info "Namespace: $NAMESPACE"
     log_info "UWM Namespace: $UWM_NAMESPACE"
     log_info "Cleanup: $CLEANUP"
+    log_info "Delete CRDs: $DELETE_CRDS (requires cluster-admin)"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
