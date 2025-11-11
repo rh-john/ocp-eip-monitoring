@@ -294,6 +294,90 @@ oc_cmd_silent() {
     fi
 }
 
+# Batch apply multiple Kubernetes manifest files
+# Usage: batch_apply <namespace> <file1> [file2] [file3] ...
+#   Applies all files in a single oc apply command for better performance
+#   Returns: 0 on success, 1 on error
+batch_apply() {
+    local namespace=$1
+    shift
+    local files=("$@")
+    
+    if [[ ${#files[@]} -eq 0 ]]; then
+        log_error "batch_apply: at least one file required"
+        return 1
+    fi
+    
+    # Check if all files exist
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            log_error "batch_apply: file not found: $file"
+            return 1
+        fi
+    done
+    
+    # Apply all files at once using process substitution
+    # This is more efficient than applying them sequentially
+    if [[ -n "$namespace" ]]; then
+        if oc apply -n "$namespace" -f "${files[@]}" &>/dev/null; then
+            return 0
+        else
+            # If batch apply fails, try applying individually for better error messages
+            local failed=0
+            for file in "${files[@]}"; do
+                if ! oc apply -n "$namespace" -f "$file" &>/dev/null; then
+                    log_error "Failed to apply: $file"
+                    ((failed++))
+                fi
+            done
+            return $((failed > 0 ? 1 : 0))
+        fi
+    else
+        if oc apply -f "${files[@]}" &>/dev/null; then
+            return 0
+        else
+            local failed=0
+            for file in "${files[@]}"; do
+                if ! oc apply -f "$file" &>/dev/null; then
+                    log_error "Failed to apply: $file"
+                    ((failed++))
+                fi
+            done
+            return $((failed > 0 ? 1 : 0))
+        fi
+    fi
+}
+
+# Check if a CRD exists (cached to avoid repeated calls)
+# Usage: check_crd_exists <crd_name>
+#   Returns: 0 if CRD exists, 1 if not
+#   Uses a cache to avoid repeated oc get calls
+check_crd_exists() {
+    local crd_name=$1
+    local cache_key="crd_${crd_name}"
+    
+    # Check cache first (if available)
+    if [[ -n "${CRD_CACHE[$crd_name]:-}" ]]; then
+        [[ "${CRD_CACHE[$crd_name]}" == "true" ]]
+        return $?
+    fi
+    
+    # Check CRD existence
+    if oc get crd "$crd_name" &>/dev/null; then
+        # Cache the result
+        CRD_CACHE[$crd_name]="true"
+        return 0
+    else
+        CRD_CACHE[$crd_name]="false"
+        return 1
+    fi
+}
+
+# Initialize CRD cache (declare as associative array if not already declared)
+if ! declare -p CRD_CACHE &>/dev/null; then
+    declare -A CRD_CACHE
+fi
+
 # Remove finalizers from Kubernetes resources
 # Usage: remove_finalizers <resource_type> <namespace> [resource_name]
 #   If resource_name is provided, removes finalizers from that specific resource

@@ -97,7 +97,7 @@ deploy_grafana() {
     
     if [[ "$cluster_csv_phase" == "Succeeded" ]] || [[ "$namespace_csv_phase" == "Succeeded" ]]; then
         log_info "Grafana Operator is already installed and ready (CSV phase: Succeeded)"
-    elif oc get crd grafanas.integreatly.org &>/dev/null; then
+    elif check_crd_exists grafanas.integreatly.org; then
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
@@ -164,7 +164,7 @@ deploy_grafana() {
                 if [[ "$csv_phase" == "Succeeded" ]]; then
                     log_success "Grafana Operator installed successfully (CSV phase: Succeeded)"
                     break
-                elif oc get crd grafanas.integreatly.org &>/dev/null; then
+                elif check_crd_exists grafanas.integreatly.org; then
                     log_success "Grafana Operator CRD available"
                     break
                 fi
@@ -357,7 +357,7 @@ deploy_grafana() {
     # Plugins are configured in grafana-instance.yaml via spec.plugins
     # The Grafana Operator will automatically install them during deployment
     log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
-    # Deploy Grafana Dashboards
+    # Deploy Grafana Dashboards (optimized: batch apply for better performance)
     log_info "Deploying Grafana Dashboards..."
     local dashboard_files=(
         # Original dashboards
@@ -380,27 +380,32 @@ deploy_grafana() {
         "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
     )
     
-    local dashboards_deployed=0
-    local dashboards_failed=0
-    
-    for dashboard_file in "${dashboard_files[@]}"; do
-        local dashboard_name=$(basename "$dashboard_file" .yaml)
-        local dashboard_output=$(oc apply -f "$dashboard_file" 2>&1)
-        local dashboard_exit=$?
-        if [[ $dashboard_exit -eq 0 ]]; then
-            log_success "  ✓ $dashboard_name deployed"
-            ((dashboards_deployed++))
-        else
-            log_error "  ✗ Failed to deploy $dashboard_name"
-            echo "$dashboard_output" | sed 's/^/    /'
-            ((dashboards_failed++))
-        fi
-    done
-    
-    if [[ $dashboards_failed -eq 0 ]]; then
-        log_success "All $dashboards_deployed Grafana Dashboards deployed successfully!"
+    # Batch apply all dashboards at once (more efficient than sequential applies)
+    log_info "Applying ${#dashboard_files[@]} dashboards..."
+    if oc apply -n "$NAMESPACE" -f "${dashboard_files[@]}" &>/dev/null; then
+        log_success "All ${#dashboard_files[@]} Grafana Dashboards deployed successfully!"
     else
-        log_warn "$dashboards_failed dashboard(s) failed to deploy, $dashboards_deployed succeeded"
+        # If batch apply fails, apply individually for better error reporting
+        log_warn "Batch apply failed, applying dashboards individually..."
+        local dashboards_deployed=0
+        local dashboards_failed=0
+        
+        for dashboard_file in "${dashboard_files[@]}"; do
+            local dashboard_name=$(basename "$dashboard_file" .yaml)
+            if oc apply -n "$NAMESPACE" -f "$dashboard_file" &>/dev/null; then
+                log_success "  ✓ $dashboard_name deployed"
+                ((dashboards_deployed++))
+            else
+                log_error "  ✗ Failed to deploy $dashboard_name"
+                ((dashboards_failed++))
+            fi
+        done
+        
+        if [[ $dashboards_failed -eq 0 ]]; then
+            log_success "All $dashboards_deployed Grafana Dashboards deployed successfully!"
+        else
+            log_warn "$dashboards_failed dashboard(s) failed to deploy, $dashboards_deployed succeeded"
+        fi
     fi
     
     log_success "Grafana deployment completed!"
@@ -435,7 +440,8 @@ remove_grafana() {
     # Delete Grafana resources in correct dependency order
     # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
     # Check if CRDs exist before attempting deletion (operator may not be installed)
-    if oc get crd grafanadashboards.integreatly.org &>/dev/null; then
+    # Use cached CRD check for better performance
+    if check_crd_exists grafanadashboards.integreatly.org; then
         log_info "Deleting GrafanaDashboards..."
         oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
         
@@ -455,7 +461,7 @@ remove_grafana() {
         log_info "GrafanaDashboards CRD not found (operator not installed), skipping dashboard cleanup"
     fi
     
-    if oc get crd grafanadatasources.integreatly.org &>/dev/null; then
+    if check_crd_exists grafanadatasources.integreatly.org; then
         log_info "Deleting GrafanaDataSources..."
         oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
         
@@ -473,7 +479,7 @@ remove_grafana() {
         log_info "GrafanaDataSources CRD not found (operator not installed), skipping datasource cleanup"
     fi
     
-    if oc get crd grafanas.integreatly.org &>/dev/null; then
+    if check_crd_exists grafanas.integreatly.org; then
         log_info "Deleting Grafana Instances..."
         oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
         

@@ -1320,17 +1320,29 @@ deploy_monitoring() {
         # Configure monitoring stack
         configure_coo_monitoring_stack
         
-        # Apply COO manifests
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
-        if [[ "${VERBOSE:-false}" == "true" ]]; then
-            log_info "Deploying ThanosQuerier..."
+        # Apply COO manifests (optimized: batch apply for better performance)
+        log_info "Applying COO monitoring resources..."
+        local coo_manifests=(
+            "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+            "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
+            "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
+            "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
+        )
+        if oc apply -n "$NAMESPACE" -f "${coo_manifests[@]}" &>/dev/null; then
+            log_success "COO monitoring resources deployed"
+        else
+            # Fallback to individual applies for better error reporting
+            log_warn "Batch apply failed, applying individually..."
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            if [[ "${VERBOSE:-false}" == "true" ]]; then
+                log_info "Deploying ThanosQuerier..."
+            fi
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         fi
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
-        
-        # Always apply combined NetworkPolicy (works for both COO and UWM)
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         
         # Remove individual NetworkPolicies if they exist (to avoid conflicts)
         oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" &>/dev/null || true
@@ -1443,39 +1455,47 @@ deploy_monitoring() {
         # The Perses instance is created automatically by UIPlugin
         log_info "Installing Perses datasources and dashboards for console integration..."
         if [[ -d "${project_root}/k8s/monitoring/coo/perses" ]]; then
-            # Install datasources
+            # Install datasources (optimized: batch apply)
             if [[ -d "${project_root}/k8s/monitoring/coo/perses/datasources" ]]; then
-                for datasource in "${project_root}"/k8s/monitoring/coo/perses/datasources/*.yaml; do
-                    if [[ -f "$datasource" ]]; then
-                        local ds_name=$(basename "$datasource" .yaml)
-                        if [[ "$VERBOSE" == "true" ]]; then
-                            oc apply -f "$datasource" && log_success "  ✓ Installed Perses datasource: $ds_name"
-                        else
-                            if oc apply -f "$datasource" &>/dev/null; then
-                                log_success "  ✓ Installed Perses datasource: $ds_name"
-                            else
-                                log_warn "  ✗ Failed to install Perses datasource: $ds_name"
+                local datasource_files=("${project_root}"/k8s/monitoring/coo/perses/datasources/*.yaml)
+                if [[ -f "${datasource_files[0]}" ]]; then
+                    if oc apply -f "${datasource_files[@]}" &>/dev/null; then
+                        log_success "Installed ${#datasource_files[@]} Perses datasource(s)"
+                    else
+                        # Fallback to individual applies
+                        for datasource in "${datasource_files[@]}"; do
+                            if [[ -f "$datasource" ]]; then
+                                local ds_name=$(basename "$datasource" .yaml)
+                                if oc apply -f "$datasource" &>/dev/null; then
+                                    log_success "  ✓ Installed Perses datasource: $ds_name"
+                                else
+                                    log_warn "  ✗ Failed to install Perses datasource: $ds_name"
+                                fi
                             fi
-                        fi
+                        done
                     fi
-                done
+                fi
             fi
-            # Install dashboards
+            # Install dashboards (optimized: batch apply)
             if [[ -d "${project_root}/k8s/monitoring/coo/perses/dashboards" ]]; then
-                for dashboard in "${project_root}"/k8s/monitoring/coo/perses/dashboards/*.yaml; do
-                    if [[ -f "$dashboard" ]]; then
-                        local db_name=$(basename "$dashboard" .yaml)
-                        if [[ "$VERBOSE" == "true" ]]; then
-                            oc apply -f "$dashboard" && log_success "  ✓ Installed Perses dashboard: $db_name"
-                        else
-                            if oc apply -f "$dashboard" &>/dev/null; then
-                                log_success "  ✓ Installed Perses dashboard: $db_name"
-                            else
-                                log_warn "  ✗ Failed to install Perses dashboard: $db_name"
+                local dashboard_files=("${project_root}"/k8s/monitoring/coo/perses/dashboards/*.yaml)
+                if [[ -f "${dashboard_files[0]}" ]]; then
+                    if oc apply -f "${dashboard_files[@]}" &>/dev/null; then
+                        log_success "Installed ${#dashboard_files[@]} Perses dashboard(s)"
+                    else
+                        # Fallback to individual applies
+                        for dashboard in "${dashboard_files[@]}"; do
+                            if [[ -f "$dashboard" ]]; then
+                                local db_name=$(basename "$dashboard" .yaml)
+                                if oc apply -f "$dashboard" &>/dev/null; then
+                                    log_success "  ✓ Installed Perses dashboard: $db_name"
+                                else
+                                    log_warn "  ✗ Failed to install Perses dashboard: $db_name"
+                                fi
                             fi
-                        fi
+                        done
                     fi
-                done
+                fi
             fi
         else
             log_warn "Perses directory not found: ${project_root}/k8s/monitoring/coo/perses"
