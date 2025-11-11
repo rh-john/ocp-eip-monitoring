@@ -1540,20 +1540,26 @@ deploy_monitoring() {
         
         # Apply UWM manifests
         log_info "Applying UWM monitoring manifests..."
+        local failed=0
+        
         if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" || failed=$((failed + 1))
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" || failed=$((failed + 1))
+            # Note: Grafana RBAC is deployed separately via deploy-grafana.sh
+            # The file is in k8s/grafana/uwm/grafana-rbac-uwm.yaml, not k8s/monitoring/uwm/rbac/
         else
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>&1 || failed=$((failed + 1))
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>&1 || failed=$((failed + 1))
+            # Note: Grafana RBAC is deployed separately via deploy-grafana.sh
+            # The file is in k8s/grafana/uwm/grafana-rbac-uwm.yaml, not k8s/monitoring/uwm/rbac/
         fi
         
         # Always apply combined NetworkPolicy (works for both COO and UWM)
         log_info "Applying combined NetworkPolicy (supports both COO and UWM)..."
         if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" || failed=$((failed + 1))
         else
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>&1 || failed=$((failed + 1))
         fi
         
         # Remove individual NetworkPolicies if they exist (to avoid conflicts)
@@ -1592,6 +1598,13 @@ deploy_monitoring() {
                 oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' &>/dev/null || true
             }
             log_success "Service labels updated for UWM"
+        fi
+        
+        if [[ $failed -gt 0 ]]; then
+            log_error "UWM monitoring deployment failed"
+            log_error "Failed to apply $failed manifest(s)"
+            log_info "Run with --verbose flag to see detailed error messages"
+            return 1
         fi
         
         log_success "UWM monitoring infrastructure deployed!"
