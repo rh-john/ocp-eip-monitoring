@@ -34,15 +34,11 @@ if ! oc get grafana -n "$NAMESPACE" &>/dev/null; then
     exit 1
 fi
 
-# Get Grafana pod (use more reliable method than grep/awk)
-GRAFANA_POD=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-if [[ -z "$GRAFANA_POD" ]]; then
-    # Fallback: try by name pattern
-    GRAFANA_POD=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "grafana.*deployment" | grep -v operator | awk '{print $1}' | head -1)
-fi
+# Get Grafana pod using common function
+GRAFANA_POD=$(find_grafana_pod "$NAMESPACE" "true")  # Only return running pods
 
 if [[ -z "$GRAFANA_POD" ]]; then
-    log_error "Grafana pod not found"
+    log_error "Grafana pod not found (or not running)"
     exit 1
 fi
 

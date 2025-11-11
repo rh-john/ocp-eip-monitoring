@@ -80,7 +80,7 @@ oc get persesdashboard -n openshift-operators
 
 A basic conversion script is available:
 ```bash
-./scripts/convert-grafana-to-perses.sh
+./scripts/debug/convert-grafana-to-perses.sh
 ```
 
 **Note**: The script creates basic structure only. Full conversion requires manual work for:
