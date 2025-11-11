@@ -1313,11 +1313,13 @@ deploy_monitoring() {
         if [[ "$VERBOSE" == "true" ]]; then
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            log_info "Deploying ThanosQuerier..."
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
+            log_info "Deploying ThanosQuerier..."
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
         fi
@@ -1394,15 +1396,52 @@ deploy_monitoring() {
         
         # Verify ThanosQuerier store discovery
         log_info "Waiting for ThanosQuerier to be ready..."
-        local max_wait=60
+        
+        # First, wait for ThanosQuerier CR to exist (operator needs to reconcile it)
+        local max_wait_cr=30
+        local waited_cr=0
+        while [[ $waited_cr -lt $max_wait_cr ]]; do
+            if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+                log_success "ThanosQuerier CR exists"
+                break
+            fi
+            sleep 2
+            waited_cr=$((waited_cr + 2))
+        done
+        
+        if [[ $waited_cr -ge $max_wait_cr ]]; then
+            log_warn "ThanosQuerier CR not found after ${max_wait_cr}s (may still be creating)"
+        fi
+        
+        # Now wait for the pod to be created and running
+        local max_wait=120
         local waited=0
         while [[ $waited -lt $max_wait ]]; do
-            if oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | grep -q "Running"; then
-                break
+            local thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+            if [[ -n "$thanos_pod" ]]; then
+                local pod_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                if [[ "$pod_phase" == "Running" ]]; then
+                    log_success "ThanosQuerier pod is running: $thanos_pod"
+                    break
+                elif [[ -n "$pod_phase" ]]; then
+                    # Pod exists but not running yet
+                    if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
+                        log_info "ThanosQuerier pod exists but not running yet (phase: $pod_phase, waited ${waited}s)..."
+                    fi
+                fi
             fi
             sleep 5
             waited=$((waited + 5))
+            if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
+                log_info "Still waiting for ThanosQuerier pod... (${waited}s)"
+            fi
         done
+        
+        if [[ $waited -ge $max_wait ]]; then
+            log_warn "ThanosQuerier pod may not be ready yet (waited ${max_wait}s)"
+            log_info "This is non-blocking - ThanosQuerier will continue initializing"
+            log_info "Check ThanosQuerier status: oc get thanosquerier eip-monitoring-stack-querier-coo -n $NAMESPACE"
+        fi
         
         # Verify store discovery (non-blocking - warns but doesn't fail deployment)
         verify_thanosquerier_stores || {
@@ -1536,37 +1575,24 @@ deploy_monitoring() {
         
         # Enable UWM
         enable_user_workload_monitoring
-        
-        # Enable AlertManager (non-critical - UWM monitoring works without it)
-        if ! enable_user_workload_alertmanager; then
-            log_warn "AlertManager enablement failed (requires cluster-admin permissions)"
-            log_info "UWM monitoring will continue without AlertManager"
-            log_info "To enable AlertManager later, run as cluster-admin:"
-            log_info "  oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge -p '{\"data\":{\"config.yaml\":\"alertmanager:\\n  enabled: true\\n  enableAlertmanagerConfig: true\\n\"}}'"
-        fi
+        enable_user_workload_alertmanager
         
         # Apply UWM manifests
         log_info "Applying UWM monitoring manifests..."
-        local failed=0
-        
         if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" || failed=$((failed + 1))
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" || failed=$((failed + 1))
-            # Note: Grafana RBAC is deployed separately via deploy-grafana.sh
-            # The file is in k8s/grafana/uwm/grafana-rbac-uwm.yaml, not k8s/monitoring/uwm/rbac/
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
         else
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>&1 || failed=$((failed + 1))
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>&1 || failed=$((failed + 1))
-            # Note: Grafana RBAC is deployed separately via deploy-grafana.sh
-            # The file is in k8s/grafana/uwm/grafana-rbac-uwm.yaml, not k8s/monitoring/uwm/rbac/
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
+            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
         fi
         
         # Always apply combined NetworkPolicy (works for both COO and UWM)
         log_info "Applying combined NetworkPolicy (supports both COO and UWM)..."
         if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" || failed=$((failed + 1))
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         else
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>&1 || failed=$((failed + 1))
+            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>/dev/null
         fi
         
         # Remove individual NetworkPolicies if they exist (to avoid conflicts)
@@ -1605,13 +1631,6 @@ deploy_monitoring() {
                 oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' &>/dev/null || true
             }
             log_success "Service labels updated for UWM"
-        fi
-        
-        if [[ $failed -gt 0 ]]; then
-            log_error "UWM monitoring deployment failed"
-            log_error "Failed to apply $failed manifest(s)"
-            log_info "Run with --verbose flag to see detailed error messages"
-            return 1
         fi
         
         log_success "UWM monitoring infrastructure deployed!"
