@@ -9,7 +9,7 @@ The project uses a simple 3-step release process with automated versioning and t
 ## Release Workflow
 
 ### Step 1: Development
-Work directly on component branches (`dev`, `coo`, `grafana`):
+Work directly on component branches (`dev`, `monitoring`, `grafana`):
 - Commit and push as usual
 - No special process required
 - Work independently on each component
@@ -18,7 +18,7 @@ Work directly on component branches (`dev`, `coo`, `grafana`):
 Merge component branches to `staging` when ready:
 ```bash
 git checkout staging
-git merge dev    # or coo, or grafana
+git merge dev    # or monitoring, or grafana
 git push origin staging
 ```
 
