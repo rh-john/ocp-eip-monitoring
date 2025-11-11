@@ -393,29 +393,26 @@ deploy_grafana() {
     log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
     # Deploy Grafana Dashboards
     log_info "Deploying Grafana Dashboards..."
-    # Automatically discover all dashboard files in the dashboards directory
-    local dashboard_dir="${project_root}/k8s/grafana/dashboards"
-    local dashboard_files=()
-    
-    if [[ -d "$dashboard_dir" ]]; then
-        # Find all YAML files matching the dashboard pattern
-        for file in "${dashboard_dir}"/grafana-dashboard*.yaml; do
-            [[ -f "$file" ]] && dashboard_files+=("$file")
-        done
-        
-        # Sort for consistent deployment order
-        IFS=$'\n' dashboard_files=($(sort <<<"${dashboard_files[*]}"))
-        unset IFS
-        
-        if [[ ${#dashboard_files[@]} -eq 0 ]]; then
-            log_warn "No dashboard files found in $dashboard_dir"
-        else
-            log_info "Found ${#dashboard_files[@]} dashboard file(s) to deploy"
-        fi
-    else
-        log_error "Dashboard directory not found: $dashboard_dir"
-        return 1
-    fi
+    local dashboard_files=(
+        # Original dashboards
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
+        # Event correlation dashboard (node/cluster metrics with EIP metrics)
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
+        # New advanced plugin dashboards
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
+    )
     
     local dashboards_deployed=0
     local dashboards_failed=0
@@ -449,7 +446,6 @@ deploy_grafana() {
 
 # Remove Grafana resources
 remove_grafana() {
-<<<<<<< HEAD
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Removing Grafana resources..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -36,7 +36,7 @@ The containerized EIP monitor provides:
 | `entrypoint.sh` | Container lifecycle management and health checks |
 | `k8s-manifests.yaml` | Complete OpenShift deployment resources (RBAC, ConfigMap, Deployment, Service) |
 | `servicemonitor.yaml` | Prometheus ServiceMonitor and comprehensive alerting rules |
-| `build-and-deploy.sh` | Build, push, and deployment script |
+| `deploy-eip.sh` | Build, push, and deployment script |
 | `test-deployment.sh` | Deployment validation and health check script (in `scripts/test/`) |
 | `deploy-test-eips.sh` | Automated test EgressIP creation for monitoring validation |
 
@@ -82,7 +82,7 @@ image: "your-registry.com/eip-monitor:latest"
 
 ## 🚀 **Deployment Script**
 
-The `build-and-deploy.sh` script provides ease of deployment:
+The `deploy-eip.sh` script provides ease of deployment:
 
 ### **📋 Script Commands**
 
@@ -100,7 +100,7 @@ The `build-and-deploy.sh` script provides ease of deployment:
 
 #### **✅ Without Registry (Local Development):**
 ```bash
-./scripts/build-and-deploy.sh deploy
+./scripts/deploy-eip.sh deploy
 # Result:
 # - Uses current deployment's image (no pull errors)
 # - Applies all manifests (deployment, ServiceMonitor, ConfigMap, etc.)
@@ -109,7 +109,7 @@ The `build-and-deploy.sh` script provides ease of deployment:
 
 #### **✅ With Registry (Production Deployment):**
 ```bash
-./scripts/build-and-deploy.sh deploy -r quay.io/your-org
+./scripts/deploy-eip.sh deploy -r quay.io/your-org
 # Result:
 # - Uses registry image: quay.io/your-org/eip-monitor:latest
 # - Applies all manifests with new image
@@ -118,7 +118,7 @@ The `build-and-deploy.sh` script provides ease of deployment:
 
 #### **✅ Full Pipeline:**
 ```bash
-./scripts/build-and-deploy.sh all -r quay.io/your-org
+./scripts/deploy-eip.sh all -r quay.io/your-org
 # Result:
 # - Builds new image
 # - Pushes to registry
@@ -130,32 +130,32 @@ The `build-and-deploy.sh` script provides ease of deployment:
 #### **For Manifest Updates (ServiceMonitor, ConfigMap, etc.):**
 ```bash
 # Update alert rules, config changes, etc.
-./scripts/build-and-deploy.sh deploy
+./scripts/deploy-eip.sh deploy
 ```
 
 #### **For New Container Image:**
 ```bash
 # Deploy with new image from registry
-./scripts/build-and-deploy.sh deploy -r quay.io/your-org
+./scripts/deploy-eip.sh deploy -r quay.io/your-org
 ```
 
 #### **For Full Development Cycle:**
 ```bash
 # Build, push, and deploy
-./scripts/build-and-deploy.sh all -r quay.io/your-org
+./scripts/deploy-eip.sh all -r quay.io/your-org
 ```
 
 ### **🔧 Advanced Options**
 
 ```bash
 # Custom image tag
-./scripts/build-and-deploy.sh deploy -r quay.io/your-org -t v1.2.3
+./scripts/deploy-eip.sh deploy -r quay.io/your-org -t v1.2.3
 
 # Custom namespace
-./scripts/build-and-deploy.sh deploy -n my-monitoring
+./scripts/deploy-eip.sh deploy -n my-monitoring
 
 # Show help
-./scripts/build-and-deploy.sh --help
+./scripts/deploy-eip.sh --help
 ```
 
 ### Step 3: Deploy to OpenShift

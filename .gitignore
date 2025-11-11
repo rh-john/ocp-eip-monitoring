@@ -5,3 +5,6 @@ __pycache__/
 
 # Debugging and fix scripts (not tracked)
 scripts/debug/
+
+# Local development notes and analysis (not published)
+.local/

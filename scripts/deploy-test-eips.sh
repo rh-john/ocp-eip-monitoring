@@ -3,6 +3,10 @@
 # Get script directory for proper path resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Source common functions (for remove_finalizers and other helpers)
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 #
 # deploy-test-eips.sh - Dynamic EgressIP deployment with auto-discovery
 #
@@ -1287,19 +1291,12 @@ JQ_EOF
             for cpic_name in "${failed_cpics[@]}"; do
                 log_info "Processing CPIC: $cpic_name (failed or stale)"
                 
-                # Check if CPIC has finalizers
-                local finalizers=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_name\") | .metadata.finalizers[]?" 2>/dev/null)
-                
-                if [ -n "$finalizers" ]; then
-                    # Remove finalizers
-                    log_info "Removing finalizers from $cpic_name..."
-                    if oc patch cloudprivateipconfig "$cpic_name" -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null; then
-                        removed_finalizers=$((removed_finalizers + 1))
-                    else
-                        log_warn "Failed to remove finalizers from $cpic_name"
-                        failed_delete=$((failed_delete + 1))
-                        continue
-                    fi
+                # Remove finalizers using common function (CPIC is cluster-scoped, so namespace is empty)
+                if remove_finalizers "cloudprivateipconfig" "" "$cpic_name"; then
+                    removed_finalizers=$((removed_finalizers + 1))
+                else
+                    failed_delete=$((failed_delete + 1))
+                    continue
                 fi
                 
                 # Force delete the CPIC
@@ -1646,11 +1643,8 @@ cleanup_malfunctioning_eips() {
                         if [ "$cpic_node" = "$node_name" ]; then
                             log_info "  Deleting CPIC $ip (assigned to node $node_name)"
                             
-                            # Remove finalizers if present
-                            local finalizers=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$ip\") | .metadata.finalizers[]?" 2>/dev/null)
-                            if [ -n "$finalizers" ]; then
-                                oc patch cloudprivateipconfig "$ip" -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || true
-                            fi
+                            # Remove finalizers if present (CPIC is cluster-scoped, so namespace is empty)
+                            remove_finalizers "cloudprivateipconfig" "" "$ip" || true
                             
                             if oc delete cloudprivateipconfig "$ip" --force --grace-period=0 &>/dev/null; then
                                 deleted_cpics=$((deleted_cpics + 1))
@@ -1966,12 +1960,8 @@ JQ_EOF
         for cpic_ip in "${unique_cpics[@]}"; do
             log_info "Processing CPIC: $cpic_ip"
             
-            # Remove finalizers if present
-            local finalizers=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_ip\") | .metadata.finalizers[]?" 2>/dev/null)
-            if [ -n "$finalizers" ]; then
-                log_info "  Removing finalizers from $cpic_ip"
-                oc patch cloudprivateipconfig "$cpic_ip" -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || true
-            fi
+            # Remove finalizers if present (CPIC is cluster-scoped, so namespace is empty)
+            remove_finalizers "cloudprivateipconfig" "" "$cpic_ip" || true
             
             # Delete the CPIC
             log_info "  Deleting CPIC: $cpic_ip"
