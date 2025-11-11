@@ -404,11 +404,19 @@ deploy_grafana() {
         
         for dashboard_file in "${dashboard_files[@]}"; do
             local dashboard_name=$(basename "$dashboard_file" .yaml)
-            if oc apply -n "$NAMESPACE" -f "$dashboard_file" &>/dev/null; then
+            local apply_output=$(oc apply -n "$NAMESPACE" -f "$dashboard_file" 2>&1)
+            local apply_exit=$?
+            
+            if [[ $apply_exit -eq 0 ]]; then
                 log_success "  ✓ $dashboard_name deployed"
                 ((dashboards_deployed++))
             else
                 log_error "  ✗ Failed to deploy $dashboard_name"
+                # Show the actual error message (first line usually contains the key error)
+                local error_msg=$(echo "$apply_output" | grep -iE "(error|failed|invalid)" | head -1 || echo "$apply_output" | head -1)
+                if [[ -n "$error_msg" ]]; then
+                    log_info "    Error: $error_msg"
+                fi
                 ((dashboards_failed++))
             fi
         done
