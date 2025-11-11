@@ -168,7 +168,7 @@ oc apply -f k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml
 For COO, ensure the MonitoringStack's `resourceSelector` matches the ServiceMonitor labels:
 
 ```yaml
-# In coo-monitoringstack.yaml
+# In monitoringstack-coo.yaml
 spec:
   resourceSelector:
     matchLabels:

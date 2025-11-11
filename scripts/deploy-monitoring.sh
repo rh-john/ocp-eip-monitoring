@@ -776,7 +776,7 @@ configure_coo_monitoring_stack() {
     
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
-    local monitoringstack_file="${project_root}/k8s/monitoring/coo/monitoring/coo-monitoringstack.yaml"
+    local monitoringstack_file="${project_root}/k8s/monitoring/coo/monitoring/monitoringstack-coo.yaml"
     
     if [[ ! -f "$monitoringstack_file" ]]; then
         log_error "COO MonitoringStack file not found: $monitoringstack_file"
@@ -1321,7 +1321,7 @@ deploy_monitoring() {
         fi
         
         # Apply federation ScrapeConfig if it exists
-        local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
+        local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation-coo.yaml"
         if [[ -f "$scrapeconfig_file" ]]; then
             log_info "Applying federation ScrapeConfig..."
             
