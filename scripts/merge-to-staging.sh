@@ -12,6 +12,7 @@
 #   --skip-tests       Skip running tests after merge
 #   --push             Automatically push to remote (default: requires confirmation)
 #   --use-local        Merge from local branches if they're ahead of remote (default: only merge from remote)
+#   --strategy STRAT   Merge strategy: 'ours', 'theirs', or 'manual' (default: manual)
 #   --help, -h         Show this help message
 #
 
@@ -28,6 +29,7 @@ DRY_RUN=false
 SKIP_TESTS=false
 AUTO_PUSH=false
 USE_LOCAL=false
+MERGE_STRATEGY="manual"
 
 # Colors for output
 RED='\033[0;31m'
@@ -67,6 +69,7 @@ Options:
   --skip-tests       Skip running tests after merge
   --push             Automatically push to remote (default: requires confirmation)
   --use-local        Merge from local branches if they're ahead of remote (default: only merge from remote)
+  --strategy STRAT   Auto-resolve conflicts: 'ours' (keep staging), 'theirs' (keep feature), 'manual' (default)
   --help, -h         Show this help message
 
 Feature Branches:
@@ -79,15 +82,24 @@ Workflow:
   1. Fetch all branches
   2. Switch to staging branch
   3. Merge feature branches in order (eip-monitor → dev → grafana → monitoring)
-  4. Resolve conflicts (if any)
+  4. Resolve conflicts (if any) - can auto-resolve with --strategy
   5. Run tests (optional)
   6. Push to remote (triggers CI/CD pipeline)
 
+Merge Strategy:
+  Regular merges (not squash) are used for better conflict resolution.
+  Use --strategy to auto-resolve conflicts:
+    - 'ours': Keep staging's version for all conflicts
+    - 'theirs': Keep feature branch's version for all conflicts
+    - 'manual': Resolve conflicts manually (default)
+
 Examples:
-  $0                    # Interactive merge with confirmation
-  $0 --dry-run          # See what would be merged
-  $0 --push             # Auto-push after merge
-  $0 --skip-tests --push # Merge and push without tests
+  $0                              # Interactive merge with confirmation
+  $0 --dry-run                    # See what would be merged
+  $0 --push                       # Auto-push after merge
+  $0 --strategy ours              # Auto-resolve conflicts (keep staging)
+  $0 --strategy theirs            # Auto-resolve conflicts (keep feature branch)
+  $0 --skip-tests --push          # Merge and push without tests
 
 EOF
 }
@@ -277,36 +289,89 @@ merge_branch() {
         return 0
     fi
     
-    # Perform squash merge to keep history clean
-    if git merge "$branch_ref" --squash 2>&1; then
-        # Squash merge requires explicit commit
-        if git commit -m "Merge $branch into $TARGET_BRANCH: integration" 2>&1; then
-            log_success "Successfully merged $branch (from $branch_source) with squash"
-            return 0
-        else
-            log_error "Failed to commit squash merge"
-            return 1
-        fi
+    # Perform regular merge (better conflict resolution than squash)
+    # Regular merges preserve merge base and make conflict resolution easier
+    if git merge "$branch_ref" --no-ff -m "Merge $branch into $TARGET_BRANCH: integration" 2>&1; then
+        log_success "Successfully merged $branch (from $branch_source)"
+        return 0
     else
         local merge_status=$?
         log_error "Merge conflict with $branch"
         echo ""
-        log_info "Conflicts detected. Please resolve manually:"
-        echo ""
-        log_info "1. Review conflicts:"
-        log_info "   git status"
-        echo ""
-        log_info "2. Resolve conflicts in the files listed above"
-        echo ""
-        log_info "3. Stage resolved files:"
-        log_info "   git add <resolved-files>"
-        echo ""
-        log_info "4. Complete the merge:"
-        log_info "   git commit"
-        echo ""
-        log_info "5. Then run this script again to continue with remaining branches"
-        echo ""
-        return $merge_status
+        
+        # Show which files have conflicts
+        local conflicted_files=$(git diff --name-only --diff-filter=U 2>/dev/null || echo "")
+        if [[ -n "$conflicted_files" ]]; then
+            log_info "Conflicted files:"
+            echo "$conflicted_files" | while read -r file; do
+                log_info "  - $file"
+            done
+            echo ""
+        fi
+        
+        # Auto-resolve conflicts if strategy is specified
+        if [[ "$MERGE_STRATEGY" != "manual" ]]; then
+            log_info "Auto-resolving conflicts using '$MERGE_STRATEGY' strategy..."
+            if [[ "$MERGE_STRATEGY" == "ours" ]]; then
+                # Keep staging's version for all conflicts
+                echo "$conflicted_files" | while read -r file; do
+                    if [[ -n "$file" ]]; then
+                        log_info "  Keeping staging version: $file"
+                        git checkout --ours "$file" 2>/dev/null || true
+                        git add "$file" 2>/dev/null || true
+                    fi
+                done
+            elif [[ "$MERGE_STRATEGY" == "theirs" ]]; then
+                # Keep feature branch's version for all conflicts
+                echo "$conflicted_files" | while read -r file; do
+                    if [[ -n "$file" ]]; then
+                        log_info "  Keeping feature branch version: $file"
+                        git checkout --theirs "$file" 2>/dev/null || true
+                        git add "$file" 2>/dev/null || true
+                    fi
+                done
+            fi
+            
+            # Complete the merge
+            if git commit --no-edit 2>&1; then
+                log_success "Auto-resolved conflicts and completed merge"
+                return 0
+            else
+                log_error "Failed to complete auto-resolved merge"
+                return 1
+            fi
+        else
+            # Manual resolution
+            log_info "Conflict resolution options:"
+            echo ""
+            log_info "1. Auto-resolve using staging's version (ours):"
+            log_info "   git checkout --ours <file>"
+            log_info "   git add <file>"
+            echo ""
+            log_info "2. Auto-resolve using feature branch's version (theirs):"
+            log_info "   git checkout --theirs <file>"
+            log_info "   git add <file>"
+            echo ""
+            log_info "3. Resolve all conflicts automatically:"
+            log_info "   # Keep staging's version for all:"
+            log_info "   git checkout --ours . && git add . && git commit --no-edit"
+            log_info "   # Or keep feature branch's version for all:"
+            log_info "   git checkout --theirs . && git add . && git commit --no-edit"
+            echo ""
+            log_info "4. Manual resolution:"
+            log_info "   # Edit conflicted files, then:"
+            log_info "   git add <resolved-files>"
+            log_info "   git commit --no-edit"
+            echo ""
+            log_info "5. After resolving, run this script again to continue with remaining branches"
+            echo ""
+            log_info "Quick commands:"
+            log_info "  git status                    # See all conflicts"
+            log_info "  git diff --check              # Check for conflict markers"
+            log_info "  git mergetool                 # Use merge tool (if configured)"
+            echo ""
+            return $merge_status
+        fi
     fi
 }
 
@@ -434,6 +499,14 @@ parse_args() {
             --use-local)
                 USE_LOCAL=true
                 shift
+                ;;
+            --strategy)
+                MERGE_STRATEGY="$2"
+                if [[ "$MERGE_STRATEGY" != "ours" ]] && [[ "$MERGE_STRATEGY" != "theirs" ]] && [[ "$MERGE_STRATEGY" != "manual" ]]; then
+                    log_error "Invalid strategy: $MERGE_STRATEGY. Must be 'ours', 'theirs', or 'manual'"
+                    exit 1
+                fi
+                shift 2
                 ;;
             --help|-h)
                 show_usage
