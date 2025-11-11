@@ -6,6 +6,11 @@
 
 set -euo pipefail
 
+# Source common functions (pod finding, prerequisites, oc_cmd helpers)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 # Configuration
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-}"  # No default - must be explicitly specified
@@ -37,23 +42,8 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Helper function to run oc commands with optional verbose output
-oc_cmd() {
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc "$@"
-    else
-        oc "$@" 2>/dev/null
-    fi
-}
-
-# Helper function for oc commands that need to suppress output in non-verbose mode
-oc_cmd_silent() {
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc "$@"
-    else
-        oc "$@" &>/dev/null
-    fi
-}
+# Note: oc_cmd() and oc_cmd_silent() are now sourced from scripts/lib/common.sh
+# They use the VERBOSE environment variable for conditional output suppression
 
 # Show usage
 show_usage() {
@@ -94,30 +84,9 @@ Note: The combined NetworkPolicy (eip-monitor-combined) is always applied,
 EOF
 }
 
-# Check prerequisites
-check_prerequisites() {
-    local missing_tools=()
-    
-    if ! command -v oc &> /dev/null; then
-        missing_tools+=("oc")
-    fi
-    
-    if ! command -v jq &> /dev/null; then
-        missing_tools+=("jq")
-    fi
-    
-    if [[ ${#missing_tools[@]} -gt 0 ]]; then
-        log_error "Missing required tools: ${missing_tools[*]}"
-        log_info "Please install the missing tools and try again"
-        exit 1
-    fi
-    
-    # Check OpenShift connectivity
-    if ! oc whoami &>/dev/null; then
-        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
-        exit 1
-    fi
-}
+# Note: check_prerequisites() is now sourced from scripts/lib/common.sh
+# It checks for both oc and jq, and returns error code instead of exiting
+# This script calls it and exits if it fails (maintains original behavior)
 
 # Enable User Workload Monitoring if not already enabled
 enable_user_workload_monitoring() {
@@ -503,21 +472,8 @@ install_coo_operator() {
 verify_thanosquerier_stores() {
     log_info "Verifying ThanosQuerier store discovery..."
     
-    # Try multiple selectors to find ThanosQuerier pod
-    local thanos_pod=""
-    
-    # First try: COO-specific labels (most reliable for COO ThanosQuerier)
-    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    
-    # Fallback: standard Thanos label
-    if [[ -z "$thanos_pod" ]]; then
-        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    fi
-    
-    # Fallback: try by name pattern
-    if [[ -z "$thanos_pod" ]]; then
-        thanos_pod=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "thanos.*querier|querier.*thanos" | awk '{print $1}' | head -1)
-    fi
+    # Use common function to find ThanosQuerier pod
+    local thanos_pod=$(find_thanosquerier_pod "$NAMESPACE")
     
     if [[ -z "$thanos_pod" ]]; then
         log_warn "ThanosQuerier pod not found, skipping store verification"
@@ -661,7 +617,8 @@ verify_federation() {
         return 1
     fi
     
-    local prometheus_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    # Use common function to find Prometheus pod (prefer COO labels for COO deployments)
+    local prometheus_pod=$(find_prometheus_pod "$NAMESPACE" "true")
     if [[ -z "$prometheus_pod" ]]; then
         log_warn "Prometheus pod not found, skipping federation verification"
         return 1
@@ -819,7 +776,7 @@ configure_coo_monitoring_stack() {
     
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
-    local monitoringstack_file="${project_root}/k8s/monitoring/coo/monitoring/coo-monitoringstack.yaml"
+    local monitoringstack_file="${project_root}/k8s/monitoring/coo/monitoring/monitoringstack-coo.yaml"
     
     if [[ ! -f "$monitoringstack_file" ]]; then
         log_error "COO MonitoringStack file not found: $monitoringstack_file"
@@ -1364,7 +1321,7 @@ deploy_monitoring() {
         fi
         
         # Apply federation ScrapeConfig if it exists
-        local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation.yaml"
+        local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation-coo.yaml"
         if [[ -f "$scrapeconfig_file" ]]; then
             log_info "Applying federation ScrapeConfig..."
             
@@ -1431,21 +1388,8 @@ deploy_monitoring() {
         local max_wait=120
         local waited=0
         while [[ $waited -lt $max_wait ]]; do
-            # Try multiple selectors - COO uses different labels than standard Thanos
-            local thanos_pod=""
-            
-            # First try: COO-specific labels (most reliable for COO ThanosQuerier)
-            thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-            
-            # Fallback: standard Thanos label
-            if [[ -z "$thanos_pod" ]]; then
-                thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-            fi
-            
-            # Fallback: try by name pattern
-            if [[ -z "$thanos_pod" ]]; then
-                thanos_pod=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "thanos.*querier|querier.*thanos" | awk '{print $1}' | head -1)
-            fi
+            # Use common function to find ThanosQuerier pod
+            local thanos_pod=$(find_thanosquerier_pod "$NAMESPACE")
             
             if [[ -n "$thanos_pod" ]]; then
                 local pod_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
@@ -1750,7 +1694,9 @@ parse_args() {
 main() {
     parse_args "$@"
     
-    check_prerequisites
+    if ! check_prerequisites; then
+        exit 1
+    fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     log_info "Deploying to namespace: $NAMESPACE"

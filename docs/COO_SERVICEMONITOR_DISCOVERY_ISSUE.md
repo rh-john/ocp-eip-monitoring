@@ -93,7 +93,7 @@ Delete and recreate the MonitoringStack to force full reconciliation:
 ```bash
 oc delete monitoringstack eip-monitoring-stack -n eip-monitoring
 # Wait for cleanup
-oc apply -f k8s/monitoring/coo/monitoring/coo-monitoringstack.yaml
+oc apply -f k8s/monitoring/coo/monitoring/monitoringstack-coo.yaml
 ```
 
 ### Solution 3: Use Direct Prometheus Resource
