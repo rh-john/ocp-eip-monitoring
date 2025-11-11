@@ -131,7 +131,13 @@ deploy_grafana() {
             log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
             return 1
         fi
-        if oc apply -f "$operator_file" &>/dev/null; then
+        # Substitute namespace in the operator file
+        local operator_file_tmp=$(mktemp)
+        sed -e "s/namespace: eip-monitoring/namespace: $NAMESPACE/g" \
+            -e "s/- eip-monitoring/- $NAMESPACE/g" \
+            "$operator_file" > "$operator_file_tmp"
+        if oc apply -f "$operator_file_tmp" &>/dev/null; then
+            rm -f "$operator_file_tmp"
             log_success "Grafana Operator subscription and OperatorGroup created"
             log_info "Waiting for Grafana Operator to be installed (this may take a few minutes)..."
             
@@ -160,6 +166,7 @@ deploy_grafana() {
                 log_info "It may take several minutes to fully install"
             fi
         else
+            rm -f "$operator_file_tmp"
             log_error "Failed to install Grafana Operator"
             log_error "This requires cluster-admin permissions for OperatorGroup/Subscription creation"
             log_info ""
@@ -273,8 +280,18 @@ deploy_grafana() {
     
     # Deploy Grafana Instance
     log_info "Deploying Grafana Instance..."
-    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
+    # Substitute namespace in the instance file
+    local instance_file="k8s/grafana/grafana-instance.yaml"
+    if [[ ! -f "$instance_file" ]]; then
+        log_error "Grafana instance file not found: $instance_file"
+        return 1
+    fi
+    local instance_file_tmp=$(mktemp)
+    sed -e "s/namespace: eip-monitoring/namespace: $NAMESPACE/g" \
+        "$instance_file" > "$instance_file_tmp"
+    local instance_output=$(oc apply -f "$instance_file_tmp" 2>&1)
     local instance_exit=$?
+    rm -f "$instance_file_tmp"
     if [[ $instance_exit -eq 0 ]]; then
         log_success "Grafana Instance deployed"
     else
