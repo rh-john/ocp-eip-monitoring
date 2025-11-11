@@ -1536,7 +1536,14 @@ deploy_monitoring() {
         
         # Enable UWM
         enable_user_workload_monitoring
-        enable_user_workload_alertmanager
+        
+        # Enable AlertManager (non-critical - UWM monitoring works without it)
+        if ! enable_user_workload_alertmanager; then
+            log_warn "AlertManager enablement failed (requires cluster-admin permissions)"
+            log_info "UWM monitoring will continue without AlertManager"
+            log_info "To enable AlertManager later, run as cluster-admin:"
+            log_info "  oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge -p '{\"data\":{\"config.yaml\":\"alertmanager:\\n  enabled: true\\n  enableAlertmanagerConfig: true\\n\"}}'"
+        fi
         
         # Apply UWM manifests
         log_info "Applying UWM monitoring manifests..."
