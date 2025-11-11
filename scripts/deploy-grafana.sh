@@ -44,21 +44,26 @@ Deploy Grafana Operator and Dashboards for EIP Monitoring
 
 Usage: $0 [options]
 
-Options:
-  -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
-  -t, --monitoring-type TYPE Monitoring type: coo or uwm (required for deployment)
-  -r, --remove              Remove Grafana resources (dashboards, datasources, instances, RBAC)
-  --remove-operator         Also remove Grafana Operator subscription (requires --remove)
-  --all                     Remove all Grafana resources including operator (equivalent to --remove --remove-operator)
-  --delete-crds             Delete Grafana CRDs during cleanup (requires cluster-admin, only with --remove-operator or --all)
-  -h, --help               Show this help message
+Deployment (default):
+  -t, --monitoring-type TYPE  Monitoring type: coo or uwm (required)
+  -n, --namespace NS          Kubernetes namespace (default: eip-monitoring)
+  -d, --deploy                Deploy Grafana (default if monitoring-type provided)
+
+Removal:
+  -r, --remove                Remove Grafana resources (dashboards, datasources, instances, RBAC)
+  --operator                   Also remove Grafana Operator (use with --remove)
+  --crds                       Also delete Grafana CRDs (use with --remove, requires cluster-admin)
+  --remove-all                 Remove everything: resources, operator, and CRDs (shorthand for --remove --operator --crds)
+
+Other:
+  -h, --help                  Show this help message
 
 Environment Variables:
-  NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
-  MONITORING_TYPE           Monitoring type: coo or uwm (required for deployment)
-  REMOVE_GRAFANA            Set to 'true' to remove Grafana resources
-  REMOVE_OPERATOR           Set to 'true' to also remove Grafana Operator subscription
-  DELETE_CRDS               Set to 'true' to delete Grafana CRDs (requires cluster-admin)
+  NAMESPACE                   Kubernetes namespace (default: eip-monitoring)
+  MONITORING_TYPE             Monitoring type: coo or uwm (required for deployment)
+  REMOVE_GRAFANA              Set to 'true' to remove Grafana resources
+  REMOVE_OPERATOR             Set to 'true' to also remove Grafana Operator
+  DELETE_CRDS                 Set to 'true' to delete Grafana CRDs (requires cluster-admin)
 
 Examples:
   # Deploy Grafana for COO
@@ -67,17 +72,17 @@ Examples:
   # Deploy Grafana for UWM
   $0 --monitoring-type uwm -n my-namespace
   
-  # Remove Grafana resources
+  # Remove only Grafana resources (keeps operator)
   $0 --remove --monitoring-type coo
   
   # Remove Grafana resources and operator
-  $0 --remove --remove-operator --monitoring-type uwm
+  $0 --remove --operator --monitoring-type uwm
   
-  # Remove everything (Grafana resources and operator)
-  $0 --all --monitoring-type coo
+  # Remove everything including CRDs (for E2E tests)
+  $0 --remove --operator --crds --monitoring-type uwm
   
-  # Remove everything including CRDs (for E2E tests, requires cluster-admin)
-  $0 --all --monitoring-type uwm --delete-crds
+  # Shorthand: remove everything
+  $0 --remove-all --monitoring-type coo
 
 EOF
 }
@@ -393,29 +398,26 @@ deploy_grafana() {
     log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
     # Deploy Grafana Dashboards
     log_info "Deploying Grafana Dashboards..."
-    # Automatically discover all dashboard files in the dashboards directory
-    local dashboard_dir="${project_root}/k8s/grafana/dashboards"
-    local dashboard_files=()
-    
-    if [[ -d "$dashboard_dir" ]]; then
-        # Find all YAML files matching the dashboard pattern
-        for file in "${dashboard_dir}"/grafana-dashboard*.yaml; do
-            [[ -f "$file" ]] && dashboard_files+=("$file")
-        done
-        
-        # Sort for consistent deployment order
-        IFS=$'\n' dashboard_files=($(sort <<<"${dashboard_files[*]}"))
-        unset IFS
-        
-        if [[ ${#dashboard_files[@]} -eq 0 ]]; then
-            log_warn "No dashboard files found in $dashboard_dir"
-        else
-            log_info "Found ${#dashboard_files[@]} dashboard file(s) to deploy"
-        fi
-    else
-        log_error "Dashboard directory not found: $dashboard_dir"
-        return 1
-    fi
+    local dashboard_files=(
+        # Original dashboards
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
+        # Event correlation dashboard (node/cluster metrics with EIP metrics)
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
+        # New advanced plugin dashboards
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
+        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
+    )
     
     local dashboards_deployed=0
     local dashboards_failed=0
@@ -698,87 +700,123 @@ remove_grafana_operator() {
     # Note: CRDs are typically cleaned up by the operator, but may remain if operator cleanup fails
     # CRDs must be deleted AFTER all resources using them are deleted and operator is removed
     if [[ "${DELETE_CRDS:-false}" == "true" ]]; then
-        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        log_info "Deleting Grafana CRDs (requires cluster-admin permissions)..."
-        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "Deleting Grafana CRDs..."
         
-        # Wait longer to ensure all resources are fully deleted before attempting CRD deletion
-        log_info "Waiting for all Grafana resources to be fully deleted..."
+        # Wait for resources to be deleted before attempting CRD deletion
         sleep 10
         
         # Verify no resources are still using the CRDs
-        log_info "Verifying no resources are using Grafana CRDs..."
-        local resources_remaining=false
-        for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
-            if oc get "$crd_type" --all-namespaces --no-headers 2>/dev/null | grep -v "^$" >/dev/null; then
-                log_warn "Found remaining $crd_type resources, waiting for deletion..."
-                resources_remaining=true
+        local max_wait=60
+        local waited=0
+        local resources_remaining=true
+        
+        while [[ $waited -lt $max_wait ]] && [[ "$resources_remaining" == "true" ]]; do
+            resources_remaining=false
+            for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
+                local resource_count=$(oc get "$crd_type" --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+                if [[ "$resource_count" -gt 0 ]]; then
+                    resources_remaining=true
+                    break
+                fi
+            done
+            
+            if [[ "$resources_remaining" == "true" ]]; then
+                sleep 5
+                waited=$((waited + 5))
             fi
         done
         
-        if [[ "$resources_remaining" == "true" ]]; then
-            log_info "Waiting additional 15 seconds for resource cleanup..."
-            sleep 15
+        # Discover all Grafana-related CRDs that actually exist
+        local grafana_crds_found=$(oc get crd 2>/dev/null | grep -iE "(grafana|integreatly)" | awk '{print $1}' || echo "")
+        
+        if [[ -z "$grafana_crds_found" ]]; then
+            # Try the expected names as fallback
+            local expected_crds=(
+                "grafanas.integreatly.org"
+                "grafanadashboards.integreatly.org"
+                "grafanadatasources.integreatly.org"
+            )
+            for crd in "${expected_crds[@]}"; do
+                if oc get crd "$crd" &>/dev/null; then
+                    grafana_crds_found="${grafana_crds_found}${crd}"$'\n'
+                fi
+            done
         fi
         
-        local grafana_crds=(
-            "grafanas.integreatly.org"
-            "grafanadashboards.integreatly.org"
-            "grafanadatasources.integreatly.org"
-        )
+        if [[ -z "$grafana_crds_found" ]]; then
+            log_info "No Grafana CRDs found to delete"
+            return 0
+        fi
+        
+        # Delete each CRD that was found
+        local crd_array=()
+        while IFS= read -r crd; do
+            [[ -n "$crd" ]] && crd_array+=("$crd")
+        done <<< "$grafana_crds_found"
         
         local crds_deleted=0
         local crds_failed=0
         
-        for crd in "${grafana_crds[@]}"; do
-            if oc get crd "$crd" &>/dev/null; then
-                log_info "Deleting CRD: $crd..."
-                
-                # Check if CRD has finalizers and remove them first
-                local crd_finalizers=$(oc get crd "$crd" -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
-                if [[ -n "$crd_finalizers" ]]; then
-                    log_info "  Removing finalizers from CRD $crd..."
-                    oc patch crd "$crd" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || {
-                        log_warn "  Failed to remove finalizers from CRD $crd"
-                    }
-                    sleep 2
-                fi
-                
-                local delete_output=$(oc delete crd "$crd" 2>&1)
-                local delete_exit=$?
-                
-                if [[ $delete_exit -eq 0 ]]; then
-                    log_success "  ✓ CRD $crd deleted successfully"
-                    ((crds_deleted++)) || true
-                else
-                    # Check if error is just "not found" (already deleted)
-                    if echo "$delete_output" | grep -qE "(not found|No resources found)"; then
-                        log_info "  ℹ CRD $crd not found (may have been already deleted)"
+        for crd in "${crd_array[@]}"; do
+            # Verify CRD still exists before attempting deletion
+            if ! oc get crd "$crd" &>/dev/null; then
+                continue
+            fi
+            
+            # Remove finalizers if present
+            local crd_finalizers=$(oc get crd "$crd" -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+            if [[ -n "$crd_finalizers" ]]; then
+                oc patch crd "$crd" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || true
+                sleep 2
+            fi
+            
+            # Delete the CRD
+            local delete_output=$(oc delete crd "$crd" 2>&1)
+            local delete_exit=$?
+            
+            if [[ $delete_exit -eq 0 ]]; then
+                ((crds_deleted++)) || true
+                sleep 2
+            else
+                # Check if error is just "not found" (already deleted)
+                if ! echo "$delete_output" | grep -qE "(not found|No resources found)"; then
+                    # Check if CRD has resources still using it
+                    local crd_name_short=$(echo "$crd" | cut -d'.' -f1)
+                    if [[ "$crd_name_short" == "grafanas" ]]; then
+                        crd_name_short="grafana"
+                    elif [[ "$crd_name_short" == "grafanadashboards" ]]; then
+                        crd_name_short="grafanadashboard"
+                    elif [[ "$crd_name_short" == "grafanadatasources" ]]; then
+                        crd_name_short="grafanadatasource"
+                    fi
+                    
+                    local resources_using_crd=$(oc get "$crd_name_short" --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+                    if [[ "$resources_using_crd" -gt 0 ]]; then
+                        log_warn "CRD $crd still in use by $resources_using_crd resource(s), force deleting resources..."
+                        oc delete "$crd_name_short" --all-namespaces --all --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found|Warning: Immediate deletion)" || true
+                        sleep 5
+                    fi
+                    
+                    # Attempt force delete
+                    if oc delete crd "$crd" --force --grace-period=0 2>&1 | grep -qE "(not found|No resources found)"; then
+                        ((crds_deleted++)) || true
                     else
-                        log_error "  ✗ Failed to delete CRD: $crd"
-                        echo "$delete_output" | sed 's/^/    /'
-                        log_warn "    This may require cluster-admin permissions or CRD may be in use"
-                        log_info "    Attempting force delete..."
-                        oc delete crd "$crd" --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found)" || {
-                            log_warn "    Force delete also failed for CRD: $crd"
-                            ((crds_failed++)) || true
-                        }
+                        ((crds_failed++)) || true
                     fi
                 fi
-            else
-                log_info "  ℹ CRD $crd not found (may have been already deleted)"
             fi
         done
         
-        if [[ $crds_failed -eq 0 ]]; then
+        # Final status
+        if [[ $crds_failed -eq 0 ]] && [[ $crds_deleted -gt 0 ]]; then
             log_success "Grafana CRD deletion completed (${crds_deleted} CRD(s) deleted)"
-        else
-            log_warn "Grafana CRD deletion completed with ${crds_failed} failure(s) (${crds_deleted} CRD(s) deleted)"
-            log_warn "Failed CRDs may require cluster-admin permissions or may be in use by other resources"
+        elif [[ $crds_failed -gt 0 ]]; then
+            log_warn "Grafana CRD deletion completed with ${crds_failed} failure(s)"
         fi
     else
         log_info "Grafana CRDs will not be deleted (operator should clean them up automatically)"
-        log_info "To force CRD deletion, use: $0 --all --monitoring-type <coo|uwm> --delete-crds"
+        log_info "To force CRD deletion, use: $0 --remove --operator --crds --monitoring-type <coo|uwm>"
+        log_info "Or use shorthand: $0 --remove-all --monitoring-type <coo|uwm>"
         log_info "Note: CRD deletion requires cluster-admin permissions"
     fi
     
@@ -798,8 +836,36 @@ parse_args() {
                 MONITORING_TYPE="$2"
                 shift 2
                 ;;
+            -d|--deploy)
+                # Explicit deploy flag (default behavior, but makes intent clear)
+                REMOVE_GRAFANA="false"
+                shift
+                ;;
             -r|--remove)
                 REMOVE_GRAFANA="true"
+                shift
+                ;;
+            --operator)
+                REMOVE_OPERATOR="true"
+                shift
+                ;;
+            --crds)
+                DELETE_CRDS="true"
+                shift
+                ;;
+            --remove-all)
+                # Shorthand: remove everything
+                REMOVE_GRAFANA="true"
+                REMOVE_OPERATOR="true"
+                DELETE_CRDS="true"
+                shift
+                ;;
+            # Legacy flags for backward compatibility
+            --all)
+                # Legacy: same as --remove-all
+                REMOVE_GRAFANA="true"
+                REMOVE_OPERATOR="true"
+                DELETE_CRDS="true"
                 shift
                 ;;
             --remove-operator)
@@ -808,11 +874,6 @@ parse_args() {
                 ;;
             --delete-crds)
                 DELETE_CRDS="true"
-                shift
-                ;;
-            --all)
-                REMOVE_GRAFANA="true"
-                REMOVE_OPERATOR="true"
                 shift
                 ;;
             -h|--help)
@@ -839,12 +900,13 @@ main() {
     
     # Handle removal
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then
-        # Validate --delete-crds is only used with --remove-operator or --all
+        # Smart validation: --crds makes sense with --operator, but we can be flexible
         if [[ "$DELETE_CRDS" == "true" ]] && [[ "$REMOVE_OPERATOR" != "true" ]]; then
-            log_error "--delete-crds requires --remove-operator or --all"
-            log_error "CRDs can only be deleted when the operator is removed"
-            show_usage
-            exit 1
+            log_warn "--crds specified without --operator"
+            log_info "CRDs are typically only deleted when removing the operator"
+            log_info "Proceeding anyway (will attempt CRD deletion after resource cleanup)..."
+            # Auto-enable operator removal if CRDs are requested (makes logical sense)
+            REMOVE_OPERATOR="true"
         fi
         
         # Monitoring type is helpful for RBAC cleanup but not strictly required

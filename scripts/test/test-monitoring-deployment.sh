@@ -294,7 +294,6 @@ test_coo() {
     # 10. Check ServiceMonitor discovery in Prometheus
     # This is a critical check - ServiceMonitor must be discovered for scraping to work
     # Known issue: COO Prometheus sometimes doesn't discover ServiceMonitors immediately
-    # See docs/COO_SERVICEMONITOR_DISCOVERY_ISSUE.md for details
     log_test "10. Checking ServiceMonitor discovery in Prometheus..."
     if [[ -n "$prom_pod" ]]; then
         # Check 1: ServiceMonitor in Prometheus configuration file
@@ -376,7 +375,6 @@ test_coo() {
             log_info "This means Prometheus hasn't discovered the ServiceMonitor yet"
             log_info ""
             log_info "Known issue: COO Prometheus sometimes doesn't discover ServiceMonitors immediately"
-            log_info "See docs/COO_SERVICEMONITOR_DISCOVERY_ISSUE.md for details"
             log_info ""
             log_info "Possible causes:"
             log_info "  1. MonitoringStack resourceSelector doesn't match ServiceMonitor labels"

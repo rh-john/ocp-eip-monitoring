@@ -1,6 +1,6 @@
 # OpenShift EIP Monitoring
 
-A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources that exposes Prometheus metrics and alerts.
+Monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources. Exposes Prometheus metrics and alerts.
 
 ## Prerequisites
 
@@ -20,7 +20,7 @@ oc apply -f k8s/deployment/k8s-manifests.yaml
 
 ## Architecture
 
-The EIP monitoring solution integrates with OpenShift's User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
+Integrates with OpenShift User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
 
 ```mermaid
 graph TB
@@ -157,11 +157,10 @@ oc apply -f k8s/deployment/k8s-manifests.yaml
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `EIP_CAPACITY_PER_NODE` | Maximum EIPs per node for capacity calculations | `75` |
 
-## Key Metrics
+## Metrics
 
-The monitoring solution exposes **50+ metrics** for comprehensive EIP and CPIC monitoring. Key metrics include:
+Exposes metrics for EIP and CPIC monitoring. Core metrics:
 
-**Core Metrics:**
 - `eips_configured_total` - Total configured EIPs
 - `eips_assigned_total` - Total assigned EIPs  
 - `eips_unassigned_total` - Total unassigned EIPs
@@ -170,34 +169,22 @@ The monitoring solution exposes **50+ metrics** for comprehensive EIP and CPIC m
 - `cpic_error_total` - Error CPIC resources
 - `node_eip_assigned_total` - EIPs assigned per node
 
-**Advanced Metrics:**
-- Distribution fairness (Gini coefficient, standard deviation)
-- Health scores (cluster health, stability)
-- API performance metrics
-- Mismatch detection metrics
-- Historical trend analysis
+Additional metrics include distribution fairness (Gini coefficient), health scores, API performance, and historical trends.
 
-📊 **See [Enhanced Metrics Guide](docs/ENHANCED_METRICS_GUIDE.md) for the complete metrics catalog (50+ metrics) and advanced usage examples.**
+See [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) for complete metrics catalog.
 
-## Key Alerts
+## Alerts
 
-The monitoring solution includes **30+ intelligent alerts** for proactive issue detection. Key alerts include:
+Alert rules for EIP and CPIC monitoring. Core alerts:
 
-**Core Alerts:**
 - **EIPUtilizationCritical**: EIP utilization > 95%
 - **EIPNotAssigned**: Unassigned EIPs detected
 - **CPICErrors**: CPIC resources in error state
 - **ClusterEIPHealthCritical**: Cluster health score < 50
 
-**Additional Alert Categories:**
-- Distribution & capacity alerts
-- API performance alerts
-- Node & infrastructure alerts
-- Trend & pattern alerts
-- Duration-based alerts
-- Monitoring system alerts
+Additional alerts cover distribution, capacity, API performance, node health, trends, and monitoring system status.
 
-🚨 **See [Enhanced Metrics Guide](docs/ENHANCED_METRICS_GUIDE.md) for the complete alert catalog (30+ alerts) with detailed conditions and severity levels.**
+See [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) for complete alert catalog.
 
 ## Usage
 
@@ -233,10 +220,7 @@ curl http://localhost:8080/metrics
 ./scripts/deploy-test-eips.sh redistribute
 ```
 
-**Note**: The deployment script intelligently handles changes:
-- **Preserves existing IPs**: When increasing distribution, existing IPs remain assigned and new ones are added
-- **Smart scaling**: Detects existing configurations and only updates what's needed
-- **Distribution changes**: Allows changing IP distribution without full reassignment
+**Note**: The deployment script preserves existing IPs when scaling and only updates what's needed.
 
 ### Verification
 ```bash
@@ -283,7 +267,7 @@ ocp-eip-monitoring/
 │   ├── deploy-grafana.sh          # Deploy Grafana operator and dashboards
 │   ├── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
 │   ├── test/
-│   │   ├── test-monitoring-deployment.sh  # Comprehensive monitoring tests
+│   │   ├── test-monitoring-deployment.sh  # Monitoring tests
 │   └── lib/                       # Shared script library
 │       └── common.sh              # Common functions (pod finding, logging, prerequisites)
 ├── tests/                         # Test suites
@@ -323,7 +307,7 @@ check_prerequisites
 
 - **`scripts/deploy-monitoring.sh`**: Deploy COO or UWM monitoring infrastructure
 - **`scripts/deploy-grafana.sh`**: Deploy Grafana operator, instance, and dashboards
-- **`scripts/test/test-monitoring-deployment.sh`**: Comprehensive monitoring verification
+- **`scripts/test/test-monitoring-deployment.sh`**: Monitoring verification
 - **`tests/e2e/test-monitoring-e2e.sh`**: End-to-end monitoring tests
 - **`tests/e2e/test-uwm-grafana-e2e.sh`**: End-to-end Grafana deployment tests
 
@@ -331,10 +315,10 @@ All scripts use the shared `common.sh` library for consistent behavior and reduc
 
 ## Documentation
 
-- **[Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Complete deployment instructions
-- **[Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md)** - All metrics and alerts
-- **[E2E Tests](tests/e2e/README.md)** - End-to-end testing guide
-- **[Grafana Dashboards](k8s/grafana/README.md)** - Dashboard documentation
+- [Deployment Guide](docs/CONTAINER_DEPLOYMENT.md) - Deployment instructions
+- [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) - Metrics and alerts catalog
+- [E2E Tests](tests/e2e/README.md) - End-to-end testing
+- [Grafana Dashboards](k8s/grafana/README.md) - Dashboard documentation
 
 ## License
 

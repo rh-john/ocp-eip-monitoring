@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*'
 
 jobs:
   release:
@@ -28,47 +30,65 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_TOKEN }}
       
-      - name: Get version
-        id: version
+      - name: Get version and tag
+        id: release
         run: |
-          if [[ -f .version ]]; then
-            VERSION=$(cat .version | tr -d '[:space:]')
+          # If triggered by tag push, use that tag
+          if [[ -n "${{ github.ref_type }}" ]] && [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+            VERSION=$(echo "$TAG" | sed 's/^v//')
+            echo "Triggered by tag push: $TAG"
+            echo "tag=${TAG}" >> $GITHUB_OUTPUT
+            echo "version=${VERSION}" >> $GITHUB_OUTPUT
+            echo "should_build=true" >> $GITHUB_OUTPUT
           else
-            # Extract from latest tag if .version doesn't exist
-            VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//' || echo "0.1.0")
+            # Triggered by branch push - check .version file and find matching tag
+            if [[ -f .version ]]; then
+              VERSION=$(cat .version | tr -d '[:space:]')
+            else
+              # Extract from latest tag if .version doesn't exist
+              VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//' || echo "0.1.0")
+            fi
+            TAG="v${VERSION}"
+            
+            # Check if tag exists and is in current branch history
+            if git rev-parse "$TAG" >/dev/null 2>&1; then
+              TAG_COMMIT=$(git rev-parse "$TAG")
+              HEAD_COMMIT=$(git rev-parse HEAD)
+              
+              # Check if tag commit is in current branch history (ancestor of HEAD)
+              if git merge-base --is-ancestor "$TAG_COMMIT" "$HEAD_COMMIT" 2>/dev/null; then
+                # Tag is in branch history - build it
+                echo "Tag $TAG exists and is in branch history, building release"
+                echo "tag=${TAG}" >> $GITHUB_OUTPUT
+                echo "version=${VERSION}" >> $GITHUB_OUTPUT
+                echo "should_build=true" >> $GITHUB_OUTPUT
+              else
+                echo "Tag $TAG exists but is not in current branch history, skipping build"
+                echo "tag=${TAG}" >> $GITHUB_OUTPUT
+                echo "version=${VERSION}" >> $GITHUB_OUTPUT
+                echo "should_build=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "Tag $TAG does not exist, skipping build"
+              echo "tag=${TAG}" >> $GITHUB_OUTPUT
+              echo "version=${VERSION}" >> $GITHUB_OUTPUT
+              echo "should_build=false" >> $GITHUB_OUTPUT
+            fi
           fi
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "Version: ${VERSION}"
-      
-      - name: Create release tag
-        id: tag
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="v${VERSION}"
-          
-          # Check if tag already exists
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping"
-            echo "tag=${TAG}" >> $GITHUB_OUTPUT
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            echo "tag=${TAG}" >> $GITHUB_OUTPUT
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "Created and pushed tag: $TAG"
-          fi
+          echo "Tag: ${TAG}"
       
       - name: Get commit SHA
         id: commit
         run: echo "sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
       
       - name: Build and push container image
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.release.outputs.should_build == 'true'
         run: |
           IMAGE_NAME="eip-monitor"
           REGISTRY="quay.io/${{ secrets.QUAY_REPOSITORY }}"
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.release.outputs.version }}"
           SHA="${{ steps.commit.outputs.sha }}"
           
           # Build image
@@ -88,8 +108,9 @@ jobs:
       
       - name: Generate release notes
         id: notes
+        if: steps.release.outputs.should_build == 'true'
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
+          TAG="${{ steps.release.outputs.tag }}"
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
           
           if [[ -n "$PREV_TAG" ]]; then
@@ -103,16 +124,16 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
       
       - name: Create GitHub release
-        if: steps.tag.outputs.exists == 'false'
+        if: steps.release.outputs.should_build == 'true'
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ steps.release.outputs.tag }}
+          name: Release ${{ steps.release.outputs.tag }}
           body: |
-            ## Release ${{ steps.tag.outputs.tag }}
+            ## Release ${{ steps.release.outputs.tag }}
             
             ### Container Images
-            - `quay.io/${{ secrets.QUAY_REPOSITORY }}/eip-monitor:v${{ steps.version.outputs.version }}`
+            - `quay.io/${{ secrets.QUAY_REPOSITORY }}/eip-monitor:v${{ steps.release.outputs.version }}`
             - `quay.io/${{ secrets.QUAY_REPOSITORY }}/eip-monitor:latest`
             - `quay.io/${{ secrets.QUAY_REPOSITORY }}/eip-monitor:sha-${{ steps.commit.outputs.sha }}`
             
