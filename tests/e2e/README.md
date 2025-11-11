@@ -15,21 +15,25 @@ E2E tests verify the complete lifecycle of monitoring deployment:
 ### `test-monitoring-e2e.sh`
 
 Comprehensive E2E test that:
-- Deploys monitoring infrastructure
-- Waits for resources to become ready
+- Deploys monitoring infrastructure using `deploy-monitoring.sh`
+- Waits for resources to become ready using shared `common.sh` functions
 - Verifies all components (ServiceMonitors, PrometheusRules, NetworkPolicies, etc.)
-- Checks that metrics are being scraped
+- Checks that metrics are being scraped (uses `find_query_pod()` from `common.sh`)
 - Optionally cleans up resources after test
+
+**Uses shared library:** `scripts/lib/common.sh` for pod finding, logging, and resource waiting.
 
 ### `test-uwm-grafana-e2e.sh`
 
 E2E test specifically for UWM monitoring with Grafana dashboards:
-- Deploys UWM monitoring infrastructure
-- Deploys Grafana operator and instance
+- Deploys UWM monitoring infrastructure using `deploy-monitoring.sh`
+- Deploys Grafana operator and instance using `deploy-grafana.sh`
 - Configures Grafana DataSource for UWM Prometheus
 - Installs and verifies Grafana dashboards
 - Verifies metrics are accessible through Grafana
 - Optionally cleans up resources after test
+
+**Uses shared library:** `scripts/lib/common.sh` for pod finding, logging, and resource waiting.
 
 ## Usage
 
@@ -207,12 +211,20 @@ If tests fail, you can manually verify:
 # Check specific resources
 oc get servicemonitor,prometheusrule,networkpolicy -n eip-monitoring
 
-# Check Prometheus pods
-oc get pods -n eip-monitoring -l app.kubernetes.io/name=prometheus
+# Check Prometheus pods (using common.sh functions)
+source scripts/lib/common.sh
+PROM_POD=$(find_prometheus_pod eip-monitoring true)
+if [[ -n "$PROM_POD" ]]; then
+    oc exec -n eip-monitoring $PROM_POD -- wget -qO- 'http://localhost:9090/api/v1/query?query=count({__name__=~"eip_.*"})'
+fi
 
-# Query metrics
-PROM_POD=$(oc get pods -n eip-monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}')
-oc exec -n eip-monitoring $PROM_POD -- wget -qO- 'http://localhost:9090/api/v1/query?query=count({__name__=~"eip_.*"})'
+# Or use find_query_pod() for automatic pod selection (ThanosQuerier or Prometheus)
+QUERY_RESULT=$(find_query_pod eip-monitoring true)
+if [[ -n "$QUERY_RESULT" ]]; then
+    QUERY_POD=$(echo "$QUERY_RESULT" | cut -d'|' -f1)
+    QUERY_PORT=$(echo "$QUERY_RESULT" | cut -d'|' -f2)
+    oc exec -n eip-monitoring $QUERY_POD -- wget -qO- "http://localhost:${QUERY_PORT}/api/v1/query?query=count({__name__=~\"eip_.*\"})"
+fi
 ```
 
 ## Best Practices
