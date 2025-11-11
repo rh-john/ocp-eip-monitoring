@@ -160,6 +160,60 @@ test_coo_deployment() {
     # Step 9: Verify metrics are being scraped
     log_test "Step 9: Verifying metrics are being scraped..."
     
+    # First verify that the service has endpoints (required for scraping)
+    log_info "Verifying eip-monitor service has endpoints..."
+    local service_endpoints=$(oc get endpoints eip-monitor -n "$NAMESPACE" -o jsonpath='{.subsets[0].addresses[*].ip}' 2>/dev/null || echo "")
+    if [[ -z "$service_endpoints" ]]; then
+        log_error "Service eip-monitor has no endpoints - Prometheus cannot scrape"
+        log_info "Check if deployment is running: oc get pods -n $NAMESPACE -l app=eip-monitor"
+        ((TESTS_FAILED++)) || true
+        EXIT_CODE=1
+        return 1
+    else
+        log_success "Service eip-monitor has endpoints: $service_endpoints"
+    fi
+    
+    # Verify ServiceMonitor is discovered by Prometheus
+    log_info "Checking if Prometheus has discovered the ServiceMonitor..."
+    local prom_pod=""
+    prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    if [[ -z "$prom_pod" ]]; then
+        prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    fi
+    
+    if [[ -n "$prom_pod" ]]; then
+        # Check Prometheus targets to see if eip-monitor is being scraped
+        local targets_json=$(oc exec -n "$NAMESPACE" "$prom_pod" -- wget -qO- 'http://localhost:9090/api/v1/targets' 2>/dev/null || echo "")
+        if [[ -n "$targets_json" ]]; then
+            local eip_targets=$(echo "$targets_json" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    targets = data.get('data', {}).get('activeTargets', [])
+    eip_targets = [t for t in targets if 'eip-monitor' in t.get('scrapeUrl', '').lower() or 'eip-monitor' in t.get('labels', {}).get('job', '').lower()]
+    if eip_targets:
+        health = eip_targets[0].get('health', 'unknown')
+        print(f'{health}|{len(eip_targets)}')
+    else:
+        print('not_found|0')
+except:
+    print('error|0')
+" 2>/dev/null || echo "error|0")
+            
+            local target_health=$(echo "$eip_targets" | cut -d'|' -f1)
+            local target_count=$(echo "$eip_targets" | cut -d'|' -f2)
+            
+            if [[ "$target_health" == "up" ]]; then
+                log_success "Prometheus is scraping eip-monitor (target health: up)"
+            elif [[ "$target_health" == "down" ]]; then
+                log_warn "Prometheus target for eip-monitor is down (may still be initializing)"
+            elif [[ "$target_count" == "0" ]]; then
+                log_warn "Prometheus has not discovered eip-monitor target yet (ServiceMonitor may not be reconciled)"
+                log_info "This is normal if Prometheus was just deployed - it may take a few minutes"
+            fi
+        fi
+    fi
+    
     # For COO, prefer querying via ThanosQuerier (aggregates all Prometheus replicas)
     # Fallback to Prometheus pod if ThanosQuerier not available
     local query_pod=""
@@ -184,22 +238,16 @@ test_coo_deployment() {
     fi
     
     # Fallback to Prometheus pod if ThanosQuerier not available
-    if [[ -z "$query_pod" ]]; then
-        # Try multiple selectors for Prometheus pod
-        query_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-        if [[ -z "$query_pod" ]]; then
-            # Try COO-specific labels
-            query_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-        fi
-        if [[ -n "$query_pod" ]]; then
-            query_port="9090"
-            log_info "Using Prometheus pod for metrics query: $query_pod"
-        fi
+    if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
+        query_pod="$prom_pod"
+        query_port="9090"
+        log_info "Using Prometheus pod for metrics query: $prom_pod"
     fi
     
     if [[ -n "$query_pod" ]]; then
-        # Wait a bit for scraping to start
-        sleep 30
+        # Wait a bit longer for scraping to start (COO Prometheus may need more time)
+        log_info "Waiting for metrics to be scraped (this may take a few minutes)..."
+        sleep 60  # Increased from 30s to 60s for COO
         
         # Query for eip_ metrics
         local metrics_count=$(oc exec -n "$NAMESPACE" "$query_pod" -- wget -qO- "http://localhost:${query_port}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
@@ -210,6 +258,8 @@ test_coo_deployment() {
             ((TESTS_PASSED++)) || true
         else
             log_warn "No eip_* metrics found yet (may still be initializing)"
+            log_info "This is normal if Prometheus was just deployed - scraping may take a few minutes"
+            log_info "Check Prometheus targets: oc exec -n $NAMESPACE $prom_pod -- wget -qO- http://localhost:9090/api/v1/targets | grep eip-monitor"
             ((TESTS_WARNED++)) || true
         fi
     else
