@@ -7,22 +7,17 @@
 
 set -euo pipefail
 
+# Source common functions from deploy scripts
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-coo}"  # coo, uwm, or all
 CLEANUP="${CLEANUP:-true}"  # Set to false to keep resources after test
 TIMEOUT="${TIMEOUT:-300}"  # Timeout in seconds for resource readiness
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'
-NC='\033[0m'
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[⚠]${NC} $1"; }
-log_error() { echo -e "${RED}[✗]${NC} $1"; }
+# E2E-specific logging function
 log_test() { echo -e "\n${BLUE}[E2E TEST]${NC} $1"; }
 
 # Track test results
@@ -35,8 +30,9 @@ EXIT_CODE=0
 cleanup() {
     if [[ "$CLEANUP" == "true" ]]; then
         log_info "Cleaning up test resources..."
-        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        local project_root="$(dirname "$(dirname "$script_dir")")"
+        
+        # Use PROJECT_ROOT from sourced common.sh
+        local project_root="$PROJECT_ROOT"
         
         # Use --remove-monitoring all if testing both, otherwise use specific type
         if [[ "$MONITORING_TYPE" == "all" ]]; then
@@ -59,64 +55,15 @@ cleanup() {
 # Trap to ensure cleanup on exit
 trap cleanup EXIT
 
-# Wait for resource to be ready
-wait_for_resource() {
-    local resource_type=$1
-    local resource_name=$2
-    local namespace=$3
-    local timeout=${4:-$TIMEOUT}
-    local elapsed=0
-    
-    log_info "Waiting for $resource_type/$resource_name to be ready (timeout: ${timeout}s)..."
-    
-    while [[ $elapsed -lt $timeout ]]; do
-        if oc get "$resource_type" "$resource_name" -n "$namespace" &>/dev/null; then
-            # Check if resource is ready (if it has a status field)
-            local status=$(oc get "$resource_type" "$resource_name" -n "$namespace" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-            if [[ -z "$status" ]] || [[ "$status" == "True" ]]; then
-                log_success "$resource_type/$resource_name is ready"
-                return 0
-            fi
-        fi
-        sleep 5
-        elapsed=$((elapsed + 5))
-    done
-    
-    log_error "$resource_type/$resource_name failed to become ready within ${timeout}s"
-    return 1
-}
-
-# Wait for pods to be running
-wait_for_pods() {
-    local namespace=$1
-    local selector=$2
-    local expected_count=${3:-1}
-    local timeout=${4:-$TIMEOUT}
-    local elapsed=0
-    
-    log_info "Waiting for pods with selector '$selector' to be running (expected: $expected_count, timeout: ${timeout}s)..."
-    
-    while [[ $elapsed -lt $timeout ]]; do
-        local running_count=$(oc get pods -n "$namespace" -l "$selector" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-        if [[ "$running_count" -ge "$expected_count" ]]; then
-            log_success "Found $running_count running pod(s) with selector '$selector'"
-            return 0
-        fi
-        sleep 5
-        elapsed=$((elapsed + 5))
-    done
-    
-    log_error "Pods with selector '$selector' failed to become running within ${timeout}s"
-    return 1
-}
+# Note: wait_for_resource() and wait_for_pods() are now sourced from scripts/lib/common.sh
 
 # Test COO monitoring deployment
 test_coo_deployment() {
     log_test "Testing COO Monitoring Deployment"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$(dirname "$script_dir")")"
+    # Use PROJECT_ROOT from sourced common.sh
+    local project_root="$PROJECT_ROOT"
     
     # Step 1: Deploy COO monitoring
     log_test "Step 1: Deploying COO monitoring..."
@@ -251,8 +198,8 @@ test_uwm_deployment() {
     log_test "Testing UWM Monitoring Deployment"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$(dirname "$script_dir")")"
+    # Use PROJECT_ROOT from sourced common.sh
+    local project_root="$PROJECT_ROOT"
     local uwm_namespace="openshift-user-workload-monitoring"
     
     # Step 1: Deploy UWM monitoring
@@ -367,14 +314,8 @@ main() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
-    # Check prerequisites
-    if ! command -v oc &>/dev/null; then
-        log_error "oc command not found"
-        exit 1
-    fi
-    
-    if ! oc whoami &>/dev/null; then
-        log_error "Not connected to OpenShift cluster"
+    # Check prerequisites using shared function
+    if ! check_prerequisites; then
         exit 1
     fi
     
