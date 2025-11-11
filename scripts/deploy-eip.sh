@@ -1164,6 +1164,9 @@ test_deployment() {
     local tests_failed=0
     local total_tests=0
     
+    # Test-specific logging function (matches e2e test format)
+    log_test() { echo -e "\n${BLUE}[TEST]${NC} $1"; }
+    
     # Helper function to run a test
     run_test() {
         local test_name="$1"
@@ -1171,20 +1174,18 @@ test_deployment() {
         ((total_tests++))
         
         if eval "$test_command" &>/dev/null; then
-            log_success "✅ $test_name"
+            log_success "$test_name"
             ((tests_passed++))
             return 0
         else
-            log_error "❌ $test_name"
+            log_error "$test_name"
             ((tests_failed++))
             return 1
         fi
     }
     
     # 1. Basic Deployment Tests
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🏗️  Basic Deployment Tests"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_test "Step 1: Basic Deployment Tests"
     
     run_test "Namespace exists" "oc get namespace \"$NAMESPACE\" &>/dev/null"
     run_test "Deployment exists" "oc get deployment eip-monitor -n \"$NAMESPACE\" &>/dev/null"
@@ -1220,17 +1221,15 @@ test_deployment() {
     echo ""
     
     # 2. Application Functionality Tests
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🚀 Application Functionality Tests"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_test "Step 2: Application Functionality Tests"
     
     # Test health endpoint
     local health_response=$(oc exec "$pod_name" -n "$NAMESPACE" -- curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/health 2>/dev/null || echo "000")
     if [[ "$health_response" == "200" ]] || [[ "$health_response" == "503" ]]; then
-        log_success "✅ Health endpoint responds (HTTP $health_response)"
+        log_success "Health endpoint responds (HTTP $health_response)"
         ((tests_passed++))
     else
-        log_error "❌ Health endpoint not responding (HTTP $health_response)"
+        log_error "Health endpoint not responding (HTTP $health_response)"
         ((tests_failed++))
     fi
     ((total_tests++))
@@ -1238,20 +1237,20 @@ test_deployment() {
     # Test metrics endpoint exists and returns data
     local metrics_output=$(oc exec "$pod_name" -n "$NAMESPACE" -- curl -sf http://localhost:8080/metrics 2>/dev/null || echo "")
     if [[ -n "$metrics_output" ]]; then
-        log_success "✅ Metrics endpoint responds"
+        log_success "Metrics endpoint responds"
         ((tests_passed++))
     else
-        log_error "❌ Metrics endpoint not responding"
+        log_error "Metrics endpoint not responding"
         ((tests_failed++))
     fi
     ((total_tests++))
     
     # Test required metrics are present
     if echo "$metrics_output" | grep -q "eips_configured_total"; then
-        log_success "✅ Required metric 'eips_configured_total' present"
+        log_success "Required metric 'eips_configured_total' present"
         ((tests_passed++))
     else
-        log_error "❌ Required metric 'eips_configured_total' missing"
+        log_error "Required metric 'eips_configured_total' missing"
         ((tests_failed++))
     fi
     ((total_tests++))
@@ -1262,10 +1261,10 @@ test_deployment() {
     
     # Test Prometheus format
     if echo "$metrics_output" | head -1 | grep -qE "^#|^[a-zA-Z_]"; then
-        log_success "✅ Metrics in Prometheus format"
+        log_success "Metrics in Prometheus format"
         ((tests_passed++))
     else
-        log_error "❌ Metrics not in Prometheus format"
+        log_error "Metrics not in Prometheus format"
         ((tests_failed++))
     fi
     ((total_tests++))
@@ -1274,10 +1273,10 @@ test_deployment() {
     sleep 2  # Wait for logs to accumulate
     local log_output=$(oc logs "$pod_name" -n "$NAMESPACE" --tail=50 2>/dev/null || echo "")
     if echo "$log_output" | grep -qE "Starting|metrics|EIP|Found"; then
-        log_success "✅ Application logs present"
+        log_success "Application logs present"
         ((tests_passed++))
     else
-        log_warn "⚠️  Application logs may be empty or not accessible"
+        log_warn "Application logs may be empty or not accessible"
         ((tests_failed++))
     fi
     ((total_tests++))
@@ -1285,16 +1284,14 @@ test_deployment() {
     echo ""
     
     # 3. Security and Permissions Tests
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🔒 Security and Permissions Tests"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_test "Step 3: Security and Permissions Tests"
     
     # Test OpenShift API access
     if oc exec "$pod_name" -n "$NAMESPACE" -- oc get nodes -l k8s.ovn.org/egress-assignable=true &>/dev/null; then
-        log_success "✅ OpenShift API permissions working"
+        log_success "OpenShift API permissions working"
         ((tests_passed++))
     else
-        log_error "❌ OpenShift API permissions not working"
+        log_error "OpenShift API permissions not working"
         ((tests_failed++))
     fi
     ((total_tests++))
@@ -1302,10 +1299,10 @@ test_deployment() {
     # Test security context (non-root)
     local run_as_nonroot=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.spec.securityContext.runAsNonRoot}' 2>/dev/null || echo "false")
     if [[ "$run_as_nonroot" == "true" ]]; then
-        log_success "✅ Security context configured (non-root)"
+        log_success "Security context configured (non-root)"
         ((tests_passed++))
     else
-        log_warn "⚠️  Security context may not be configured (runAsNonRoot: $run_as_nonroot)"
+        log_warn "Security context may not be configured (runAsNonRoot: $run_as_nonroot)"
         ((tests_failed++))
     fi
     ((total_tests++))
@@ -1314,170 +1311,194 @@ test_deployment() {
     local memory_limit=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].resources.limits.memory}' 2>/dev/null || echo "")
     local cpu_limit=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].resources.limits.cpu}' 2>/dev/null || echo "")
     if [[ -n "$memory_limit" ]] && [[ -n "$cpu_limit" ]]; then
-        log_success "✅ Resource limits configured (Memory: $memory_limit, CPU: $cpu_limit)"
+        log_success "Resource limits configured (Memory: $memory_limit, CPU: $cpu_limit)"
         ((tests_passed++))
     else
-        log_warn "⚠️  Resource limits may not be fully configured"
+        log_warn "Resource limits may not be fully configured"
         ((tests_failed++))
     fi
     ((total_tests++))
     
     echo ""
     
-    # 4. User Workload Monitoring Prerequisites
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "📊 User Workload Monitoring Prerequisites"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    # 4. User Workload Monitoring Prerequisites (only if UWM is detected)
+    log_test "Step 4: User Workload Monitoring Prerequisites"
     
-    # Check if User Workload Monitoring is enabled in cluster-monitoring-config
+    # Check if UWM is enabled before running these tests
+    local uwm_enabled=false
     local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
-    
-    if [[ -n "$cluster_config" ]]; then
-        # Check if enableUserWorkload is set to true
-        if echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
-            log_success "✅ User Workload Monitoring enabled in cluster-monitoring-config"
-            ((tests_passed++))
-        else
-            log_error "❌ User Workload Monitoring not enabled in cluster-monitoring-config"
-            log_info "    To enable, edit: oc -n openshift-monitoring edit configmap cluster-monitoring-config"
-            log_info "    Add: enableUserWorkload: true"
-            ((tests_failed++))
-        fi
-        ((total_tests++))
-    else
-        log_warn "⚠️  cluster-monitoring-config not found or empty"
-        log_info "    User Workload Monitoring may not be configured"
-        ((tests_failed++))
-        ((total_tests++))
+    if [[ -n "$cluster_config" ]] && echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
+        uwm_enabled=true
     fi
     
-    # Check if openshift-user-workload-monitoring namespace exists
-    if oc get namespace openshift-user-workload-monitoring &>/dev/null; then
-        log_success "✅ openshift-user-workload-monitoring namespace exists"
-        ((tests_passed++))
-        
-        # Check if Prometheus pods are running
-        local prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null | tr -d '[:space:]' || echo "0")
-        prom_pods=${prom_pods:-0}  # Default to 0 if empty
-        if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
-            log_success "✅ Prometheus pods running in openshift-user-workload-monitoring ($prom_pods pod(s))"
-            ((tests_passed++))
-        else
-            log_error "❌ No Prometheus pods running in openshift-user-workload-monitoring"
-            log_info "    Check: oc get pods -n openshift-user-workload-monitoring"
-            ((tests_failed++))
-        fi
-        ((total_tests++))
-        
-        # Check if AlertManager pods are running (optional but recommended)
-        local am_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=alertmanager --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null | tr -d '[:space:]' || echo "0")
-        am_pods=${am_pods:-0}  # Default to 0 if empty
-        if [[ "$am_pods" =~ ^[0-9]+$ ]] && [[ "$am_pods" -gt 0 ]]; then
-            log_success "✅ AlertManager pods running in openshift-user-workload-monitoring ($am_pods pod(s))"
-            ((tests_passed++))
-        else
-            log_warn "⚠️  AlertManager not running (alerts may not work)"
-            log_info "    To enable: oc apply -f - <<EOF"
-            log_info "    apiVersion: v1"
-            log_info "    kind: ConfigMap"
-            log_info "    metadata:"
-            log_info "      name: user-workload-monitoring-config"
-            log_info "      namespace: openshift-user-workload-monitoring"
-            log_info "    data:"
-            log_info "      config.yaml: |"
-            log_info "        alertmanager:"
-            log_info "          enabled: true"
-            log_info "    EOF"
-            ((tests_failed++))
-        fi
-        ((total_tests++))
-        
-        # Check user-workload-monitoring-config ConfigMap (for alerting configuration)
-        local uwm_config=$(oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
-        if [[ -n "$uwm_config" ]]; then
-            if echo "$uwm_config" | grep -qE "alertmanager:\s*enabled:\s*true"; then
-                log_success "✅ AlertManager enabled in user-workload-monitoring-config"
+    if [[ "$uwm_enabled" == "true" ]]; then
+        # Check if User Workload Monitoring is enabled in cluster-monitoring-config
+        if [[ -n "$cluster_config" ]]; then
+            # Check if enableUserWorkload is set to true
+            if echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
+                log_success "User Workload Monitoring enabled in cluster-monitoring-config"
                 ((tests_passed++))
             else
-                # Default AlertManager configuration is sufficient
-                ((tests_passed++))
+                log_error "User Workload Monitoring not enabled in cluster-monitoring-config"
+                log_info "    To enable, edit: oc -n openshift-monitoring edit configmap cluster-monitoring-config"
+                log_info "    Add: enableUserWorkload: true"
+                ((tests_failed++))
             fi
             ((total_tests++))
         else
-            # Default AlertManager configuration is sufficient
+            log_warn "cluster-monitoring-config not found or empty"
+            log_info "    User Workload Monitoring may not be configured"
+            ((tests_failed++))
             ((total_tests++))
         fi
-    else
-        log_error "❌ openshift-user-workload-monitoring namespace not found"
-        log_info "    User Workload Monitoring is not enabled"
-        log_info "    Enable it by setting enableUserWorkload: true in cluster-monitoring-config"
-        ((tests_failed++))
-        ((total_tests++))
-    fi
-    
-    echo ""
-    
-    # 5. Monitoring Integration Tests
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "📊 Monitoring Integration Tests"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    # Test ServiceMonitor exists (if Prometheus Operator is available)
-    if oc get crd servicemonitors.monitoring.coreos.com &>/dev/null; then
-        if oc get servicemonitor eip-monitor -n "$NAMESPACE" &>/dev/null; then
-            log_success "✅ ServiceMonitor exists"
+        
+        # Check if openshift-user-workload-monitoring namespace exists
+        if oc get namespace openshift-user-workload-monitoring &>/dev/null; then
+            log_success "openshift-user-workload-monitoring namespace exists"
             ((tests_passed++))
             
-            # Test if Prometheus is actually scraping the metrics
-            # Try to query Prometheus via port-forward (non-blocking test)
-            local prom_pod=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+            # Check if Prometheus pods are running
+            local prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null | tr -d '[:space:]' || echo "0")
+            prom_pods=${prom_pods:-0}  # Default to 0 if empty
+            if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
+                log_success "Prometheus pods running in openshift-user-workload-monitoring ($prom_pods pod(s))"
+                ((tests_passed++))
+            else
+                log_error "No Prometheus pods running in openshift-user-workload-monitoring"
+                log_info "    Check: oc get pods -n openshift-user-workload-monitoring"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
             
-            if [[ -n "$prom_pod" ]]; then
-                # Wait a bit for Prometheus to scrape (if it hasn't already)
-                sleep 3
-                
-                # Query Prometheus API for our metric
-                # Use curl with --max-time to avoid hanging
-                local prom_query_result=$(oc exec "$prom_pod" -n openshift-user-workload-monitoring -- \
-                    curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=eips_configured_total" 2>/dev/null || echo "")
-                
-                if echo "$prom_query_result" | grep -q "eips_configured_total"; then
-                    log_success "✅ Prometheus is scraping metrics"
+            # Check if AlertManager pods are running (optional but recommended)
+            local am_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=alertmanager --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null | tr -d '[:space:]' || echo "0")
+            am_pods=${am_pods:-0}  # Default to 0 if empty
+            if [[ "$am_pods" =~ ^[0-9]+$ ]] && [[ "$am_pods" -gt 0 ]]; then
+                log_success "AlertManager pods running in openshift-user-workload-monitoring ($am_pods pod(s))"
+                ((tests_passed++))
+            else
+                log_warn "AlertManager not running (alerts may not work)"
+                log_info "    To enable: oc apply -f - <<EOF"
+                log_info "    apiVersion: v1"
+                log_info "    kind: ConfigMap"
+                log_info "    metadata:"
+                log_info "      name: user-workload-monitoring-config"
+                log_info "      namespace: openshift-user-workload-monitoring"
+                log_info "    data:"
+                log_info "      config.yaml: |"
+                log_info "        alertmanager:"
+                log_info "          enabled: true"
+                log_info "    EOF"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+            
+            # Check user-workload-monitoring-config ConfigMap (for alerting configuration)
+            local uwm_config=$(oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
+            if [[ -n "$uwm_config" ]]; then
+                if echo "$uwm_config" | grep -qE "alertmanager:\s*enabled:\s*true"; then
+                    log_success "AlertManager enabled in user-workload-monitoring-config"
                     ((tests_passed++))
                 else
-                    log_warn "⚠️  Prometheus may not be scraping metrics yet (wait a few minutes for first scrape)"
-                    log_info "    Note: This is normal if the ServiceMonitor was just created"
-                    ((tests_failed++))
+                    # Default AlertManager configuration is sufficient
+                    ((tests_passed++))
                 fi
                 ((total_tests++))
             else
-                log_info "ℹ️  Prometheus pod not found, skipping scrape verification"
+                # Default AlertManager configuration is sufficient
+                ((total_tests++))
             fi
         else
-            log_warn "⚠️  ServiceMonitor not found (may need to be deployed)"
+            log_error "openshift-user-workload-monitoring namespace not found"
+            log_info "    User Workload Monitoring is not enabled"
+            log_info "    Enable it by setting enableUserWorkload: true in cluster-monitoring-config"
             ((tests_failed++))
+            ((total_tests++))
         fi
-        ((total_tests++))
+        
+        echo ""
     else
-        log_info "ℹ️  Prometheus Operator not available, skipping ServiceMonitor test"
+        log_warn "UWM not detected, skipping User Workload Monitoring Prerequisites tests"
+        echo ""
     fi
     
-    # Test metrics performance (response time)
+    # 5. Monitoring Integration Tests (only if COO is detected)
+    log_test "Step 5: Monitoring Integration Tests"
+    
+    # Check if COO is enabled before running these tests
+    local coo_enabled=false
+    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+        coo_enabled=true
+    fi
+    
+    if [[ "$coo_enabled" == "true" ]]; then
+        # Test ServiceMonitor exists (if Prometheus Operator is available)
+        if oc get crd servicemonitors.monitoring.coreos.com &>/dev/null || oc get crd servicemonitors.monitoring.rhobs &>/dev/null; then
+            if oc get servicemonitor eip-monitor -n "$NAMESPACE" &>/dev/null || \
+               oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+               oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+                log_success "ServiceMonitor exists"
+                ((tests_passed++))
+                
+                # Test if Prometheus is actually scraping the metrics
+                # Try to find COO Prometheus pod
+                local prom_pod=""
+                # Try COO-specific labels first
+                prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                # Fallback to standard Prometheus label
+                if [[ -z "$prom_pod" ]]; then
+                    prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+                fi
+                
+                if [[ -n "$prom_pod" ]]; then
+                    # Wait a bit for Prometheus to scrape (if it hasn't already)
+                    sleep 3
+                    
+                    # Query Prometheus API for our metric
+                    # Use curl with --max-time to avoid hanging
+                    local prom_query_result=$(oc exec "$prom_pod" -n "$NAMESPACE" -- \
+                        curl -sf --max-time 5 "http://localhost:9090/api/v1/query?query=eips_configured_total" 2>/dev/null || echo "")
+                    
+                    if echo "$prom_query_result" | grep -q "eips_configured_total"; then
+                        log_success "Prometheus is scraping metrics"
+                        ((tests_passed++))
+                    else
+                        log_warn "Prometheus may not be scraping metrics yet (wait a few minutes for first scrape)"
+                        log_info "    Note: This is normal if the ServiceMonitor was just created"
+                        ((tests_failed++))
+                    fi
+                    ((total_tests++))
+                else
+                    log_info "Prometheus pod not found, skipping scrape verification"
+                fi
+            else
+                log_warn "ServiceMonitor not found (may need to be deployed)"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+        else
+            log_info "Prometheus Operator not available, skipping ServiceMonitor test"
+        fi
+    else
+        log_warn "COO not detected, skipping Monitoring Integration Tests"
+    fi
+    
+    # Test metrics performance (response time) - always run
     local start_time=$(date +%s)
     oc exec "$pod_name" -n "$NAMESPACE" -- curl -sf http://localhost:8080/metrics &>/dev/null
     local end_time=$(date +%s)
     local response_time=$((end_time - start_time))
     
     if [[ $response_time -lt 5 ]]; then
-        log_success "✅ Metrics endpoint performance acceptable (${response_time}s)"
+        log_success "Metrics endpoint performance acceptable (${response_time}s)"
         ((tests_passed++))
     else
-        log_warn "⚠️  Metrics endpoint slow (${response_time}s)"
+        log_warn "Metrics endpoint slow (${response_time}s)"
         ((tests_failed++))
     fi
     ((total_tests++))
     
-    # Test metrics values are reasonable
+    # Test metrics values are reasonable - always run
     # Skip comment lines and extract the value (last field) from metric lines
     # Handle both simple format: "eips_configured_total 123" 
     # and labeled format: "eips_configured_total{label="value"} 123"
@@ -1485,10 +1506,10 @@ test_deployment() {
     
     # Check if it's a valid number (integer or float)
     if [[ "$configured_count" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-        log_success "✅ Metrics values are numeric (eips_configured_total: $configured_count)"
+        log_success "Metrics values are numeric (eips_configured_total: $configured_count)"
         ((tests_passed++))
     else
-        log_warn "⚠️  Metrics values may be invalid (got: '$configured_count')"
+        log_warn "Metrics values may be invalid (got: '$configured_count')"
         log_info "Debug: First eips_configured_total line:"
         echo "$metrics_output" | grep -v "^#" | grep "^eips_configured_total" | head -1 | sed 's/^/    /' || echo "    (not found)"
         ((tests_failed++))
@@ -1497,10 +1518,99 @@ test_deployment() {
     
     echo ""
     
-    # 6. Summary
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "📋 Test Summary"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    # 6. Grafana Tests (only if Grafana is detected)
+    log_test "Step 6: Grafana Tests"
+    
+    # Check if Grafana is enabled before running these tests
+    local grafana_enabled=false
+    if oc get grafana -n "$NAMESPACE" &>/dev/null; then
+        grafana_enabled=true
+    fi
+    
+    if [[ "$grafana_enabled" == "true" ]]; then
+        # Test Grafana instance exists
+        if oc get grafana -n "$NAMESPACE" &>/dev/null; then
+            log_success "Grafana instance exists"
+            ((tests_passed++))
+        else
+            log_error "Grafana instance not found"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Test Grafana pod is running
+        local grafana_pod=""
+        # Try multiple approaches to find Grafana pod (in order of reliability)
+        grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E "grafana.*deployment" | grep -v operator | head -1 || echo "")
+        if [[ -z "$grafana_pod" ]]; then
+            grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=grafana-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        fi
+        if [[ -z "$grafana_pod" ]]; then
+            grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        fi
+        
+        if [[ -n "$grafana_pod" ]]; then
+            local pod_status=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$pod_status" == "Running" ]]; then
+                log_success "Grafana pod is running ($grafana_pod)"
+                ((tests_passed++))
+            else
+                log_warn "Grafana pod status: $pod_status"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+        else
+            log_warn "Grafana pod not found"
+            ((tests_failed++))
+            ((total_tests++))
+        fi
+        
+        # Test Grafana dashboards exist
+        local dashboard_count=$(oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        if [[ "$dashboard_count" -gt 0 ]]; then
+            log_success "Grafana dashboards exist ($dashboard_count dashboard(s))"
+            ((tests_passed++))
+        else
+            log_warn "No Grafana dashboards found"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Test Grafana datasources exist
+        local datasource_count=$(oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        if [[ "$datasource_count" -gt 0 ]]; then
+            log_success "Grafana datasources exist ($datasource_count datasource(s))"
+            ((tests_passed++))
+        else
+            log_warn "No Grafana datasources found"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Test Grafana API is accessible (if pod is running)
+        if [[ -n "$grafana_pod" ]] && [[ "$pod_status" == "Running" ]]; then
+            # Check Grafana health endpoint
+            local grafana_health=$(oc exec -n "$NAMESPACE" "$grafana_pod" -- curl -sf http://localhost:3000/api/health 2>/dev/null || echo "")
+            if echo "$grafana_health" | grep -q '"database":"ok"'; then
+                log_success "Grafana API is accessible"
+                ((tests_passed++))
+            else
+                log_warn "Grafana API may not be ready yet"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+        fi
+        
+        echo ""
+    else
+        log_info "Grafana not detected, skipping Grafana Tests"
+        echo ""
+    fi
+    
+    # 7. Summary
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Test Summary"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_success "Tests Passed: $tests_passed"
     if [[ $tests_failed -gt 0 ]]; then
         log_error "Tests Failed: $tests_failed"
@@ -1509,17 +1619,12 @@ test_deployment() {
     fi
     log_info "Total Tests: $total_tests"
     
-    # Show sample metrics
-    echo ""
-    log_info "Sample metrics output:"
-    echo "$metrics_output" | head -20 | sed 's/^/  /'
-    
     echo ""
     if [[ $tests_failed -eq 0 ]]; then
-        log_success "🎉 All tests passed! EIP Monitor is working correctly."
+        log_success "All tests passed! EIP Monitor is working correctly."
         return 0
     else
-        log_error "❌ Some tests failed. Please review the output above."
+        log_error "Some tests failed. Please review the output above."
         log_info "For detailed troubleshooting, check:"
         log_info "  - Pod logs: oc logs $pod_name -n $NAMESPACE"
         log_info "  - Pod status: oc describe pod $pod_name -n $NAMESPACE"
@@ -1636,9 +1741,7 @@ show_logs() {
 
 # Clean up eip-monitor deployment
 cleanup_eip_monitor() {
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Step 2: Removing eip-monitor resources..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 2: Removing eip-monitor resources..."
     
     # Delete ServiceMonitor and PrometheusRule first (dependencies)
     log_info "Removing ServiceMonitor and PrometheusRule..."
@@ -1674,9 +1777,7 @@ cleanup_eip_monitor() {
 
 # Clean up monitoring infrastructure
 cleanup_monitoring() {
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Step 3: Removing monitoring infrastructure..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 3: Removing monitoring infrastructure..."
     
     # Delegate to deploy-monitoring.sh for cleanup (consistent with Grafana cleanup)
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1714,9 +1815,7 @@ cleanup_monitoring() {
 
 # Clean up operators (COO and Grafana)
 cleanup_operators() {
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Step 4: Removing operators..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 4: Removing operators..."
     
     # Remove COO operator subscription
     if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
@@ -1777,9 +1876,7 @@ cleanup_operators() {
 
 # Complete cleanup (everything)
 cleanup_all() {
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Complete Cleanup (--all flag)"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Complete Cleanup (--all flag)"
     echo ""
     log_warn "This will remove ALL resources related to this project:"
     log_warn "  • Grafana resources (dashboards, datasources, instances)"
@@ -1790,9 +1887,7 @@ cleanup_all() {
     echo ""
     
     # Step 1: Remove Grafana resources
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Step 1: Removing Grafana resources..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 1: Removing Grafana resources..."
     
     # Use deploy-grafana.sh to remove Grafana resources and operator
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -1829,9 +1924,7 @@ cleanup_all() {
     cleanup_operators
     
     # Step 5: Delete namespace if empty (optional, but clean)
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "🗑️  Step 5: Cleaning up namespace..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Step 5: Cleaning up namespace..."
     
     # Delete deployment first to stop pods immediately
     if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
@@ -1882,17 +1975,17 @@ cleanup_all() {
     fi
     
     echo ""
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_success "✅ Complete cleanup finished!"
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "Complete cleanup finished!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     log_info "All resources have been removed:"
-    log_info "  ✓ Grafana resources (dashboards, datasources, instances)"
-    log_info "  ✓ eip-monitor application (deployment, service, RBAC)"
-    log_info "  ✓ Monitoring infrastructure (COO/UWM)"
-    log_info "  ✓ Operators (COO and Grafana operator subscriptions)"
-    log_info "  ✓ Namespace"
-    log_info "  ✓ UWM disabled in cluster-monitoring-config (if it was enabled)"
+    log_info "  Grafana resources (dashboards, datasources, instances)"
+    log_info "  eip-monitor application (deployment, service, RBAC)"
+    log_info "  Monitoring infrastructure (COO/UWM)"
+    log_info "  Operators (COO and Grafana operator subscriptions)"
+    log_info "  Namespace"
+    log_info "  UWM disabled in cluster-monitoring-config (if it was enabled)"
     echo ""
     log_info "Note: If UWM disable failed, you may need cluster-admin permissions:"
     log_info "  oc -n openshift-monitoring edit configmap cluster-monitoring-config"
