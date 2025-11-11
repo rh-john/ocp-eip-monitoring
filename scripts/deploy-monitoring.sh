@@ -1039,35 +1039,41 @@ remove_coo_monitoring() {
     
     # Delete COO UI plugins (cluster-scoped resources, no namespace)
     log_info "Removing COO UI plugins..."
-    # Check if UIPlugin CRD exists before attempting deletion
     # Note: UIPlugin is cluster-scoped (observability.openshift.io/v1alpha1), not namespace-scoped
-    if oc get crd uiplugins.observability.openshift.io &>/dev/null; then
-        # Delete by label selector (safer - only deletes COO UI plugins)
+    # Try to delete by name directly (skip CRD check to avoid hanging)
+    # Common UI plugin names (from k8s/monitoring/coo/ui-plugins/)
+    local ui_plugin_names=(
+        "monitoring"
+        "troubleshooting"
+    )
+    local deleted_count=0
+    for plugin_name in "${ui_plugin_names[@]}"; do
+        # Try to delete directly with timeout and non-blocking flags
+        # Use --wait=false and --timeout to prevent hanging
         if [[ "$VERBOSE" == "true" ]]; then
-            oc delete uiplugin -l monitoring=coo || true
-            oc delete uiplugin -l coo=eip-monitoring || true
-        else
-            oc delete uiplugin -l monitoring=coo &>/dev/null || true
-            oc delete uiplugin -l coo=eip-monitoring &>/dev/null || true
-        fi
-        
-        # Also delete by name as fallback (in case labels weren't applied)
-        # Common UI plugin names (from k8s/monitoring/coo/ui-plugins/)
-        local ui_plugin_names=(
-            "monitoring"
-            "troubleshooting"
-        )
-        for plugin_name in "${ui_plugin_names[@]}"; do
-            if oc get uiplugin "$plugin_name" &>/dev/null; then
-                if [[ "$VERBOSE" == "true" ]]; then
-                    oc delete uiplugin "$plugin_name" || true
-                else
-                    oc delete uiplugin "$plugin_name" &>/dev/null || true
-                fi
+            if oc delete uiplugin "$plugin_name" --wait=false --timeout=5s 2>&1 | grep -vE "(not found|No resources found|Error from server)"; then
+                ((deleted_count++))
             fi
-        done
+        else
+            if oc delete uiplugin "$plugin_name" --wait=false --timeout=5s &>/dev/null 2>&1; then
+                ((deleted_count++))
+            fi
+        fi
+    done
+    
+    # Also try label-based deletion (non-blocking)
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
+        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
     else
-        log_info "UIPlugin CRD not found, skipping UI plugin cleanup"
+        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s &>/dev/null 2>&1 || true
+        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s &>/dev/null 2>&1 || true
+    fi
+    
+    if [[ $deleted_count -gt 0 ]]; then
+        log_success "Removed $deleted_count UI plugin(s)"
+    else
+        log_info "No UI plugins found to remove (or already removed)"
     fi
     
     # Remove individual NetworkPolicies (if they exist)
