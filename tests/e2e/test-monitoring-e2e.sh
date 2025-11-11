@@ -214,44 +214,61 @@ except:
         fi
     fi
     
-    # For COO, prefer querying via ThanosQuerier (aggregates all Prometheus replicas)
-    # Fallback to Prometheus pod if ThanosQuerier not available
+    # For COO, prefer querying via ThanosQuerier route (cleaner, no exec needed)
+    # Fallback to ThanosQuerier pod, then Prometheus pod
     local query_pod=""
-    local query_namespace="$NAMESPACE"
+    local query_url=""
     local query_port="9090"
-    local query_endpoint=""
+    local use_route=false
     
-    # Try to find ThanosQuerier pod first (preferred for COO)
-    local thanos_pod=""
-    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    if [[ -z "$thanos_pod" ]]; then
-        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
-    fi
-    
-    if [[ -n "$thanos_pod" ]]; then
-        local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-        if [[ "$thanos_phase" == "Running" ]]; then
-            query_pod="$thanos_pod"
-            query_port="10902"  # ThanosQuerier uses port 10902
-            log_info "Using ThanosQuerier pod for metrics query: $thanos_pod"
+    # Try to use ThanosQuerier route first (preferred - cleaner, no exec needed)
+    local thanos_route=$(oc get route thanos-querier-coo -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [[ -n "$thanos_route" ]]; then
+        query_url="https://${thanos_route}"
+        query_port=""
+        use_route=true
+        log_info "Using ThanosQuerier route for metrics query: $query_url"
+    else
+        # Fallback to ThanosQuerier pod
+        local thanos_pod=""
+        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        if [[ -z "$thanos_pod" ]]; then
+            thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        fi
+        
+        if [[ -n "$thanos_pod" ]]; then
+            local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$thanos_phase" == "Running" ]]; then
+                query_pod="$thanos_pod"
+                query_port="10902"  # ThanosQuerier uses port 10902
+                log_info "Using ThanosQuerier pod for metrics query: $thanos_pod"
+            fi
+        fi
+        
+        # Fallback to Prometheus pod if ThanosQuerier not available
+        if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
+            query_pod="$prom_pod"
+            query_port="9090"
+            log_info "Using Prometheus pod for metrics query: $prom_pod"
         fi
     fi
     
-    # Fallback to Prometheus pod if ThanosQuerier not available
-    if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
-        query_pod="$prom_pod"
-        query_port="9090"
-        log_info "Using Prometheus pod for metrics query: $prom_pod"
-    fi
-    
-    if [[ -n "$query_pod" ]]; then
+    if [[ -n "$query_url" ]] || [[ -n "$query_pod" ]]; then
         # Wait a bit longer for scraping to start (COO Prometheus may need more time)
         log_info "Waiting for metrics to be scraped (this may take a few minutes)..."
         sleep 60  # Increased from 30s to 60s for COO
         
         # Query for eip_ metrics
-        local metrics_count=$(oc exec -n "$NAMESPACE" "$query_pod" -- wget -qO- "http://localhost:${query_port}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
-            python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('data', {}).get('result', [{}])[0].get('value', [0, '0'])[1])" 2>/dev/null || echo "0")
+        local metrics_count="0"
+        if [[ "$use_route" == "true" ]]; then
+            # Use route with curl (handles TLS automatically)
+            metrics_count=$(curl -sk "${query_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
+                python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('data', {}).get('result', [{}])[0].get('value', [0, '0'])[1])" 2>/dev/null || echo "0")
+        else
+            # Use pod exec
+            metrics_count=$(oc exec -n "$NAMESPACE" "$query_pod" -- wget -qO- "http://localhost:${query_port}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
+                python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('data', {}).get('result', [{}])[0].get('value', [0, '0'])[1])" 2>/dev/null || echo "0")
+        fi
         
         if [[ "$metrics_count" != "0" ]] && [[ -n "$metrics_count" ]]; then
             log_success "Found $metrics_count eip_* metrics"
@@ -259,11 +276,15 @@ except:
         else
             log_warn "No eip_* metrics found yet (may still be initializing)"
             log_info "This is normal if Prometheus was just deployed - scraping may take a few minutes"
-            log_info "Check Prometheus targets: oc exec -n $NAMESPACE $prom_pod -- wget -qO- http://localhost:9090/api/v1/targets | grep eip-monitor"
+            if [[ "$use_route" == "true" ]]; then
+                log_info "Check ThanosQuerier targets: curl -sk ${query_url}/api/v1/targets | grep eip-monitor"
+            elif [[ -n "$prom_pod" ]]; then
+                log_info "Check Prometheus targets: oc exec -n $NAMESPACE $prom_pod -- wget -qO- http://localhost:9090/api/v1/targets | grep eip-monitor"
+            fi
             ((TESTS_WARNED++)) || true
         fi
     else
-        log_error "Neither ThanosQuerier nor Prometheus pod found"
+        log_error "Neither ThanosQuerier route/pod nor Prometheus pod found"
         log_info "Available pods in namespace:"
         oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | head -10 | sed 's/^/  /' || true
         ((TESTS_FAILED++)) || true

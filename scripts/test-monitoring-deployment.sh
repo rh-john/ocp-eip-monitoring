@@ -139,11 +139,37 @@ test_coo() {
         stack_name=$(oc get monitoringstack -n "$NAMESPACE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
         if [[ -n "$stack_name" ]]; then
             log_success "MonitoringStack '$stack_name' exists"
-            stack_status=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-            if [[ "$stack_status" == "True" ]]; then
-                log_success "MonitoringStack is Ready"
+            
+            # Get all status conditions
+            stack_conditions=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[*]}' 2>/dev/null || echo "")
+            if [[ -n "$stack_conditions" ]]; then
+                # Parse and display conditions
+                ready_status=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
+                ready_reason=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].reason}' 2>/dev/null || echo "")
+                ready_message=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || echo "")
+                
+                if [[ "$ready_status" == "True" ]]; then
+                    log_success "MonitoringStack is Ready"
+                elif [[ -n "$ready_status" ]]; then
+                    log_warn "MonitoringStack Ready status: $ready_status"
+                    if [[ -n "$ready_reason" ]]; then
+                        log_info "  Reason: $ready_reason"
+                    fi
+                    if [[ -n "$ready_message" ]]; then
+                        log_info "  Message: $ready_message"
+                    fi
+                else
+                    # Show all conditions if Ready not found
+                    all_conditions=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason} {.message}{"\n"}{end}' 2>/dev/null || echo "")
+                    if [[ -n "$all_conditions" ]]; then
+                        log_info "MonitoringStack status conditions:"
+                        echo "$all_conditions" | sed 's/^/  /'
+                    else
+                        log_warn "MonitoringStack exists but has no status conditions yet (may still be initializing)"
+                    fi
+                fi
             else
-                log_warn "MonitoringStack status: $stack_status"
+                log_warn "MonitoringStack exists but has no status field yet (may still be initializing)"
             fi
         fi
     else
@@ -272,10 +298,66 @@ test_coo() {
         log_warn "Cannot check Prometheus config - pod not found"
     fi
     
-    # 11. Check Prometheus targets
+    # 11. Check Prometheus targets (for COO, use ThanosQuerier)
     log_test "11. Checking Prometheus targets..."
-    if [[ -n "$prom_pod" ]]; then
-        targets_json=$(oc exec -n "$NAMESPACE" "$prom_pod" -- wget -qO- http://localhost:9090/api/v1/targets 2>/dev/null || echo "")
+    
+    # For COO, prefer ThanosQuerier route or pod
+    local query_url=""
+    local query_host=""
+    local query_port=""
+    local use_route=false
+    local pod_name=""
+    
+    # Try to use ThanosQuerier route first (cleaner, no exec needed)
+    local thanos_route=$(oc get route thanos-querier-coo -n "$NAMESPACE" -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+    if [[ -n "$thanos_route" ]]; then
+        query_host="https://${thanos_route}"
+        query_port=""
+        use_route=true
+        log_info "Using ThanosQuerier route: $query_host"
+    else
+        # Fallback to ThanosQuerier pod
+        local thanos_pod=""
+        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        if [[ -z "$thanos_pod" ]]; then
+            thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        fi
+        
+        if [[ -n "$thanos_pod" ]]; then
+            local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$thanos_phase" == "Running" ]]; then
+                query_host="http://localhost"
+                query_port="10902"
+                use_route=false
+                pod_name="$thanos_pod"
+                log_info "Using ThanosQuerier pod: $thanos_pod (port 10902)"
+            fi
+        fi
+        
+        # Final fallback to Prometheus pod
+        if [[ -z "$query_host" ]] && [[ -n "$prom_pod" ]]; then
+            query_host="http://localhost"
+            query_port="9090"
+            use_route=false
+            pod_name="$prom_pod"
+            log_info "Using Prometheus pod: $prom_pod (port 9090)"
+        fi
+    fi
+    
+    if [[ -n "$query_host" ]]; then
+        local base_url="${query_host}"
+        if [[ -n "$query_port" ]]; then
+            base_url="${query_host}:${query_port}"
+        fi
+        
+        if [[ "$use_route" == "true" ]]; then
+            # Use route - need to handle TLS and authentication
+            targets_json=$(curl -sk "${base_url}/api/v1/targets" 2>/dev/null || echo "")
+        else
+            # Use pod exec
+            targets_json=$(oc exec -n "$NAMESPACE" "$pod_name" -- wget -qO- "${base_url}/api/v1/targets" 2>/dev/null || echo "")
+        fi
+        
         if [[ -n "$targets_json" ]]; then
             eip_targets=$(echo "$targets_json" | jq -r '.data.activeTargets[] | select(.labels.job | contains("eip")) | {job: .labels.job, health: .health, lastError: .lastError}' 2>/dev/null || echo "")
             if [[ -n "$eip_targets" ]]; then
@@ -284,33 +366,49 @@ test_coo() {
                     log_success "eip-monitor target is healthy"
                 else
                     log_error "eip-monitor target health: $health"
+                    error_msg=$(echo "$eip_targets" | jq -r '.lastError' 2>/dev/null | head -1)
+                    if [[ -n "$error_msg" ]] && [[ "$error_msg" != "null" ]]; then
+                        log_info "  Error: $error_msg"
+                    fi
                 fi
             else
-                log_error "No eip-monitor targets found in Prometheus"
+                log_error "No eip-monitor targets found"
             fi
         else
-            log_error "Failed to query Prometheus targets API"
+            log_error "Failed to query targets API"
         fi
     else
-        log_warn "Cannot check targets - Prometheus pod not found"
+        log_warn "Cannot check targets - neither ThanosQuerier nor Prometheus pod found"
     fi
     
-    # 12. Check metrics in Prometheus
-    log_test "12. Checking metrics in Prometheus..."
-    if [[ -n "$prom_pod" ]]; then
-        metrics_result=$(oc exec -n "$NAMESPACE" "$prom_pod" -- wget -qO- "http://localhost:9090/api/v1/query?query={__name__=~\"eip_.*\"}" 2>/dev/null || echo "")
+    # 12. Check metrics (for COO, use ThanosQuerier)
+    log_test "12. Checking metrics..."
+    if [[ -n "$query_host" ]]; then
+        local base_url="${query_host}"
+        if [[ -n "$query_port" ]]; then
+            base_url="${query_host}:${query_port}"
+        fi
+        
+        if [[ "$use_route" == "true" ]]; then
+            # Use route - need to handle TLS
+            metrics_result=$(curl -sk "${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
+        else
+            # Use pod exec
+            metrics_result=$(oc exec -n "$NAMESPACE" "$pod_name" -- wget -qO- "${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
+        fi
+        
         if [[ -n "$metrics_result" ]]; then
-            metric_count=$(echo "$metrics_result" | jq -r '.data.result | length' 2>/dev/null || echo "0")
-            if [[ "$metric_count" -gt 0 ]]; then
-                log_success "Found $metric_count eip metric(s) in Prometheus"
+            metric_count=$(echo "$metrics_result" | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+            if [[ "$metric_count" != "0" ]] && [[ -n "$metric_count" ]] && [[ "$metric_count" != "null" ]]; then
+                log_success "Found $metric_count eip metric(s)"
             else
-                log_error "No eip metrics found in Prometheus"
+                log_error "No eip metrics found"
             fi
         else
-            log_error "Failed to query Prometheus for metrics"
+            log_error "Failed to query metrics API"
         fi
     else
-        log_warn "Cannot check metrics - Prometheus pod not found"
+        log_warn "Cannot check metrics - neither ThanosQuerier nor Prometheus pod found"
     fi
     
     # 13. Check service and endpoints
