@@ -2,9 +2,9 @@
 
 This directory contains comprehensive Grafana dashboards for visualizing EgressIP (EIP) monitoring data in OpenShift clusters.
 
-## 📸 Dashboard Screenshots
+## Dashboard Screenshots
 
-> **Note:** Screenshots can be added by deploying the dashboards, taking screenshots, and placing them in a `screenshots/` directory. Update the image paths below once screenshots are available.
+Screenshots can be added by deploying the dashboards, taking screenshots, and placing them in a `screenshots/` directory.
 
 ### Main Dashboard
 ![Main EIP Monitoring Dashboard](screenshots/main-dashboard.png)
@@ -26,9 +26,7 @@ This directory contains comprehensive Grafana dashboards for visualizing EgressI
 ![Network Topology Dashboard](screenshots/network-topology.png)
 *Interactive node graph showing network topology and EIP distribution*
 
----
-
-## 📊 Dashboard Overview
+## Dashboard Overview
 
 ### Original Dashboards
 
@@ -405,7 +403,7 @@ Interactive navigation dashboard with click-to-drill functionality and cross-das
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Deployment
 
@@ -438,9 +436,7 @@ oc apply -f k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml
 
 4. Navigate to Dashboards → Browse
 
----
-
-## 📸 Adding Screenshots
+## Adding Screenshots
 
 To add screenshots to this README:
 
@@ -485,9 +481,7 @@ To add screenshots to this README:
    - Just add the image files to `k8s/grafana/screenshots/`
    - Images will automatically display once files are present
 
----
-
-## 🔧 Built-in Panels Used
+## Built-in Panels
 
 All dashboards use built-in Grafana panels that work out of the box:
 
@@ -502,9 +496,7 @@ All dashboards use built-in Grafana panels that work out of the box:
 - **Piechart/Donut** - Distribution visualization
 - **Bargauge** - Horizontal bar gauges
 
----
-
-## 🎨 Optional Community Plugins
+## Optional Community Plugins
 
 For even more advanced visualizations, you can install these community plugins:
 
@@ -581,9 +573,7 @@ Plugins are automatically installed via the `GF_INSTALL_PLUGINS` environment var
 
 **Note:** Manual installations are not persistent across pod restarts. Use the environment variable method for persistent plugin installation.
 
----
-
-## 📊 Dashboard Features
+## Dashboard Features
 
 ### Common Features Across All Dashboards
 
@@ -601,9 +591,7 @@ Dashboards are linked together for easy navigation:
 - Click stat panels to navigate to related dashboards
 - Use dashboard links in panel descriptions
 
----
-
-## 🔍 Customization
+## Customization
 
 All dashboards use Prometheus queries that can be customized. Common variables:
 
@@ -629,9 +617,7 @@ All dashboards use Prometheus queries that can be customized. Common variables:
 3. Configure field overrides for specific fields
 4. Save changes
 
----
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Dashboards Don't Appear
 
@@ -686,18 +672,14 @@ All dashboards use Prometheus queries that can be customized. Common variables:
    - Check if labels in queries match actual labels
    - Use Prometheus query browser to test queries
 
----
-
-## 📚 Additional Resources
+## Additional Resources
 
 - [Grafana Documentation](https://grafana.com/docs/grafana/latest/)
 - [Prometheus Query Language](https://prometheus.io/docs/prometheus/latest/querying/basics/)
 - [Grafana Panel Types](https://grafana.com/docs/grafana/latest/panels-visualizations/)
 - [OpenShift Monitoring Guide](https://docs.openshift.com/container-platform/latest/monitoring/)
 
----
-
-## 📝 Notes
+## Notes
 
 - All dashboards use the dark theme by default
 - Refresh interval is set to 30 seconds
@@ -706,9 +688,7 @@ All dashboards use Prometheus queries that can be customized. Common variables:
 - Screenshots can be added to the `screenshots/` directory
 - Community plugins are optional and can enhance visualizations
 
----
-
-## 🤝 Contributing
+## Contributing
 
 To add new dashboards or improve existing ones:
 
@@ -722,5 +702,5 @@ To add new dashboards or improve existing ones:
 ---
 
 **Last Updated:** 2024  
-**Total Dashboards:** 14 (6 original + 8 advanced)  
+**Total Dashboards:** 14  
 **Grafana Version:** Compatible with Grafana 8.0+
