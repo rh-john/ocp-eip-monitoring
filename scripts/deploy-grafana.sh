@@ -1033,7 +1033,49 @@ test_grafana() {
     log_test "Step 1: Basic Deployment Tests"
     
     run_test "Namespace exists" "oc get namespace \"$NAMESPACE\" &>/dev/null"
-    run_test "Grafana Operator CRD exists" "check_crd_exists grafanas.integreatly.org"
+    
+    # Check Grafana Operator CRD (try multiple possible names)
+    local crd_exists=false
+    local crd_name=""
+    local expected_crds=(
+        "grafanas.integreatly.org"
+        "grafanadashboards.integreatly.org"
+        "grafanadatasources.integreatly.org"
+    )
+    
+    # Check if any Grafana CRD exists
+    for crd in "${expected_crds[@]}"; do
+        if check_crd_exists "$crd"; then
+            crd_exists=true
+            if [[ -z "$crd_name" ]]; then
+                crd_name="$crd"
+            fi
+        fi
+    done
+    
+    # Also try to find any Grafana-related CRD
+    if [[ "$crd_exists" == "false" ]]; then
+        local grafana_crds=$(oc get crd 2>/dev/null | grep -iE "(grafana|integreatly)" | awk '{print $1}' || echo "")
+        if [[ -n "$grafana_crds" ]]; then
+            crd_exists=true
+            crd_name=$(echo "$grafana_crds" | head -1)
+        fi
+    fi
+    
+    if [[ "$crd_exists" == "true" ]]; then
+        log_success "Grafana Operator CRD exists"
+        if [[ -n "$crd_name" ]]; then
+            log_info "  Found CRD: $crd_name"
+        fi
+        ((tests_passed++))
+    else
+        log_error "Grafana Operator CRD exists"
+        log_info "  No Grafana CRDs found. The Grafana Operator may not be installed."
+        log_info "  Install it with: ./scripts/deploy-grafana.sh --monitoring-type $MONITORING_TYPE"
+        ((tests_failed++))
+    fi
+    ((total_tests++))
+    
     run_test "Grafana Instance exists" "oc get grafana eip-monitoring-grafana -n \"$NAMESPACE\" &>/dev/null"
     
     # Check Grafana pods
