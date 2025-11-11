@@ -695,11 +695,28 @@ remove_grafana_operator() {
     # Note: CRDs are typically cleaned up by the operator, but may remain if operator cleanup fails
     # CRDs must be deleted AFTER all resources using them are deleted and operator is removed
     if [[ "${DELETE_CRDS:-false}" == "true" ]]; then
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         log_info "Deleting Grafana CRDs (requires cluster-admin permissions)..."
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         
-        # Wait a bit for operator to clean up CRDs automatically
-        log_info "Waiting for operator to clean up CRDs (if supported)..."
-        sleep 5
+        # Wait longer to ensure all resources are fully deleted before attempting CRD deletion
+        log_info "Waiting for all Grafana resources to be fully deleted..."
+        sleep 10
+        
+        # Verify no resources are still using the CRDs
+        log_info "Verifying no resources are using Grafana CRDs..."
+        local resources_remaining=false
+        for crd_type in "grafanadashboard" "grafanadatasource" "grafana"; do
+            if oc get "$crd_type" --all-namespaces --no-headers 2>/dev/null | grep -v "^$" >/dev/null; then
+                log_warn "Found remaining $crd_type resources, waiting for deletion..."
+                resources_remaining=true
+            fi
+        done
+        
+        if [[ "$resources_remaining" == "true" ]]; then
+            log_info "Waiting additional 15 seconds for resource cleanup..."
+            sleep 15
+        fi
         
         local grafana_crds=(
             "grafanas.integreatly.org"
@@ -707,14 +724,55 @@ remove_grafana_operator() {
             "grafanadatasources.integreatly.org"
         )
         
+        local crds_deleted=0
+        local crds_failed=0
+        
         for crd in "${grafana_crds[@]}"; do
             if oc get crd "$crd" &>/dev/null; then
                 log_info "Deleting CRD: $crd..."
-                oc delete crd "$crd" 2>&1 | grep -vE "(not found|No resources found)" || log_warn "Failed to delete CRD: $crd (may require cluster-admin or CRD may be in use)"
+                
+                # Check if CRD has finalizers and remove them first
+                local crd_finalizers=$(oc get crd "$crd" -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+                if [[ -n "$crd_finalizers" ]]; then
+                    log_info "  Removing finalizers from CRD $crd..."
+                    oc patch crd "$crd" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null || {
+                        log_warn "  Failed to remove finalizers from CRD $crd"
+                    }
+                    sleep 2
+                fi
+                
+                local delete_output=$(oc delete crd "$crd" 2>&1)
+                local delete_exit=$?
+                
+                if [[ $delete_exit -eq 0 ]]; then
+                    log_success "  ✓ CRD $crd deleted successfully"
+                    ((crds_deleted++)) || true
+                else
+                    # Check if error is just "not found" (already deleted)
+                    if echo "$delete_output" | grep -qE "(not found|No resources found)"; then
+                        log_info "  ℹ CRD $crd not found (may have been already deleted)"
+                    else
+                        log_error "  ✗ Failed to delete CRD: $crd"
+                        echo "$delete_output" | sed 's/^/    /'
+                        log_warn "    This may require cluster-admin permissions or CRD may be in use"
+                        log_info "    Attempting force delete..."
+                        oc delete crd "$crd" --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found)" || {
+                            log_warn "    Force delete also failed for CRD: $crd"
+                            ((crds_failed++)) || true
+                        }
+                    fi
+                fi
+            else
+                log_info "  ℹ CRD $crd not found (may have been already deleted)"
             fi
         done
         
-        log_success "Grafana CRD deletion completed"
+        if [[ $crds_failed -eq 0 ]]; then
+            log_success "Grafana CRD deletion completed (${crds_deleted} CRD(s) deleted)"
+        else
+            log_warn "Grafana CRD deletion completed with ${crds_failed} failure(s) (${crds_deleted} CRD(s) deleted)"
+            log_warn "Failed CRDs may require cluster-admin permissions or may be in use by other resources"
+        fi
     else
         log_info "Grafana CRDs will not be deleted (operator should clean them up automatically)"
         log_info "To force CRD deletion, use: $0 --all --monitoring-type <coo|uwm> --delete-crds"
