@@ -192,3 +192,4 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/node-primary-secondary"
+
