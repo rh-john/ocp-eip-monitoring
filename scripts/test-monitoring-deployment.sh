@@ -389,7 +389,7 @@ test_coo() {
             log_info "  2. Check ServiceMonitor labels:"
             log_info "     oc get servicemonitor eip-monitor-coo -n $NAMESPACE -o jsonpath='{.metadata.labels}'"
             log_info "  3. Restart Prometheus to force discovery:"
-            log_info "     ./scripts/fix-prometheus-discovery.sh"
+            log_info "     ./scripts/debug/fix-prometheus-discovery.sh"
             log_info "  4. Check Prometheus logs:"
             log_info "     oc logs $prom_pod -n $NAMESPACE --tail=100 | grep -i servicemonitor"
         fi

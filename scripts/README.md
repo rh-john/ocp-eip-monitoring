@@ -130,7 +130,7 @@ Verify Prometheus metrics ingestion.
 
 **Usage:**
 ```bash
-./scripts/verify-prometheus-metrics.sh
+./scripts/debug/verify-prometheus-metrics.sh
 ```
 
 **Features:**
@@ -144,7 +144,7 @@ Diagnose UWM metrics collection issues.
 
 **Usage:**
 ```bash
-./scripts/verify-uwm-metrics.sh
+./scripts/debug/verify-uwm-metrics.sh
 ```
 
 **Features:**

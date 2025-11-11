@@ -154,7 +154,7 @@ labels:
 
 3. **Fix service labels if needed**:
    ```bash
-   ./scripts/fix-service-labels.sh
+   ./scripts/debug/fix-service-labels.sh
    ```
 
 ### NetworkPolicy Blocking Traffic
