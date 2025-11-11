@@ -155,3 +155,41 @@ find_thanosquerier_pod() {
     echo "$thanos_pod"
 }
 
+# Find Prometheus pod in a namespace
+# Tries standard labels first, with optional COO-specific fallback
+# Usage: find_prometheus_pod <namespace> [prefer_coo]
+#   prefer_coo: if "true", tries COO-specific labels first (default: false)
+# Returns: pod name or empty string if not found
+find_prometheus_pod() {
+    local namespace=$1
+    local prefer_coo=${2:-false}
+    local prom_pod=""
+    
+    if [[ -z "$namespace" ]]; then
+        log_error "find_prometheus_pod: namespace argument required"
+        return 1
+    fi
+    
+    if [[ "$prefer_coo" == "true" ]]; then
+        # Try COO-specific labels first
+        # COO uses: app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus
+        prom_pod=$(oc get pods -n "$namespace" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        
+        # Fallback: standard Prometheus label
+        if [[ -z "$prom_pod" ]]; then
+            prom_pod=$(oc get pods -n "$namespace" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        fi
+    else
+        # Try standard Prometheus label first (works for both COO and UWM)
+        prom_pod=$(oc get pods -n "$namespace" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        
+        # Fallback: COO-specific labels (if standard didn't work)
+        if [[ -z "$prom_pod" ]]; then
+            prom_pod=$(oc get pods -n "$namespace" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        fi
+    fi
+    
+    # Return pod name (empty string if not found)
+    echo "$prom_pod"
+}
+
