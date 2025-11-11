@@ -1398,11 +1398,20 @@ deploy_monitoring() {
         local waited=0
         while [[ $waited -lt $max_wait ]]; do
             if oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | grep -q "Running"; then
+                log_success "ThanosQuerier pod is running"
                 break
             fi
             sleep 5
             waited=$((waited + 5))
+            if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
+                log_info "Still waiting for ThanosQuerier... (${waited}s)"
+            fi
         done
+        
+        if [[ $waited -ge $max_wait ]]; then
+            log_warn "ThanosQuerier pod may not be ready yet (waited ${max_wait}s)"
+            log_info "This is non-blocking - ThanosQuerier will continue initializing"
+        fi
         
         # Verify store discovery (non-blocking - warns but doesn't fail deployment)
         verify_thanosquerier_stores || {
