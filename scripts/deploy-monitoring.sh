@@ -503,7 +503,21 @@ install_coo_operator() {
 verify_thanosquerier_stores() {
     log_info "Verifying ThanosQuerier store discovery..."
     
-    local thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    # Try multiple selectors to find ThanosQuerier pod
+    local thanos_pod=""
+    
+    # First try: COO-specific labels (most reliable for COO ThanosQuerier)
+    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    
+    # Fallback: standard Thanos label
+    if [[ -z "$thanos_pod" ]]; then
+        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    fi
+    
+    # Fallback: try by name pattern
+    if [[ -z "$thanos_pod" ]]; then
+        thanos_pod=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "thanos.*querier|querier.*thanos" | awk '{print $1}' | head -1)
+    fi
     
     if [[ -z "$thanos_pod" ]]; then
         log_warn "ThanosQuerier pod not found, skipping store verification"
@@ -1417,7 +1431,22 @@ deploy_monitoring() {
         local max_wait=120
         local waited=0
         while [[ $waited -lt $max_wait ]]; do
-            local thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+            # Try multiple selectors - COO uses different labels than standard Thanos
+            local thanos_pod=""
+            
+            # First try: COO-specific labels (most reliable for COO ThanosQuerier)
+            thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+            
+            # Fallback: standard Thanos label
+            if [[ -z "$thanos_pod" ]]; then
+                thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+            fi
+            
+            # Fallback: try by name pattern
+            if [[ -z "$thanos_pod" ]]; then
+                thanos_pod=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "thanos.*querier|querier.*thanos" | awk '{print $1}' | head -1)
+            fi
+            
             if [[ -n "$thanos_pod" ]]; then
                 local pod_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
                 if [[ "$pod_phase" == "Running" ]]; then
@@ -1429,12 +1458,19 @@ deploy_monitoring() {
                         log_info "ThanosQuerier pod exists but not running yet (phase: $pod_phase, waited ${waited}s)..."
                     fi
                 fi
+            else
+                # No pod found yet - log progress
+                if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
+                    log_info "Still waiting for ThanosQuerier pod... (${waited}s)"
+                    # Debug: show what pods exist
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        log_info "Available pods in namespace:"
+                        oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | head -5 | sed 's/^/  /' || true
+                    fi
+                fi
             fi
             sleep 5
             waited=$((waited + 5))
-            if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
-                log_info "Still waiting for ThanosQuerier pod... (${waited}s)"
-            fi
         done
         
         if [[ $waited -ge $max_wait ]]; then
