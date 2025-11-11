@@ -125,60 +125,13 @@ deploy_grafana() {
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
-        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-        local project_root="$(dirname "$script_dir")"
-        local operator_file="${project_root}/k8s/grafana/grafana-operator.yaml"
+        local operator_file="k8s/grafana/grafana-operator.yaml"
         if [[ ! -f "$operator_file" ]]; then
             log_error "Grafana operator file not found: $operator_file"
             log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
-            log_info "This file should exist in the grafana branch or be merged into staging branch"
             return 1
         fi
-        
-        # Check for multiple OperatorGroups (this prevents subscription resolution)
-        local operatorgroup_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
-        if [[ "$operatorgroup_count" -gt 1 ]]; then
-            log_warn "Multiple OperatorGroups found in namespace $NAMESPACE (this prevents operator installation)"
-            log_info "Checking for duplicate OperatorGroups..."
-            local operatorgroups=$(oc get operatorgroup -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
-            log_info "Found OperatorGroups: $operatorgroups"
-            
-            # Check which OperatorGroup has the MultipleOperatorGroup condition
-            local duplicate_og=""
-            for og in $operatorgroups; do
-                local condition=$(oc get operatorgroup "$og" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="MultipleOperatorGroup")].status}' 2>/dev/null || echo "")
-                if [[ "$condition" == "True" ]]; then
-                    # Check if this is NOT the one we're about to create
-                    if [[ "$og" != "eip-monitoring-operatorgroup" ]]; then
-                        duplicate_og="$og"
-                        log_warn "Found duplicate OperatorGroup: $og (will be deleted)"
-                        break
-                    fi
-                fi
-            done
-            
-            # Delete duplicate OperatorGroups (keep eip-monitoring-operatorgroup if it exists)
-            if [[ -n "$duplicate_og" ]]; then
-                log_info "Deleting duplicate OperatorGroup: $duplicate_og"
-                oc delete operatorgroup "$duplicate_og" -n "$NAMESPACE" 2>/dev/null || true
-                log_success "Deleted duplicate OperatorGroup"
-                sleep 3  # Wait for OLM to reconcile
-            else
-                # If we can't identify which one to delete, warn and try to proceed
-                log_warn "Could not identify which OperatorGroup to delete"
-                log_info "You may need to manually delete duplicate OperatorGroups:"
-                log_info "  oc get operatorgroup -n $NAMESPACE"
-                log_info "  oc delete operatorgroup <duplicate-name> -n $NAMESPACE"
-            fi
-        fi
-        
-        # Substitute namespace in the operator file
-        local operator_file_tmp=$(mktemp)
-        sed -e "s/namespace: eip-monitoring/namespace: $NAMESPACE/g" \
-            -e "s/- eip-monitoring/- $NAMESPACE/g" \
-            "$operator_file" > "$operator_file_tmp"
-        if oc apply -f "$operator_file_tmp" &>/dev/null; then
-            rm -f "$operator_file_tmp"
+        if oc apply -f "$operator_file" &>/dev/null; then
             log_success "Grafana Operator subscription and OperatorGroup created"
             log_info "Waiting for Grafana Operator to be installed (this may take a few minutes)..."
             
@@ -187,55 +140,17 @@ deploy_grafana() {
             local waited=0
             while [[ $waited -lt $max_wait ]]; do
                 namespace_csv_phase=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .status.phase' | head -1 || echo "")
-                
-                # Check subscription status for better diagnostics
-                local subscription_state=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.state}' 2>/dev/null || echo "")
-                local current_csv=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.currentCSV}' 2>/dev/null || echo "")
-                local installplan_pending=$(oc get subscription grafana-operator -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="InstallPlanPending")].status}' 2>/dev/null || echo "")
-                
                 if [[ "$namespace_csv_phase" == "Succeeded" ]]; then
                     log_success "Grafana Operator installed successfully (CSV phase: Succeeded)"
                     break
                 elif oc get crd grafanas.integreatly.org &>/dev/null; then
                     log_success "Grafana Operator CRD available"
                     break
-                elif [[ "$namespace_csv_phase" == "none" ]] || [[ -z "$namespace_csv_phase" ]]; then
-                    # CSV phase is 'none' - check subscription and InstallPlan status
-                    if [[ "$subscription_state" == "AtLatestKnown" ]] && [[ -n "$current_csv" ]]; then
-                        log_info "Subscription is ready (state: $subscription_state, currentCSV: $current_csv), waiting for CSV..."
-                    elif [[ "$installplan_pending" == "True" ]]; then
-                        log_info "InstallPlan is pending approval..."
-                    fi
                 fi
-                
                 sleep 5
                 waited=$((waited + 5))
                 if [[ $((waited % 30)) -eq 0 ]]; then
-                    if [[ "$namespace_csv_phase" == "none" ]] || [[ -z "$namespace_csv_phase" ]]; then
-                        local status_info="CSV phase: ${namespace_csv_phase:-none}"
-                        if [[ -n "$subscription_state" ]]; then
-                            status_info="$status_info, Subscription state: $subscription_state"
-                        fi
-                        if [[ -n "$current_csv" ]]; then
-                            status_info="$status_info, CSV: $current_csv"
-                        fi
-                        if [[ "$installplan_pending" == "True" ]]; then
-                            status_info="$status_info, InstallPlan pending"
-                        fi
-                        log_info "Still waiting for Grafana Operator... (${waited}s, $status_info)"
-                        
-                        # Check for multiple OperatorGroups again if CSV phase is still "none" after 60s
-                        if [[ $waited -ge 60 ]]; then
-                            local og_count=$(oc get operatorgroup -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')
-                            if [[ "$og_count" -gt 1 ]]; then
-                                log_warn "Multiple OperatorGroups still detected - this prevents CSV creation"
-                                log_info "Run: oc get operatorgroup -n $NAMESPACE"
-                                log_info "Delete duplicates: oc delete operatorgroup <name> -n $NAMESPACE"
-                            fi
-                        fi
-                    else
-                        log_info "Still waiting for Grafana Operator... (${waited}s, CSV phase: ${namespace_csv_phase:-none})"
-                    fi
+                    log_info "Still waiting for Grafana Operator... (${waited}s, CSV phase: ${namespace_csv_phase:-none})"
                 fi
             done
             
@@ -245,7 +160,6 @@ deploy_grafana() {
                 log_info "It may take several minutes to fully install"
             fi
         else
-            rm -f "$operator_file_tmp"
             log_error "Failed to install Grafana Operator"
             log_error "This requires cluster-admin permissions for OperatorGroup/Subscription creation"
             log_info ""
@@ -334,7 +248,22 @@ deploy_grafana() {
         fi
     fi
     
-    # Deploy Grafana DataSource
+    # Deploy Grafana Instance FIRST (DataSource and Dashboards depend on it via instanceSelector)
+    log_info "Deploying Grafana Instance..."
+    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
+    local instance_exit=$?
+    if [[ $instance_exit -eq 0 ]]; then
+        log_success "Grafana Instance deployed"
+        log_info "Waiting for Grafana Instance to be ready..."
+        # Wait a moment for the instance to start initializing
+        sleep 5
+    else
+        log_error "Failed to deploy Grafana Instance"
+        echo "$instance_output" | sed 's/^/  /'
+        return 1
+    fi
+    
+    # Deploy Grafana DataSource (now that Instance exists)
     log_info "Deploying Grafana DataSource ($MONITORING_TYPE)..."
     local ds_output=$(oc apply -f "$datasource_file" 2>&1)
     local ds_exit=$?
@@ -354,30 +283,6 @@ deploy_grafana() {
     else
         log_error "Failed to deploy Grafana DataSource"
         echo "$ds_output" | sed 's/^/  /'
-        return 1
-    fi
-    
-    # Deploy Grafana Instance
-    log_info "Deploying Grafana Instance..."
-    # Substitute namespace in the instance file
-    # Note: project_root is already defined earlier in the function
-    local instance_file="${project_root}/k8s/grafana/grafana-instance.yaml"
-    if [[ ! -f "$instance_file" ]]; then
-        log_error "Grafana instance file not found: $instance_file"
-        log_info "This file should exist in the grafana branch or be merged into staging branch"
-        return 1
-    fi
-    local instance_file_tmp=$(mktemp)
-    sed -e "s/namespace: eip-monitoring/namespace: $NAMESPACE/g" \
-        "$instance_file" > "$instance_file_tmp"
-    local instance_output=$(oc apply -f "$instance_file_tmp" 2>&1)
-    local instance_exit=$?
-    rm -f "$instance_file_tmp"
-    if [[ $instance_exit -eq 0 ]]; then
-        log_success "Grafana Instance deployed"
-    else
-        log_error "Failed to deploy Grafana Instance"
-        echo "$instance_output" | sed 's/^/  /'
         return 1
     fi
     
@@ -548,57 +453,6 @@ remove_grafana() {
 }
 
 # Remove Grafana Operator subscription
-# Cleanup Grafana CRDs after operator and resources are removed
-cleanup_grafana_crds() {
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    log_info "Cleaning up Grafana CRDs..."
-    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
-    # Wait a bit for resources to be fully deleted
-    sleep 5
-    
-    # List of Grafana CRDs to check and delete
-    local grafana_crds=(
-        "grafanas.integreatly.org"
-        "grafanadashboards.integreatly.org"
-        "grafanadatasources.integreatly.org"
-        "grafanafolders.integreatly.org"
-        "grafanalibrarypanels.integreatly.org"
-        "grafanaalertrulegroups.integreatly.org"
-        "grafanacontactpoints.integreatly.org"
-        "grafanamutetimings.integreatly.org"
-        "grafananotificationpolicies.integreatly.org"
-        "grafananotificationpolicyroutes.integreatly.org"
-        "grafananotificationtemplates.integreatly.org"
-        "grafanaserviceaccounts.integreatly.org"
-    )
-    
-    for crd in "${grafana_crds[@]}"; do
-        # Check if CRD exists
-        if ! oc get crd "$crd" &>/dev/null; then
-            continue
-        fi
-        
-        # Get the resource kind from CRD (e.g., "grafanas" from "grafanas.integreatly.org")
-        local resource_kind=$(echo "$crd" | cut -d'.' -f1)
-        
-        # Check if there are any instances of this resource in the cluster
-        local resource_count=$(oc get "$resource_kind" --all-namespaces --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-        
-        if [[ "$resource_count" == "0" ]] || [[ -z "$resource_count" ]]; then
-            log_info "No instances of $resource_kind found, deleting CRD $crd..."
-            oc delete crd "$crd" 2>&1 | grep -vE "(not found|No resources found)" || {
-                log_warn "Failed to delete CRD $crd (may require cluster-admin or CRD may be protected)"
-            }
-        else
-            log_warn "Found $resource_count instance(s) of $resource_kind, skipping CRD deletion"
-        fi
-    done
-    
-    log_success "Grafana CRD cleanup completed"
-    echo ""
-}
-
 remove_grafana_operator() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Removing Grafana Operator subscription..."
@@ -724,9 +578,6 @@ remove_grafana_operator() {
     
     log_success "Grafana Operator removal completed"
     echo ""
-    
-    # Clean up CRDs after operator is removed
-    cleanup_grafana_crds
 }
 
 # Parse command line arguments
