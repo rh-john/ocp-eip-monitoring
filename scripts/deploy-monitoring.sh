@@ -1153,6 +1153,28 @@ deploy_monitoring() {
     elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
         log_info "Deploying UWM monitoring infrastructure..."
         
+        # Ensure namespace is labeled for UWM monitoring
+        log_info "Ensuring namespace is labeled for UWM monitoring..."
+        local namespace_label=$(oc get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.openshift\.io/user-monitoring}' 2>/dev/null || echo "")
+        local cluster_monitoring_label=$(oc get namespace "$NAMESPACE" -o jsonpath='{.metadata.labels.openshift\.io/cluster-monitoring}' 2>/dev/null || echo "")
+        
+        if [[ "$cluster_monitoring_label" == "true" ]]; then
+            log_warn "Namespace has openshift.io/cluster-monitoring=true label - removing it"
+            log_warn "This label excludes namespaces from UWM Prometheus discovery"
+            oc label namespace "$NAMESPACE" openshift.io/cluster-monitoring- 2>/dev/null || true
+        fi
+        
+        if [[ "$namespace_label" == "false" ]]; then
+            log_warn "Namespace has openshift.io/user-monitoring=false label - removing it"
+            oc label namespace "$NAMESPACE" openshift.io/user-monitoring- 2>/dev/null || true
+            oc label namespace "$NAMESPACE" openshift.io/user-monitoring=true --overwrite 2>/dev/null || true
+        elif [[ "$namespace_label" != "true" ]]; then
+            # Label is missing or has unexpected value - set it to true
+            oc label namespace "$NAMESPACE" openshift.io/user-monitoring=true --overwrite 2>/dev/null || true
+        else
+            log_info "Namespace already labeled for UWM monitoring"
+        fi
+        
         # Enable UWM
         enable_user_workload_monitoring
         enable_user_workload_alertmanager
