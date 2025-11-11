@@ -11,7 +11,7 @@ spec:
   instanceSelector:
     matchLabels:
       app: eip-monitor
-    json: |
+        json: |
     {
       "id": null,
       "title": "Interactive EIP Drilldown",
