@@ -352,31 +352,30 @@ batch_apply() {
 # Usage: check_crd_exists <crd_name>
 #   Returns: 0 if CRD exists, 1 if not
 #   Uses a cache to avoid repeated oc get calls
+#   Compatible with bash 3.x (uses regular array instead of associative array)
 check_crd_exists() {
     local crd_name=$1
-    local cache_key="crd_${crd_name}"
     
     # Check cache first (if available)
-    if [[ -n "${CRD_CACHE[$crd_name]:-}" ]]; then
-        [[ "${CRD_CACHE[$crd_name]}" == "true" ]]
+    # Use a simple naming convention: CRD_CACHE_<sanitized_crd_name>
+    local cache_var="CRD_CACHE_$(echo "$crd_name" | tr '.-' '__')"
+    local cached_value="${!cache_var:-}"
+    
+    if [[ -n "$cached_value" ]]; then
+        [[ "$cached_value" == "true" ]]
         return $?
     fi
     
     # Check CRD existence
     if oc get crd "$crd_name" &>/dev/null; then
-        # Cache the result
-        CRD_CACHE[$crd_name]="true"
+        # Cache the result (use eval for dynamic variable assignment)
+        eval "${cache_var}=true"
         return 0
     else
-        CRD_CACHE[$crd_name]="false"
+        eval "${cache_var}=false"
         return 1
     fi
 }
-
-# Initialize CRD cache (declare as associative array if not already declared)
-if ! declare -p CRD_CACHE &>/dev/null; then
-    declare -A CRD_CACHE
-fi
 
 # Remove finalizers from Kubernetes resources
 # Usage: remove_finalizers <resource_type> <namespace> [resource_name]
