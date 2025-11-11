@@ -9,6 +9,7 @@ metadata:
     app: eip-monitor
     monitoring: "true"
     monitoring-type: "uwm"  # Specific label for selective deletion
+    openshift.io/user-monitoring: "true"  # Required for UWM Prometheus discovery
 spec:
   selector:
     matchLabels:
