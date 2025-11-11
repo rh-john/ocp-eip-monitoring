@@ -1,0 +1,54 @@
+---
+# ScrapeConfig for federating cluster-scoped metrics from default monitoring stack
+# This allows COO Prometheus to access metrics like:
+# - kube_node_status_condition
+# - kube_node_labels
+# - cluster_operator_conditions
+# - kube_node_info
+apiVersion: monitoring.rhobs/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: platform-monitoring-federation
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    coo: eip-monitoring
+    monitoring: "true"
+    monitoring-type: "coo"
+spec:
+  jobName: platform-monitoring-federation
+  # Scrape from Prometheus federation endpoint
+  # The federation endpoint provides access to cluster-scoped metrics
+  staticConfigs:
+    - targets:
+        # Use the internal service name for Prometheus in openshift-monitoring
+        # Port 9091 is the Thanos sidecar port that provides federation
+        # Alternative: Use the route if service doesn't work
+        - prometheus-k8s.openshift-monitoring.svc.cluster.local:9091
+      labels:
+        source: "platform-monitoring"
+  metricsPath: /federate
+  params:
+    # Federate only the metrics we need for dashboards
+    'match[]':
+      - '{__name__=~"kube_node_.*"}'
+      - '{__name__=~"cluster_operator_.*"}'
+      - '{__name__=~"node_boot_time.*"}'
+      - '{__name__=~"node_eip.*"}'
+  scrapeInterval: 30s
+  scrapeTimeout: 10s
+  scheme: HTTPS
+  tlsConfig:
+    insecureSkipVerify: true
+  authorization:
+    type: Bearer
+    credentials:
+      name: eip-monitoring-stack-prometheus-token
+      key: token
+  honorLabels: true
+  relabelConfigs:
+    # Add source label to distinguish federated metrics
+    - sourceLabels: [__address__]
+      targetLabel: federation_source
+      replacement: "platform-monitoring"
+
