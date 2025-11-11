@@ -3,6 +3,10 @@
 # Get script directory for proper path resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Source common functions (logging, prerequisites, pod finding)
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 #
 # EIP Monitor Deployment Testing Script
 # Comprehensive testing for the EIP monitoring deployment
@@ -16,33 +20,14 @@ SERVICE_NAME="eip-monitor"
 DEPLOYMENT_NAME="eip-monitor"
 TIMEOUT=300
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'  # Light blue (cyan)
-NC='\033[0m' # No Color
-
 # Test results tracking
 TESTS_PASSED=0
 TESTS_FAILED=0
 TOTAL_TESTS=0
 
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+# Helper function to get eip-monitor pod name
+get_eip_monitor_pod() {
+    oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo ""
 }
 
 # Test execution functions
@@ -71,7 +56,7 @@ run_test() {
             if [[ -z "$endpoints_subsets" ]] || [[ "$endpoints_subsets" == "null" ]]; then
                 log_warn "    ⚠️  No pods match the service selector!"
                 log_info "    To fix: Update service selector or pod labels to match"
-                log_info "    Run: ./scripts/fix-service-labels.sh"
+                log_info "    Run: ./scripts/debug/fix-service-labels.sh"
             else
                 local not_ready=$(oc get endpoints "$SERVICE_NAME" -n "$NAMESPACE" -o jsonpath='{.subsets[0].notReadyAddresses[0].ip}' 2>/dev/null || echo "")
                 if [[ -n "$not_ready" ]]; then
@@ -146,7 +131,7 @@ test_service_endpoints() {
 }
 
 test_health_endpoint() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -158,7 +143,7 @@ test_health_endpoint() {
 }
 
 test_metrics_endpoint() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -174,7 +159,7 @@ test_metrics_endpoint() {
 }
 
 test_prometheus_metrics_format() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -189,7 +174,7 @@ test_prometheus_metrics_format() {
 }
 
 test_logs_present() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -211,7 +196,7 @@ test_logs_present() {
 }
 
 test_openshift_permissions() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -221,7 +206,7 @@ test_openshift_permissions() {
 }
 
 test_security_context() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -285,7 +270,7 @@ test_prometheusrule_exists() {
 
 # Performance and load tests
 test_metrics_performance() {
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    local pod_name=$(get_eip_monitor_pod)
     if [[ -z "$pod_name" ]]; then
         return 1
     fi
@@ -396,6 +381,12 @@ EOF
 
 # Main execution
 main() {
+    # Check prerequisites first
+    if ! check_prerequisites; then
+        log_error "Prerequisites check failed"
+        exit 1
+    fi
+    
     case "${1:-}" in
         --info|-i)
             show_test_info

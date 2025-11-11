@@ -1,0 +1,77 @@
+---
+# AlertmanagerConfig for COO
+# Configures how alerts are routed and notified
+# Reference: https://docs.redhat.com/en/documentation/red_hat_openshift_cluster_observability_operator/1-latest/html-single/alerting/index#alertmanager-config
+apiVersion: monitoring.rhobs/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: eip-monitoring-alertmanager-config
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    coo: eip-monitoring
+spec:
+  # Global configuration for all routes
+  route:
+    # Default receiver for alerts that don't match any route
+    receiver: default-receiver
+    # Group alerts by these labels
+    groupBy:
+      - alertname
+      - namespace
+    # Wait time before sending first notification for a new group
+    groupWait: 10s
+    # Wait time before sending notification about new alerts in existing group
+    groupInterval: 10s
+    # Minimum time between two notifications for the same group
+    repeatInterval: 12h
+    # Continue matching subsequent routes if this route matches
+    continue: false
+  
+  # Receivers define where alerts are sent
+  receivers:
+    - name: default-receiver
+      # Default receiver - can be extended with email, slack, webhook, etc.
+      # For now, this is a placeholder that can be configured later
+      # Example configurations:
+      #
+      # Email configuration:
+      # emailConfigs:
+      #   - to: 'admin@example.com'
+      #     from: 'alertmanager@example.com'
+      #     smarthost: 'smtp.example.com:587'
+      #     authUsername: 'alertmanager'
+      #     authPassword:
+      #       name: 'smtp-auth-secret'
+      #       key: 'password'
+      #
+      # Slack configuration:
+      # slackConfigs:
+      #   - apiURL:
+      #       name: 'slack-webhook-secret'
+      #       key: 'url'
+      #     channel: '#alerts'
+      #     title: 'EIP Monitoring Alerts'
+      #
+      # Webhook configuration:
+      # webhookConfigs:
+      #   - url: 'https://example.com/webhook'
+      #     httpConfig:
+      #       bearerTokenSecret:
+      #         name: 'webhook-token-secret'
+      #         key: 'token'
+  
+  # Inhibition rules prevent certain alerts from firing when others are already firing
+  inhibitRules:
+    # Example: Don't fire EIPHighUtilizationWarning when EIPHighUtilizationCritical is already firing
+    # - sourceMatch:
+    #     severity: warning
+    #     alertname: EIPHighUtilizationWarning
+    #   targetMatch:
+    #     severity: critical
+    #     alertname: EIPHighUtilizationCritical
+    #   equal:
+    #     - namespace
+    #     - node
+
+

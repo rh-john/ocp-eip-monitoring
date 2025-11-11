@@ -1,12 +1,12 @@
 # OpenShift EIP Monitoring - Deployment Guide
 
-This guide provides comprehensive instructions for deploying and operating the OpenShift EIP monitoring solution that exposes 50+ Prometheus metrics and 30+ intelligent alerts for monitoring Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources.
+This guide provides comprehensive instructions for deploying and operating the OpenShift EIP monitoring solution that exposes 40+ Prometheus metrics and 30+ intelligent alerts for monitoring Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources.
 
 ## Overview
 
 The containerized EIP monitor provides:
 - **Real-time monitoring** of OpenShift EIP and CPIC resources
-- **50+ advanced Prometheus metrics** for comprehensive observability
+- **40+ advanced Prometheus metrics** for comprehensive observability
 - **25+ intelligent alerts** for capacity planning and troubleshooting
 - **Health scoring and stability tracking** for operational excellence
 - **Distribution fairness analysis** with Gini coefficient calculations
@@ -37,7 +37,7 @@ The containerized EIP monitor provides:
 | `k8s-manifests.yaml` | Complete OpenShift deployment resources (RBAC, ConfigMap, Deployment, Service) |
 | `servicemonitor.yaml` | Prometheus ServiceMonitor and comprehensive alerting rules |
 | `build-and-deploy.sh` | Build, push, and deployment script |
-| `test-deployment.sh` | Deployment validation and health check script |
+| `test-deployment.sh` | Deployment validation and health check script (in `scripts/test/`) |
 | `deploy-test-eips.sh` | Automated test EgressIP creation for monitoring validation |
 
 ## Quick Start
@@ -202,7 +202,7 @@ oc port-forward svc/eip-monitor 8080:8080 -n eip-monitoring
 curl http://localhost:8080/metrics
 ```
 
-## Available Metrics (50+ Total)
+## Available Metrics (40+ Total)
 
 ### Core EIP Metrics (6)
 - `eips_configured_total` - Total configured EIPs
@@ -220,13 +220,11 @@ curl http://localhost:8080/metrics
 - `cpic_pending_duration_seconds{resource_name}` - Time in pending state
 - `cpic_error_duration_seconds{resource_name}` - Time in error state
 
-### Per-Node Metrics (10)
+### Per-Node Metrics (8)
 - `node_cpic_success_total{node}` - CPIC success per node
 - `node_cpic_pending_total{node}` - CPIC pending per node
 - `node_cpic_error_total{node}` - CPIC errors per node
 - `node_eip_assigned_total{node}` - EIPs assigned per node
-- `node_eip_primary_total{node}` - Primary EIPs per node (first IP from each resource)
-- `node_eip_secondary_total{node}` - Secondary EIPs per node (remaining IPs)
 - `node_eip_capacity_total{node}` - Node EIP capacity
 - `node_eip_utilization_percent{node}` - Node EIP utilization
 - `eip_nodes_available_total` - Available EIP-enabled nodes
@@ -247,14 +245,6 @@ curl http://localhost:8080/metrics
 - `eip_changes_last_hour` - EIP changes in last hour
 - `cpic_recoveries_last_hour` - CPIC recoveries in last hour
 - `eip_scrape_duration_seconds` - Metrics collection duration
-
-### Health Status Metrics (6)
-- `malfunctioning_eip_objects_count` - EIP resources with EIP-CPIC mismatches
-- `overcommitted_eip_objects_count` - Total overcommitted IPs (when configured > available nodes)
-- `critical_eip_objects_count` - EIP resources with no working assignments
-- `eip_cpic_mismatches_total` - Total count of all EIP-CPIC mismatches
-- `eip_cpic_mismatches_node_mismatch` - IPs with different node assignments in EIP vs CPIC
-- `eip_cpic_mismatches_missing_in_eip` - IPs in CPIC but missing from EIP status.items
 
 ### Monitoring System Metrics (4)
 - `eip_scrape_errors_total` - Total scrape errors

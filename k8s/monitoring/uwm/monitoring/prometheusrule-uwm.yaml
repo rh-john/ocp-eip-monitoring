@@ -1,0 +1,408 @@
+---
+# PrometheusRule for EIP monitoring alerts (UWM)
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: eip-monitor-alerts-uwm
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: "true"
+    monitoring-type: "uwm"  # Specific label for selective deletion
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: eip-monitoring
+    interval: 30s
+    rules:
+    # Core EIP Alerts
+    - alert: EIPNotAssigned
+      expr: (eips_configured_total - eips_assigned_total) > 0 and eips_configured_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: eip
+      annotations:
+        summary: "EIPs are not fully assigned"
+        description: "{{ $value }} EIPs are configured but not assigned. This may indicate network connectivity or API issues."
+    
+    - alert: EIPAssignmentStuckLongTerm
+      expr: (eips_configured_total - eips_assigned_total) > 0
+      for: 15m
+      labels:
+        severity: critical
+        component: eip
+      annotations:
+        summary: "EIP assignment is stuck for extended period"
+        description: "{{ $value }} EIPs have been unassigned for more than 15 minutes. Check for persistent assignment issues."
+    
+    - alert: EIPCountDecreased
+      expr: delta(eips_configured_total[5m]) < -1
+      for: 1m
+      labels:
+        severity: info
+        component: eip
+      annotations:
+        summary: "EIP count decreased"
+        description: "EIP count has decreased in the last 5 minutes. This may be intentional EIP removal."
+    
+    - alert: EIPCountIncreased
+      expr: delta(eips_configured_total[5m]) > 1
+      for: 1m
+      labels:
+        severity: info
+        component: eip
+      annotations:
+        summary: "EIP count increased"
+        description: "EIP count has increased in the last 5 minutes. This may be intentional EIP addition."
+    
+    - alert: EIPUtilizationHigh
+      expr: eip_utilization_percent > 90 and eip_utilization_percent < 100 and eips_configured_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: eip
+      annotations:
+        summary: "EIP utilization is very high"
+        description: "EIP utilization is at {{ $value }}%. Consider adding more EIP capacity."
+    
+    - alert: EIPUtilizationCritical
+      expr: eip_utilization_percent > 95 and eip_utilization_percent < 100 and eips_configured_total > 0
+      for: 2m
+      labels:
+        severity: critical
+        component: eip
+      annotations:
+        summary: "EIP utilization is critically high"
+        description: "EIP utilization is at {{ $value }}%. Immediate capacity expansion required."
+    
+    - alert: EIPCapacityFullyUtilized
+      expr: eip_utilization_percent == 100
+      for: 10m
+      labels:
+        severity: info
+        component: eip
+      annotations:
+        summary: "EIP capacity is fully utilized"
+        description: "All configured EIPs are assigned. This is normal for fully deployed environments."
+    
+    # CPIC Health Alerts
+    - alert: CPICErrors
+      expr: cpic_error_total > 0
+      for: 2m
+      labels:
+        severity: critical
+        component: cpic
+      annotations:
+        summary: "CPIC resources in error state"
+        description: "{{ $value }} CloudPrivateIPConfig resources are in error state. Check cluster connectivity and permissions."
+    
+    - alert: CPICPendingTooLong
+      expr: cpic_pending_total > 0
+      for: 10m
+      labels:
+        severity: warning
+        component: cpic
+      annotations:
+        summary: "CPIC resources pending for too long"
+        description: "{{ $value }} CloudPrivateIPConfig resources have been pending for more than 10 minutes."
+    
+    - alert: CPICPendingCritical
+      expr: cpic_pending_total > 0
+      for: 30m
+      labels:
+        severity: critical
+        component: cpic
+      annotations:
+        summary: "CPIC resources stuck in pending state"
+        description: "{{ $value }} CloudPrivateIPConfig resources have been pending for more than 30 minutes. Manual intervention required."
+    
+    # Distribution and Fairness Alerts
+    - alert: EIPDistributionUnfair
+      expr: eip_distribution_gini_coefficient > 0.4
+      for: 10m
+      labels:
+        severity: warning
+        component: distribution
+      annotations:
+        summary: "EIP distribution is unfair across nodes"
+        description: "EIP distribution Gini coefficient is {{ $value }} (>0.4), indicating uneven distribution across nodes."
+    
+    - alert: EIPDistributionExtreme
+      expr: eip_distribution_gini_coefficient > 0.7
+      for: 5m
+      labels:
+        severity: critical
+        component: distribution
+      annotations:
+        summary: "EIP distribution is extremely uneven"
+        description: "EIP distribution Gini coefficient is {{ $value }} (>0.7), indicating severe load imbalance."
+    
+    - alert: NodeEIPCapacityWarning
+      expr: node_eip_utilization_percent > 80
+      for: 10m
+      labels:
+        severity: warning
+        component: capacity
+      annotations:
+        summary: "Node EIP capacity warning"
+        description: "Node {{ $labels.node }} EIP utilization is {{ $value }}%. Consider redistribution."
+    
+    - alert: NodeEIPCapacityCritical
+      expr: node_eip_utilization_percent > 95
+      for: 5m
+      labels:
+        severity: critical
+        component: capacity
+      annotations:
+        summary: "Node EIP capacity critical"
+        description: "Node {{ $labels.node }} EIP utilization is {{ $value }}%. Immediate action required."
+    
+    # Cluster Health Alerts
+    - alert: ClusterEIPHealthLow
+      expr: cluster_eip_health_score < 70 and eips_configured_total > 0
+      for: 10m
+      labels:
+        severity: warning
+        component: health
+      annotations:
+        summary: "Cluster EIP health score is low"
+        description: "Overall EIP cluster health score is {{ $value }}/100. Check EIP assignments and distribution."
+    
+    - alert: ClusterEIPHealthCritical
+      expr: cluster_eip_health_score < 50 and eips_configured_total > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "Cluster EIP health score is critical"
+        description: "Overall EIP cluster health score is {{ $value }}/100. Immediate intervention required."
+    
+    - alert: ClusterEIPInstability
+      expr: cluster_eip_stability_score < 70 and eips_configured_total > 0
+      for: 15m
+      labels:
+        severity: warning
+        component: stability
+      annotations:
+        summary: "EIP cluster is unstable"
+        description: "EIP stability score is {{ $value }}/100 due to frequent changes. Check for configuration issues."
+    
+    # Performance and API Alerts
+    - alert: APIResponseTimeSlow
+      expr: api_response_time_seconds > 10
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "OpenShift API response time is slow"
+        description: "{{ $labels.operation }} API calls are taking {{ $value }}s. Check cluster performance."
+    
+    - alert: APIResponseTimeCritical
+      expr: api_response_time_seconds > 30
+      for: 2m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "OpenShift API response time is critically slow"
+        description: "{{ $labels.operation }} API calls are taking {{ $value }}s. Cluster may be overloaded."
+    
+    - alert: APISuccessRateLow
+      expr: api_success_rate_percent < 95
+      for: 5m
+      labels:
+        severity: warning
+        component: api
+      annotations:
+        summary: "API success rate is low"
+        description: "{{ $labels.operation }} API success rate is {{ $value }}%. Check cluster connectivity."
+    
+    - alert: APISuccessRateCritical
+      expr: api_success_rate_percent < 80
+      for: 2m
+      labels:
+        severity: critical
+        component: api
+      annotations:
+        summary: "API success rate is critically low"
+        description: "{{ $labels.operation }} API success rate is {{ $value }}%. Major connectivity issues."
+    
+    # Node-specific Alerts
+    - alert: EIPNodesWithErrors
+      expr: eip_nodes_with_errors_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: nodes
+      annotations:
+        summary: "EIP nodes have CPIC errors"
+        description: "{{ $value }} EIP-enabled nodes have CPIC resources in error state."
+    
+    - alert: EIPNodesUnavailable
+      expr: eip_nodes_available_total == 0
+      for: 1m
+      labels:
+        severity: critical
+        component: nodes
+      annotations:
+        summary: "No EIP-enabled nodes available"
+        description: "No EIP-enabled nodes are currently available. Check node labels and cluster state."
+    
+    # Historical Trend Alerts
+    - alert: HighEIPChangeRate
+      expr: eip_changes_last_hour > 50
+      for: 10m
+      labels:
+        severity: warning
+        component: trends
+      annotations:
+        summary: "High rate of EIP changes"
+        description: "{{ $value }} EIP changes in the last hour. Check for configuration instability."
+    
+    - alert: FrequentCPICRecoveries
+      expr: cpic_recoveries_last_hour > 10
+      for: 15m
+      labels:
+        severity: warning
+        component: trends
+      annotations:
+        summary: "Frequent CPIC error recoveries"
+        description: "{{ $value }} CPIC recoveries in the last hour. Investigate root cause of errors."
+    
+    # Duration-based Alerts
+    - alert: CPICPendingTooLongSpecific
+      expr: cpic_pending_duration_seconds > 1800  # 30 minutes
+      for: 5m
+      labels:
+        severity: critical
+        component: duration
+      annotations:
+        summary: "CPIC resource pending for too long"
+        description: "CPIC resource {{ $labels.resource_name }} has been pending for {{ $value }}s (>30min)."
+    
+    - alert: CPICErrorTooLongSpecific
+      expr: cpic_error_duration_seconds > 3600  # 1 hour
+      for: 10m
+      labels:
+        severity: critical
+        component: duration
+      annotations:
+        summary: "CPIC resource in error state for too long"
+        description: "CPIC resource {{ $labels.resource_name }} has been in error state for {{ $value }}s (>1hr)."
+    
+    # Monitoring System Alerts
+    - alert: EIPMetricsScrapeErrors
+      expr: increase(eip_scrape_errors_total[5m]) > 3
+      for: 1m
+      labels:
+        severity: warning
+        component: monitoring
+      annotations:
+        summary: "EIP metrics scrape errors"
+        description: "EIP metrics collection has failed {{ $value }} times in the last 5 minutes."
+    
+    - alert: EIPMonitoringDown
+      expr: up{job=~"serviceMonitor/.*/eip-monitor-uwm/.*|eip-monitor-uwm"} == 0
+      for: 3m
+      labels:
+        severity: critical
+        component: monitoring
+      annotations:
+        summary: "EIP monitoring service is down"
+        description: "The EIP monitoring service has been down for more than 3 minutes."
+    
+    - alert: EIPMetricsStale
+      expr: (time() - eip_last_scrape_timestamp_seconds) > 300  # 5 minutes
+      for: 2m
+      labels:
+        severity: critical
+        component: monitoring
+      annotations:
+        summary: "EIP metrics are stale"
+        description: "EIP metrics haven't been updated for {{ $value }}s. Check monitoring service health."
+    
+    - alert: SlowMetricsCollection
+      expr: eip_scrape_duration_seconds > 60
+      for: 5m
+      labels:
+        severity: warning
+        component: performance
+      annotations:
+        summary: "EIP metrics collection is slow"
+        description: "Metrics collection is taking {{ $value }}s. Check cluster API performance and resource limits."
+    
+    # Stale CPIC Detection Alert
+    - alert: StaleCPICDetected
+      expr: (cpic_success_total + cpic_pending_total + cpic_error_total) != eips_assigned_total
+      for: 5m
+      labels:
+        severity: warning
+        component: cpic
+      annotations:
+        summary: "Stale CPIC detected - CPIC count doesn't match assigned EIPs"
+        description: "The total number of CPIC resources does not match the number of assigned EIPs. This may indicate stale or orphaned CPIC resources that need cleanup."
+    
+    # Health Status Alerts (New Metrics)
+    - alert: EIPMalfunctioningResources
+      expr: malfunctioning_eip_objects_count > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: health
+      annotations:
+        summary: "EIP resources have EIP-CPIC mismatches"
+        description: "{{ $value }} EIP resource(s) have mismatches between EIP status and CPIC assignments. This indicates misaligned or stale assignments."
+    
+    - alert: EIPMalfunctioningResourcesCritical
+      expr: malfunctioning_eip_objects_count > 0
+      for: 15m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "EIP resources have persistent EIP-CPIC mismatches"
+        description: "{{ $value }} EIP resource(s) have had mismatches for more than 15 minutes. Manual intervention may be required."
+    
+    - alert: EIPCriticalResources
+      expr: critical_eip_objects_count > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "EIP resources have no working assignments"
+        description: "{{ $value }} EIP resource(s) have no working node assignments. All assignments are misaligned or missing. Immediate action required."
+    
+    - alert: EIPOvercommitted
+      expr: overcommitted_eip_objects_count > 0
+      for: 10m
+      labels:
+        severity: warning
+        component: capacity
+      annotations:
+        summary: "EIP resources are overcommitted"
+        description: "{{ $value }} IP(s) are overcommitted (configured IPs exceed available nodes). Some IPs cannot be assigned."
+    
+    - alert: EIPCPICMismatches
+      expr: eip_cpic_mismatches_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: health
+      annotations:
+        summary: "EIP-CPIC mismatches detected"
+        description: "{{ $value }} mismatch(es) detected between EIP and CPIC assignments. Check for node assignment issues or stale CPIC resources."
+    
+    - alert: EIPCPICMismatchesCritical
+      expr: eip_cpic_mismatches_total > 5
+      for: 10m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "Multiple EIP-CPIC mismatches detected"
+        description: "{{ $value }} mismatch(es) detected. This indicates widespread assignment issues. Investigate immediately."

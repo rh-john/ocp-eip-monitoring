@@ -91,6 +91,8 @@ metadata:
     app: eip-monitor
     version: v1
 spec:
+  # Set to 1 or 2 replicas based on your HA requirements
+  # With 2 replicas, both COO and UWM can scrape different pod instances for redundancy
   replicas: 1
   strategy:
     type: RollingUpdate
@@ -215,6 +217,10 @@ metadata:
   labels:
     app: eip-monitor
     service: eip-monitor
+    monitoring: "true"
+    # Supports both COO and UWM monitoring simultaneously
+    monitoring-coo: "true"
+    monitoring-uwm: "true"
   annotations:
     prometheus.io/scrape: "true"
     prometheus.io/port: "8080"
@@ -228,51 +234,3 @@ spec:
     protocol: TCP
   selector:
     app: eip-monitor
-
----
-# NetworkPolicy for security (optional, adjust based on your needs)
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: eip-monitor
-  namespace: eip-monitoring
-  labels:
-    app: eip-monitor
-spec:
-  podSelector:
-    matchLabels:
-      app: eip-monitor
-  policyTypes:
-  - Ingress
-  - Egress
-  ingress:
-  - from:
-    - namespaceSelector:
-        matchLabels:
-          name: openshift-monitoring
-    - namespaceSelector:
-        matchLabels:
-          name: openshift-user-workload-monitoring
-    ports:
-    - protocol: TCP
-      port: 8080
-  egress:
-  # Allow DNS
-  - to: []
-    ports:
-    - protocol: UDP
-      port: 53
-    - protocol: TCP
-      port: 53
-  # Allow Kubernetes API
-  - to: []
-    ports:
-    - protocol: TCP
-      port: 443
-    - protocol: TCP
-      port: 6443
-  # Allow HTTPS API access
-  - to: []
-    ports:
-    - protocol: TCP
-      port: 443

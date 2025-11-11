@@ -32,7 +32,7 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[1;36m'  # Light blue (cyan)
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
@@ -714,9 +714,8 @@ main() {
             # Apply all new namespaces in one batch operation
             # Only show output for newly created namespaces, suppress "configured" messages
             if [ -n "$namespace_yaml" ]; then
-                local created_count=$(echo -e "$namespace_yaml" | oc apply -f - 2>&1 | grep -c "created" 2>/dev/null || echo "0")
-                created_count=$(echo "$created_count" | tr -d '\n\r' | grep -E '^[0-9]+$' || echo "0")
-                if [ "${created_count:-0}" -gt 0 ]; then
+                local created_count=$(echo -e "$namespace_yaml" | oc apply -f - 2>&1 | grep -c "created" || echo "0")
+                if [ "$created_count" -gt 0 ]; then
                     log_success "Created $created_count new namespaces"
                 fi
             fi

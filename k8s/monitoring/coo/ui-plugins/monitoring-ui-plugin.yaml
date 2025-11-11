@@ -1,0 +1,13 @@
+---
+# COO Monitoring UI Plugin
+# This plugin adds monitoring features to the OpenShift web console,
+# allowing PrometheusRules to be viewed in the Alerting Rules section
+# Reference: https://docs.redhat.com/en/documentation/red_hat_openshift_cluster_observability_operator/1-latest/html-single/ui_plugins_for_red_hat_openshift_cluster_observability_operator/index#monitoring-ui-plugin
+# Note: UIPlugin is a cluster-scoped resource (no namespace)
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: monitoring
+spec:
+  type: Monitoring
+

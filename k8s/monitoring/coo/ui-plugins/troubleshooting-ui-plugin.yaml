@@ -1,0 +1,16 @@
+---
+# COO Troubleshooting UI Plugin (Korrel8r)
+# This plugin provides observability signal correlation, allowing you to:
+# - Correlate EIP alerts with related metrics, logs, pods, events, and network flows
+# - Interactive node graph showing relationships between observability signals
+# - Root cause analysis for EIP assignment issues, CPIC errors, etc.
+# Reference: https://docs.redhat.com/en/documentation/red_hat_openshift_cluster_observability_operator/1-latest/html-single/ui_plugins_for_red_hat_openshift_cluster_observability_operator/index#troubleshooting-ui-plugin
+# Note: UIPlugin is a cluster-scoped resource (no namespace)
+# Note: This is a Technology Preview feature
+apiVersion: observability.openshift.io/v1alpha1
+kind: UIPlugin
+metadata:
+  name: troubleshooting
+spec:
+  type: Troubleshooting
+
