@@ -2075,6 +2075,30 @@ parse_args() {
                 GRAFANA_TYPE="$2"
                 shift 2
                 ;;
+            --log-level)
+                if [[ $# -lt 2 ]]; then
+                    log_error "Missing log level. Use: --log-level <DEBUG|INFO|WARNING|ERROR|CRITICAL>"
+                    exit 1
+                fi
+                LOG_LEVEL="$2"
+                shift 2
+                ;;
+            --skip-build)
+                SKIP_BUILD="true"
+                shift
+                ;;
+            --quay-image)
+                if [[ $# -lt 2 ]]; then
+                    log_error "Missing image path. Use: --quay-image <image-path>"
+                    exit 1
+                fi
+                QUAY_IMAGE="$2"
+                shift 2
+                ;;
+            --all)
+                CLEAN_ALL="true"
+                shift
+                ;;
             -h|--help)
                 show_usage
                 exit 0
