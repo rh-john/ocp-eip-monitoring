@@ -159,24 +159,63 @@ test_coo_deployment() {
     
     # Step 9: Verify metrics are being scraped
     log_test "Step 9: Verifying metrics are being scraped..."
-    local prom_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-    if [[ -n "$prom_pod" ]]; then
+    
+    # For COO, prefer querying via ThanosQuerier (aggregates all Prometheus replicas)
+    # Fallback to Prometheus pod if ThanosQuerier not available
+    local query_pod=""
+    local query_namespace="$NAMESPACE"
+    local query_port="9090"
+    local query_endpoint=""
+    
+    # Try to find ThanosQuerier pod first (preferred for COO)
+    local thanos_pod=""
+    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    if [[ -z "$thanos_pod" ]]; then
+        thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    fi
+    
+    if [[ -n "$thanos_pod" ]]; then
+        local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [[ "$thanos_phase" == "Running" ]]; then
+            query_pod="$thanos_pod"
+            query_port="10902"  # ThanosQuerier uses port 10902
+            log_info "Using ThanosQuerier pod for metrics query: $thanos_pod"
+        fi
+    fi
+    
+    # Fallback to Prometheus pod if ThanosQuerier not available
+    if [[ -z "$query_pod" ]]; then
+        # Try multiple selectors for Prometheus pod
+        query_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        if [[ -z "$query_pod" ]]; then
+            # Try COO-specific labels
+            query_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+        fi
+        if [[ -n "$query_pod" ]]; then
+            query_port="9090"
+            log_info "Using Prometheus pod for metrics query: $query_pod"
+        fi
+    fi
+    
+    if [[ -n "$query_pod" ]]; then
         # Wait a bit for scraping to start
         sleep 30
         
-        # Query Prometheus for eip_ metrics
-        local metrics_count=$(oc exec -n "$NAMESPACE" "$prom_pod" -- wget -qO- 'http://localhost:9090/api/v1/query?query=count({__name__=~"eip_.*"})' 2>/dev/null | \
+        # Query for eip_ metrics
+        local metrics_count=$(oc exec -n "$NAMESPACE" "$query_pod" -- wget -qO- "http://localhost:${query_port}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null | \
             python3 -c "import sys, json; data = json.load(sys.stdin); print(data.get('data', {}).get('result', [{}])[0].get('value', [0, '0'])[1])" 2>/dev/null || echo "0")
         
         if [[ "$metrics_count" != "0" ]] && [[ -n "$metrics_count" ]]; then
-            log_success "Found $metrics_count eip_* metrics in Prometheus"
+            log_success "Found $metrics_count eip_* metrics"
             ((TESTS_PASSED++)) || true
         else
             log_warn "No eip_* metrics found yet (may still be initializing)"
             ((TESTS_WARNED++)) || true
         fi
     else
-        log_error "Prometheus pod not found"
+        log_error "Neither ThanosQuerier nor Prometheus pod found"
+        log_info "Available pods in namespace:"
+        oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | head -10 | sed 's/^/  /' || true
         ((TESTS_FAILED++)) || true
         EXIT_CODE=1
     fi
