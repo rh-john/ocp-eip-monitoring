@@ -111,8 +111,13 @@ check_prerequisites() {
         missing_tools+=("oc")
     fi
     
+    if ! command -v jq &>/dev/null; then
+        missing_tools+=("jq")
+    fi
+    
     if [[ ${#missing_tools[@]} -gt 0 ]]; then
         log_error "Missing required tools: ${missing_tools[*]}"
+        log_info "Please install the missing tools and try again"
         return 1
     fi
     
@@ -191,5 +196,101 @@ find_prometheus_pod() {
     
     # Return pod name (empty string if not found)
     echo "$prom_pod"
+}
+
+# Find query pod (ThanosQuerier or Prometheus) for metrics queries
+# Prefers ThanosQuerier for COO (better for HA setups), falls back to Prometheus
+# Usage: find_query_pod <namespace> [prefer_thanos]
+#   prefer_thanos: if "true", prefers ThanosQuerier (default: true)
+# Returns: "pod_name|port" or empty string if not found
+#   Port: 10902 for ThanosQuerier, 9090 for Prometheus
+find_query_pod() {
+    local namespace=$1
+    local prefer_thanos=${2:-true}
+    local query_pod=""
+    local query_port=""
+    
+    if [[ -z "$namespace" ]]; then
+        log_error "find_query_pod: namespace argument required"
+        return 1
+    fi
+    
+    if [[ "$prefer_thanos" == "true" ]]; then
+        # Try ThanosQuerier first (preferred for COO - aggregates multiple Prometheus instances)
+        local thanos_pod=$(find_thanosquerier_pod "$namespace")
+        if [[ -n "$thanos_pod" ]]; then
+            # Check if pod is running
+            local thanos_phase=$(oc get pod "$thanos_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$thanos_phase" == "Running" ]]; then
+                query_pod="$thanos_pod"
+                query_port="10902"  # ThanosQuerier uses port 10902
+            fi
+        fi
+        
+        # Fallback to Prometheus if ThanosQuerier not available or not running
+        if [[ -z "$query_pod" ]]; then
+            local prom_pod=$(find_prometheus_pod "$namespace" "true")
+            if [[ -n "$prom_pod" ]]; then
+                local prom_phase=$(oc get pod "$prom_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                if [[ "$prom_phase" == "Running" ]]; then
+                    query_pod="$prom_pod"
+                    query_port="9090"  # Prometheus uses port 9090
+                fi
+            fi
+        fi
+    else
+        # Try Prometheus first
+        local prom_pod=$(find_prometheus_pod "$namespace" "false")
+        if [[ -n "$prom_pod" ]]; then
+            local prom_phase=$(oc get pod "$prom_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$prom_phase" == "Running" ]]; then
+                query_pod="$prom_pod"
+                query_port="9090"
+            fi
+        fi
+        
+        # Fallback to ThanosQuerier if Prometheus not available
+        if [[ -z "$query_pod" ]]; then
+            local thanos_pod=$(find_thanosquerier_pod "$namespace")
+            if [[ -n "$thanos_pod" ]]; then
+                local thanos_phase=$(oc get pod "$thanos_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                if [[ "$thanos_phase" == "Running" ]]; then
+                    query_pod="$thanos_pod"
+                    query_port="10902"
+                fi
+            fi
+        fi
+    fi
+    
+    # Return "pod_name|port" or empty string
+    if [[ -n "$query_pod" ]] && [[ -n "$query_port" ]]; then
+        echo "${query_pod}|${query_port}"
+    else
+        echo ""
+    fi
+}
+
+# Helper function to run oc commands with optional verbose output
+# Usage: oc_cmd <oc-args...>
+#   If VERBOSE environment variable is "true", shows full output
+#   Otherwise, suppresses stderr
+oc_cmd() {
+    if [[ "${VERBOSE:-false}" == "true" ]]; then
+        oc "$@"
+    else
+        oc "$@" 2>/dev/null
+    fi
+}
+
+# Helper function for oc commands that need to suppress all output in non-verbose mode
+# Usage: oc_cmd_silent <oc-args...>
+#   If VERBOSE environment variable is "true", shows full output
+#   Otherwise, suppresses both stdout and stderr
+oc_cmd_silent() {
+    if [[ "${VERBOSE:-false}" == "true" ]]; then
+        oc "$@"
+    else
+        oc "$@" &>/dev/null
+    fi
 }
 
