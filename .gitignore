@@ -8,3 +8,4 @@ scripts/debug/
 
 # Local development notes and analysis (not published)
 .local/
+.cursor/
