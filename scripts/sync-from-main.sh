@@ -20,36 +20,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Source common functions (logging)
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
+# Note: Logging functions (log_info, log_success, log_warn, log_error) are sourced from scripts/lib/common.sh
+
 # Configuration
 SOURCE_BRANCH="main"
 TARGET_BRANCHES=("staging" "dev" "eip-monitor" "grafana" "monitoring")
 DRY_RUN=false
 AUTO_PUSH=false
 MERGE_STRATEGY="manual"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'  # Light blue (cyan)
-NC='\033[0m' # No Color
-
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
 
 # Show usage
 show_usage() {

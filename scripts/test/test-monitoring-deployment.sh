@@ -5,7 +5,7 @@
 # Tests all manifests, Prometheus, ServiceMonitors, scraping, and metrics
 #
 
-set -e
+set -euo pipefail
 
 # Source common functions (pod finding, prerequisites)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
