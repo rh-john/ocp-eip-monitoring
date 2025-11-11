@@ -125,10 +125,13 @@ deploy_grafana() {
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
-        local operator_file="k8s/grafana/grafana-operator.yaml"
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local project_root="$(dirname "$script_dir")"
+        local operator_file="${project_root}/k8s/grafana/grafana-operator.yaml"
         if [[ ! -f "$operator_file" ]]; then
             log_error "Grafana operator file not found: $operator_file"
             log_info "The file should contain OperatorGroup and Subscription for namespace-scoped installation"
+            log_info "This file should exist in the grafana branch or be merged into staging branch"
             return 1
         fi
         
@@ -357,9 +360,11 @@ deploy_grafana() {
     # Deploy Grafana Instance
     log_info "Deploying Grafana Instance..."
     # Substitute namespace in the instance file
-    local instance_file="k8s/grafana/grafana-instance.yaml"
+    # Note: project_root is already defined earlier in the function
+    local instance_file="${project_root}/k8s/grafana/grafana-instance.yaml"
     if [[ ! -f "$instance_file" ]]; then
         log_error "Grafana instance file not found: $instance_file"
+        log_info "This file should exist in the grafana branch or be merged into staging branch"
         return 1
     fi
     local instance_file_tmp=$(mktemp)
