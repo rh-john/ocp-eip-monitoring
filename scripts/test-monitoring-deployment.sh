@@ -314,26 +314,55 @@ test_coo() {
             fi
             
             # Check 3: Verify ServiceMonitor labels match what Prometheus expects
-            local sm_labels=$(oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" -o jsonpath='{.metadata.labels}' 2>/dev/null || echo "{}")
-            local sm_app=$(echo "$sm_labels" | jq -r '.app' 2>/dev/null || echo "")
+            # Try COO API version first (monitoring.rhobs/v1), then fallback to standard
+            local sm_app=""
+            if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+                # Try COO API version first
+                sm_app=$(oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app}' 2>/dev/null || echo "")
+            fi
+            # Fallback to standard API if needed
+            if [[ -z "$sm_app" ]]; then
+                sm_app=$(oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app}' 2>/dev/null || echo "")
+            fi
+            
             if [[ "$sm_app" == "eip-monitor" ]]; then
                 log_success "ServiceMonitor has correct labels (app=eip-monitor)"
             else
-                log_warn "ServiceMonitor labels may not match Prometheus selector"
-                log_info "  ServiceMonitor labels: $sm_labels"
-                log_info "  Prometheus expects: app=eip-monitor"
+                # Only warn if we actually got a value (empty means we couldn't check)
+                if [[ -n "$sm_app" ]]; then
+                    log_warn "ServiceMonitor labels may not match Prometheus selector"
+                    log_info "  ServiceMonitor label 'app': $sm_app"
+                    log_info "  Prometheus expects: app=eip-monitor"
+                else
+                    log_info "Could not verify ServiceMonitor labels (checking targets instead)"
+                fi
             fi
             
-            # Check 4: Verify scrape configs exist (ServiceMonitor in config doesn't guarantee targets)
-            # COO creates jobs with pattern: serviceMonitor/namespace/name/0
-            local prom_config=$(oc exec -n "$NAMESPACE" "$prom_pod" -- curl -s "http://localhost:9090/api/v1/status/config" 2>/dev/null | jq -r '.data.yaml' 2>/dev/null || echo "")
-            if [[ -n "$prom_config" ]]; then
-                local eip_jobs=$(echo "$prom_config" | grep -E "^\s+- job_name:" | grep -iE "eip|serviceMonitor.*eip" || echo "")
-                if [[ -n "$eip_jobs" ]]; then
-                    log_success "eip-monitor scrape job found in Prometheus config"
+            # Check 4: Verify targets exist (more reliable than parsing scrape configs)
+            # If targets exist and are healthy, ServiceMonitor discovery is working
+            local targets_json=$(oc exec -n "$NAMESPACE" "$prom_pod" -- curl -s http://localhost:9090/api/v1/targets 2>/dev/null || echo "")
+            if [[ -n "$targets_json" ]]; then
+                local eip_targets=$(echo "$targets_json" | jq -r '.data.activeTargets[] | select(.labels.job | contains("eip")) | .health' 2>/dev/null | head -1 || echo "")
+                if [[ "$eip_targets" == "up" ]]; then
+                    log_success "eip-monitor scrape targets exist and are healthy (ServiceMonitor discovery confirmed)"
+                elif [[ -n "$eip_targets" ]]; then
+                    log_info "eip-monitor targets exist but health is: $eip_targets (may still be initializing)"
                 else
-                    log_warn "ServiceMonitor in config but no scrape job created yet"
-                    log_info "Prometheus may need to evaluate the ServiceMonitor"
+                    log_warn "No eip-monitor targets found yet (ServiceMonitor may not be fully reconciled)"
+                    log_info "This is normal if Prometheus was just deployed - targets appear within 30-60 seconds"
+                fi
+            else
+                log_info "Could not query Prometheus targets API (checking config file instead)"
+                # Fallback: check scrape configs in config file
+                local prom_config=$(oc exec -n "$NAMESPACE" "$prom_pod" -- curl -s "http://localhost:9090/api/v1/status/config" 2>/dev/null | jq -r '.data.yaml' 2>/dev/null || echo "")
+                if [[ -n "$prom_config" ]]; then
+                    # COO creates jobs with pattern: serviceMonitor/namespace/name/0
+                    local eip_jobs=$(echo "$prom_config" | grep -E "^\s+- job_name:" | grep -iE "eip|serviceMonitor.*eip" || echo "")
+                    if [[ -n "$eip_jobs" ]]; then
+                        log_success "eip-monitor scrape job found in Prometheus config"
+                    else
+                        log_info "ServiceMonitor in config but scrape job not yet visible (targets check preferred)"
+                    fi
                 fi
             fi
         else
