@@ -19,6 +19,8 @@ MONITORING_TYPE="${MONITORING_TYPE:-}"
 REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
 REMOVE_OPERATOR="${REMOVE_OPERATOR:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete Grafana CRDs during cleanup (requires cluster-admin)
+SHOW_STATUS="${SHOW_STATUS:-false}"  # Show Grafana status
+TEST_GRAFANA="${TEST_GRAFANA:-false}"  # Test Grafana deployment
 
 # Show usage
 show_usage() {
@@ -37,6 +39,10 @@ Removal:
   --operator                   Also remove Grafana Operator (use with --remove)
   --crds                       Also delete Grafana CRDs (use with --remove, requires cluster-admin)
   --remove-all                 Remove everything: resources, operator, and CRDs (shorthand for --remove --operator --crds)
+
+Status and Testing:
+  --status                    Show Grafana deployment status
+  --test                      Test Grafana deployment
 
 Other:
   -h, --help                  Show this help message
@@ -66,6 +72,12 @@ Examples:
   
   # Shorthand: remove everything
   $0 --remove-all --monitoring-type coo
+  
+  # Show Grafana status
+  $0 --status --monitoring-type coo
+  
+  # Test Grafana deployment
+  $0 --test --monitoring-type uwm
 
 EOF
 }
@@ -827,6 +839,14 @@ parse_args() {
                 DELETE_CRDS="true"
                 shift
                 ;;
+            --status)
+                SHOW_STATUS="true"
+                shift
+                ;;
+            --test)
+                TEST_GRAFANA="true"
+                shift
+                ;;
             # Legacy flags for backward compatibility
             --all)
                 # Legacy: same as --remove-all
@@ -856,6 +876,255 @@ parse_args() {
     done
 }
 
+# Show Grafana status
+show_grafana_status() {
+    log_info "Checking Grafana deployment status..."
+    echo ""
+    
+    # Check namespace
+    if ! oc get namespace "$NAMESPACE" &>/dev/null; then
+        log_warn "Namespace '$NAMESPACE' does not exist"
+        return 1
+    fi
+    
+    # Check Grafana Operator
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana Operator Status"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Check if operator is installed (cluster-wide or namespace-scoped)
+    local cluster_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+    local namespace_csv=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+    
+    if [[ -n "$cluster_csv" ]]; then
+        log_info "Grafana Operator (cluster-wide):"
+        oc get csv "$cluster_csv" -n openshift-operators -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,PHASE:.status.phase,AGE:.metadata.creationTimestamp"
+    elif [[ -n "$namespace_csv" ]]; then
+        log_info "Grafana Operator (namespace-scoped):"
+        oc get csv "$namespace_csv" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,PHASE:.status.phase,AGE:.metadata.creationTimestamp"
+    else
+        log_warn "Grafana Operator not found"
+    fi
+    
+    # Check if CRDs exist
+    if check_crd_exists grafanas.integreatly.org; then
+        log_success "Grafana CRDs are available"
+    else
+        log_warn "Grafana CRDs not found"
+    fi
+    
+    echo ""
+    
+    # Check Grafana Instance
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana Instance Status"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if oc get grafana eip-monitoring-grafana -n "$NAMESPACE" &>/dev/null; then
+        log_info "Grafana Instance:"
+        oc get grafana eip-monitoring-grafana -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+        
+        # Check Grafana pods
+        log_info ""
+        log_info "Grafana Pods:"
+        oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No Grafana pods found)"
+        
+        # Check Route
+        log_info ""
+        log_info "Grafana Route:"
+        oc get route -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o custom-columns="NAME:.metadata.name,HOST:.spec.host,PORT:.spec.port.targetPort,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No Grafana route found)"
+    else
+        log_warn "Grafana Instance not found"
+    fi
+    
+    echo ""
+    
+    # Check DataSources
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana DataSources"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local datasource_name=""
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        datasource_name="prometheus-coo"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        datasource_name="prometheus-uwm"
+    fi
+    
+    if [[ -n "$datasource_name" ]]; then
+        if oc get grafanadatasource "$datasource_name" -n "$NAMESPACE" &>/dev/null; then
+            oc get grafanadatasource "$datasource_name" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+        else
+            log_warn "DataSource '$datasource_name' not found"
+        fi
+    else
+        # List all datasources
+        local datasources=$(oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+        if [[ -n "$datasources" ]]; then
+            oc get grafanadatasource -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+        else
+            log_info "  (No DataSources found)"
+        fi
+    fi
+    
+    echo ""
+    
+    # Check Dashboards
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana Dashboards"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local dashboard_count=$(oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    if [[ "$dashboard_count" -gt 0 ]]; then
+        log_info "Found $dashboard_count dashboard(s):"
+        oc get grafanadashboard -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp" | head -20
+        if [[ "$dashboard_count" -gt 20 ]]; then
+            log_info "  ... and $((dashboard_count - 20)) more"
+        fi
+    else
+        log_info "  (No Dashboards found)"
+    fi
+    
+    echo ""
+    log_success "Status check completed"
+}
+
+# Test Grafana deployment
+test_grafana() {
+    log_info "Testing Grafana deployment..."
+    echo ""
+    
+    local tests_passed=0
+    local tests_failed=0
+    local total_tests=0
+    
+    # Test-specific logging function
+    log_test() { echo -e "\n${BLUE}[TEST]${NC} $1"; }
+    
+    # Helper function to run a test
+    run_test() {
+        local test_name="$1"
+        local test_command="$2"
+        ((total_tests++))
+        
+        if eval "$test_command" &>/dev/null; then
+            log_success "$test_name"
+            ((tests_passed++))
+            return 0
+        else
+            log_error "$test_name"
+            ((tests_failed++))
+            return 1
+        fi
+    }
+    
+    # Validate monitoring type
+    if [[ -z "$MONITORING_TYPE" ]]; then
+        log_error "Monitoring type is required for testing. Use --monitoring-type coo or --monitoring-type uwm"
+        return 1
+    fi
+    
+    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]]; then
+        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo' or 'uwm'"
+        return 1
+    fi
+    
+    # 1. Basic Deployment Tests
+    log_test "Step 1: Basic Deployment Tests"
+    
+    run_test "Namespace exists" "oc get namespace \"$NAMESPACE\" &>/dev/null"
+    run_test "Grafana Operator CRD exists" "check_crd_exists grafanas.integreatly.org"
+    run_test "Grafana Instance exists" "oc get grafana eip-monitoring-grafana -n \"$NAMESPACE\" &>/dev/null"
+    
+    # Check Grafana pods
+    local grafana_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    if [[ "$grafana_pods" -gt 0 ]]; then
+        local grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        if [[ -n "$grafana_pod" ]]; then
+            local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            run_test "Grafana pod running" "[[ \"$pod_phase\" == \"Running\" ]]"
+        fi
+    else
+        log_error "Grafana pods not found"
+        ((tests_failed++))
+        ((total_tests++))
+    fi
+    
+    echo ""
+    
+    # 2. DataSource Tests
+    log_test "Step 2: DataSource Tests"
+    
+    local datasource_name=""
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        datasource_name="prometheus-coo"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        datasource_name="prometheus-uwm"
+    fi
+    
+    if [[ -n "$datasource_name" ]]; then
+        run_test "DataSource exists" "oc get grafanadatasource \"$datasource_name\" -n \"$NAMESPACE\" &>/dev/null"
+    fi
+    
+    echo ""
+    
+    # 3. Dashboard Tests
+    log_test "Step 3: Dashboard Tests"
+    
+    local dashboard_count=$(oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    if [[ "$dashboard_count" -gt 0 ]]; then
+        run_test "Dashboards exist ($dashboard_count found)" "[[ \"$dashboard_count\" -gt 0 ]]"
+        
+        # Test a few specific dashboards
+        run_test "Main dashboard exists" "oc get grafanadashboard grafana-dashboard -n \"$NAMESPACE\" &>/dev/null"
+        run_test "EIP distribution dashboard exists" "oc get grafanadashboard grafana-dashboard-eip-distribution -n \"$NAMESPACE\" &>/dev/null"
+    else
+        log_error "No dashboards found"
+        ((tests_failed++))
+        ((total_tests++))
+    fi
+    
+    echo ""
+    
+    # 4. Route and Accessibility Tests
+    log_test "Step 4: Route and Accessibility Tests"
+    
+    local route_exists=$(oc get route -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    run_test "Grafana Route exists" "[[ \"$route_exists\" -gt 0 ]]"
+    
+    if [[ "$route_exists" -gt 0 ]] && [[ -n "$grafana_pod" ]] && [[ "$pod_phase" == "Running" ]]; then
+        # Test Grafana API endpoint (inside pod)
+        local api_response=$(oc exec "$grafana_pod" -n "$NAMESPACE" -- curl -sf http://localhost:3000/api/health 2>/dev/null || echo "")
+        run_test "Grafana API accessible" "echo \"$api_response\" | grep -qE \"(ok|database)\""
+    fi
+    
+    echo ""
+    
+    # 5. RBAC Tests
+    log_test "Step 5: RBAC Tests"
+    
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        run_test "ServiceAccount exists" "oc get serviceaccount grafana-prometheus-coo -n \"$NAMESPACE\" &>/dev/null"
+        run_test "RoleBinding exists" "oc get rolebinding grafana-prometheus-coo -n \"$NAMESPACE\" &>/dev/null"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        run_test "ServiceAccount exists" "oc get serviceaccount grafana-prometheus -n \"$NAMESPACE\" &>/dev/null"
+        run_test "ClusterRoleBinding exists" "oc get clusterrolebinding grafana-prometheus-eip-monitoring &>/dev/null"
+    fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Test Summary: $tests_passed/$total_tests passed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ $tests_failed -eq 0 ]]; then
+        log_success "All tests passed!"
+        return 0
+    else
+        log_warn "$tests_failed test(s) failed"
+        return 1
+    fi
+}
+
 # Main function
 main() {
     parse_args "$@"
@@ -864,6 +1133,18 @@ main() {
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     log_info "Namespace: $NAMESPACE"
+    
+    # Handle status command
+    if [[ "$SHOW_STATUS" == "true" ]]; then
+        show_grafana_status
+        return 0
+    fi
+    
+    # Handle test command
+    if [[ "$TEST_GRAFANA" == "true" ]]; then
+        test_grafana
+        return $?
+    fi
     
     # Handle removal
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then

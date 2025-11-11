@@ -18,6 +18,8 @@ REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 VERBOSE="${VERBOSE:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete COO CRDs during cleanup (requires cluster-admin)
 PERSISTENT_STORAGE="${PERSISTENT_STORAGE:-false}"  # Enable persistent storage for Prometheus
+SHOW_STATUS="${SHOW_STATUS:-false}"  # Show monitoring status
+TEST_MONITORING="${TEST_MONITORING:-false}"  # Test monitoring infrastructure
 
 # Note: Logging functions (log_info, log_success, log_warn, log_error) are now sourced from scripts/lib/common.sh
 # Note: oc_cmd() and oc_cmd_silent() are now sourced from scripts/lib/common.sh
@@ -36,6 +38,8 @@ Options:
   --monitoring-type TYPE    Monitoring type: coo, uwm, or all (required for deployment)
   --all                     Deploy both COO and UWM monitoring (same as --monitoring-type all)
   --persistent              Enable persistent storage for Prometheus (both COO and UWM)
+  --status                  Show monitoring infrastructure status
+  --test                    Test monitoring infrastructure
   --remove-monitoring [TYPE] Remove monitoring infrastructure (TYPE: coo, uwm, or all - required)
   --delete-crds              Delete COO CRDs during cleanup (requires cluster-admin, only for COO removal)
   -v, --verbose            Show verbose output (raw oc command output)
@@ -55,6 +59,10 @@ Examples:
   $0 --all                               # Deploy both COO and UWM
   $0 --monitoring-type coo --persistent  # Deploy COO with persistent storage
   $0 --monitoring-type all --persistent  # Deploy both with persistent storage
+  $0 --status                            # Show monitoring status
+  $0 --status --monitoring-type coo      # Show COO monitoring status
+  $0 --test                              # Test monitoring infrastructure
+  $0 --test --monitoring-type uwm        # Test UWM monitoring
   $0 --remove-monitoring coo
   $0 --remove-monitoring --monitoring-type uwm
   $0 --remove-monitoring all
@@ -1890,6 +1898,14 @@ parse_args() {
                 PERSISTENT_STORAGE="true"
                 shift
                 ;;
+            --status)
+                SHOW_STATUS="true"
+                shift
+                ;;
+            --test)
+                TEST_MONITORING="true"
+                shift
+                ;;
             -v|--verbose)
                 VERBOSE="true"
                 shift
@@ -1907,6 +1923,262 @@ parse_args() {
     done
 }
 
+# Show monitoring status
+show_monitoring_status() {
+    log_info "Checking monitoring infrastructure status..."
+    echo ""
+    
+    # Check namespace
+    if ! oc get namespace "$NAMESPACE" &>/dev/null; then
+        log_warn "Namespace '$NAMESPACE' does not exist"
+        return 1
+    fi
+    
+    # Detect current monitoring type if not specified
+    local status_type="${MONITORING_TYPE:-}"
+    if [[ -z "$status_type" ]]; then
+        status_type=$(detect_current_monitoring_type)
+        if [[ "$status_type" == "none" ]]; then
+            log_warn "No monitoring infrastructure detected in namespace '$NAMESPACE'"
+            return 1
+        fi
+        log_info "Detected monitoring type: $status_type"
+    fi
+    
+    # Show COO status if applicable
+    if [[ "$status_type" == "coo" ]] || [[ "$status_type" == "all" ]]; then
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "COO Monitoring Status"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Check MonitoringStack
+        if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
+            log_info "MonitoringStack:"
+            oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+            
+            # Check Prometheus pods
+            log_info ""
+            log_info "Prometheus Pods:"
+            oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No Prometheus pods found)"
+            
+            # Check ThanosQuerier
+            if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+                log_info ""
+                log_info "ThanosQuerier:"
+                oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+                
+                local thanos_pod=$(find_thanosquerier_pod "$NAMESPACE")
+                if [[ -n "$thanos_pod" ]]; then
+                    log_info ""
+                    log_info "ThanosQuerier Pod:"
+                    oc get pod "$thanos_pod" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp"
+                fi
+            fi
+        else
+            log_warn "MonitoringStack not found"
+        fi
+        
+        # Check ServiceMonitor
+        if oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "ServiceMonitor:"
+            oc get servicemonitor eip-monitor-coo -n "$NAMESPACE"
+        fi
+        
+        # Check PrometheusRule
+        if oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "PrometheusRule:"
+            oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE"
+        fi
+        
+        echo ""
+    fi
+    
+    # Show UWM status if applicable
+    if [[ "$status_type" == "uwm" ]] || [[ "$status_type" == "all" ]]; then
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "UWM Monitoring Status"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Check if UWM is enabled
+        local uwm_enabled=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null | grep -oE "enableUserWorkload:\s*true" || echo "")
+        if [[ -n "$uwm_enabled" ]]; then
+            log_success "User Workload Monitoring is enabled"
+        else
+            log_warn "User Workload Monitoring may not be enabled"
+        fi
+        
+        # Check Prometheus pods in openshift-user-workload-monitoring
+        log_info ""
+        log_info "UWM Prometheus Pods:"
+        oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No UWM Prometheus pods found)"
+        
+        # Check ServiceMonitor
+        if oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "ServiceMonitor:"
+            oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE"
+        fi
+        
+        # Check PrometheusRule
+        if oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "PrometheusRule:"
+            oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE"
+        fi
+        
+        echo ""
+    fi
+    
+    # Show common resources
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Common Resources"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # NetworkPolicy
+    if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
+        log_info "NetworkPolicy:"
+        oc get networkpolicy eip-monitor-combined -n "$NAMESPACE"
+    fi
+    
+    log_success "Status check completed"
+}
+
+# Test monitoring infrastructure
+test_monitoring() {
+    log_info "Testing monitoring infrastructure..."
+    echo ""
+    
+    local tests_passed=0
+    local tests_failed=0
+    local total_tests=0
+    
+    # Test-specific logging function
+    log_test() { echo -e "\n${BLUE}[TEST]${NC} $1"; }
+    
+    # Helper function to run a test
+    run_test() {
+        local test_name="$1"
+        local test_command="$2"
+        ((total_tests++))
+        
+        if eval "$test_command" &>/dev/null; then
+            log_success "$test_name"
+            ((tests_passed++))
+            return 0
+        else
+            log_error "$test_name"
+            ((tests_failed++))
+            return 1
+        fi
+    }
+    
+    # Detect monitoring type if not specified
+    local test_type="${MONITORING_TYPE:-}"
+    if [[ -z "$test_type" ]]; then
+        test_type=$(detect_current_monitoring_type)
+        if [[ "$test_type" == "none" ]]; then
+            log_error "No monitoring infrastructure detected"
+            return 1
+        fi
+        log_info "Testing detected monitoring type: $test_type"
+    fi
+    
+    # Test COO if applicable
+    if [[ "$test_type" == "coo" ]] || [[ "$test_type" == "all" ]]; then
+        log_test "Step 1: COO Monitoring Tests"
+        
+        run_test "MonitoringStack exists" "oc get monitoringstack eip-monitoring-stack -n \"$NAMESPACE\" &>/dev/null"
+        run_test "ServiceMonitor exists" "oc get servicemonitor eip-monitor-coo -n \"$NAMESPACE\" &>/dev/null"
+        run_test "PrometheusRule exists" "oc get prometheusrule eip-monitor-alerts-coo -n \"$NAMESPACE\" &>/dev/null"
+        
+        # Check Prometheus pods
+        local prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$prom_pods" -gt 0 ]]; then
+            run_test "Prometheus pods running" "oc get pods -n \"$NAMESPACE\" -l app.kubernetes.io/name=prometheus --field-selector=status.phase=Running --no-headers 2>/dev/null | grep -q ."
+        else
+            log_error "Prometheus pods not found"
+            ((tests_failed++))
+            ((total_tests++))
+        fi
+        
+        # Check ThanosQuerier
+        if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+            run_test "ThanosQuerier exists" "oc get thanosquerier eip-monitoring-stack-querier-coo -n \"$NAMESPACE\" &>/dev/null"
+            
+            local thanos_pod=$(find_thanosquerier_pod "$NAMESPACE")
+            if [[ -n "$thanos_pod" ]]; then
+                local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                run_test "ThanosQuerier pod running" "[[ \"$thanos_phase\" == \"Running\" ]]"
+                
+                # Test ThanosQuerier query endpoint
+                if [[ "$thanos_phase" == "Running" ]]; then
+                    local query_result=$(oc exec "$thanos_pod" -n "$NAMESPACE" -- curl -sf http://localhost:10902/api/v1/query?query=up 2>/dev/null || echo "")
+                    run_test "ThanosQuerier query endpoint accessible" "[[ -n \"$query_result\" ]]"
+                fi
+            fi
+        fi
+        
+        echo ""
+    fi
+    
+    # Test UWM if applicable
+    if [[ "$test_type" == "uwm" ]] || [[ "$test_type" == "all" ]]; then
+        log_test "Step 2: UWM Monitoring Tests"
+        
+        # Check if UWM is enabled
+        local uwm_enabled=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null | grep -oE "enableUserWorkload:\s*true" || echo "")
+        run_test "User Workload Monitoring enabled" "[[ -n \"$uwm_enabled\" ]]"
+        
+        run_test "ServiceMonitor exists" "oc get servicemonitor eip-monitor-uwm -n \"$NAMESPACE\" &>/dev/null"
+        run_test "PrometheusRule exists" "oc get prometheusrule eip-monitor-alerts-uwm -n \"$NAMESPACE\" &>/dev/null"
+        
+        # Check UWM Prometheus pods
+        local uwm_prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$uwm_prom_pods" -gt 0 ]]; then
+            run_test "UWM Prometheus pods running" "oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --field-selector=status.phase=Running --no-headers 2>/dev/null | grep -q ."
+        else
+            log_error "UWM Prometheus pods not found"
+            ((tests_failed++))
+            ((total_tests++))
+        fi
+        
+        echo ""
+    fi
+    
+    # Test common resources
+    log_test "Step 3: Common Resources Tests"
+    
+    run_test "NetworkPolicy exists" "oc get networkpolicy eip-monitor-combined -n \"$NAMESPACE\" &>/dev/null"
+    
+    # Test metrics availability (if Prometheus is accessible)
+    if [[ "$test_type" == "coo" ]] || [[ "$test_type" == "all" ]]; then
+        local prom_pod=$(find_prometheus_pod "$NAMESPACE" "true")
+        if [[ -n "$prom_pod" ]]; then
+            local prom_phase=$(oc get pod "$prom_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$prom_phase" == "Running" ]]; then
+                # Test if eip-monitor metrics are being scraped
+                local metrics_query=$(oc exec "$prom_pod" -n "$NAMESPACE" -- curl -sf "http://localhost:9090/api/v1/query?query=eips_configured_total" 2>/dev/null || echo "")
+                run_test "EIP metrics available in Prometheus" "echo \"$metrics_query\" | grep -q \"eips_configured_total\""
+            fi
+        fi
+    fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Test Summary: $tests_passed/$total_tests passed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ $tests_failed -eq 0 ]]; then
+        log_success "All tests passed!"
+        return 0
+    else
+        log_warn "$tests_failed test(s) failed"
+        return 1
+    fi
+}
+
 # Main function
 main() {
     parse_args "$@"
@@ -1916,6 +2188,19 @@ main() {
     fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
+    
+    # Handle status command
+    if [[ "$SHOW_STATUS" == "true" ]]; then
+        show_monitoring_status
+        return 0
+    fi
+    
+    # Handle test command
+    if [[ "$TEST_MONITORING" == "true" ]]; then
+        test_monitoring
+        return $?
+    fi
+    
     log_info "Deploying to namespace: $NAMESPACE"
     
     # If removing, detect the actual type first and log it
