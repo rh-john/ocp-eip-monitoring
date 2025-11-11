@@ -4,20 +4,13 @@
 
 set -euo pipefail
 
+# Source common functions (logging, prerequisites)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 DASHBOARD_FILE="${1:-}"
-
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'
-NC='\033[0m'
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 if [[ -z "$DASHBOARD_FILE" ]]; then
     log_error "Usage: $0 <dashboard-file.yaml>"
@@ -29,14 +22,25 @@ if [[ ! -f "$DASHBOARD_FILE" ]]; then
     exit 1
 fi
 
+# Check prerequisites
+if ! check_prerequisites; then
+    log_error "Prerequisites check failed"
+    exit 1
+fi
+
 # Check if Grafana instance exists
 if ! oc get grafana -n "$NAMESPACE" &>/dev/null; then
     log_error "Grafana instance not found in namespace '$NAMESPACE'"
     exit 1
 fi
 
-# Get Grafana pod
-GRAFANA_POD=$(oc get pods -n "$NAMESPACE" | grep grafana | grep -v operator | awk '{print $1}' | head -1)
+# Get Grafana pod (use more reliable method than grep/awk)
+GRAFANA_POD=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+if [[ -z "$GRAFANA_POD" ]]; then
+    # Fallback: try by name pattern
+    GRAFANA_POD=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -E "grafana.*deployment" | grep -v operator | awk '{print $1}' | head -1)
+fi
+
 if [[ -z "$GRAFANA_POD" ]]; then
     log_error "Grafana pod not found"
     exit 1
@@ -109,19 +113,56 @@ def test_query_via_prometheus(pod, namespace, query):
         return False, [], str(e)
 
 def find_prometheus_pod(namespace):
-    """Find Prometheus or Thanos Querier pod"""
-    # Try to find Prometheus pod
-    cmd = ['oc', 'get', 'pods', '-n', namespace, '-o', 'json']
+    """Find Prometheus or Thanos Querier pod using common.sh logic"""
+    # Try COO-specific labels first (most reliable for COO)
+    cmd = ['oc', 'get', 'pods', '-n', namespace, '-l', 
+           'app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier',
+           '-o', 'jsonpath={.items[0].metadata.name}']
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-    if result.returncode == 0:
-        pods = json.loads(result.stdout)
-        for pod in pods.get('items', []):
-            name = pod.get('metadata', {}).get('name', '')
-            labels = pod.get('metadata', {}).get('labels', {})
-            # Look for Prometheus or Thanos Querier
-            if 'prometheus' in name.lower() or 'thanos-querier' in name.lower():
-                if pod.get('status', {}).get('phase') == 'Running':
-                    return name
+    if result.returncode == 0 and result.stdout.strip():
+        pod_name = result.stdout.strip()
+        # Verify pod is running
+        phase_cmd = ['oc', 'get', 'pod', pod_name, '-n', namespace, '-o', 'jsonpath={.status.phase}']
+        phase_result = subprocess.run(phase_cmd, capture_output=True, text=True, timeout=10)
+        if phase_result.returncode == 0 and phase_result.stdout.strip() == 'Running':
+            return pod_name
+    
+    # Fallback: standard Thanos label
+    cmd = ['oc', 'get', 'pods', '-n', namespace, '-l', 
+           'app.kubernetes.io/name=thanos-query',
+           '-o', 'jsonpath={.items[0].metadata.name}']
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        pod_name = result.stdout.strip()
+        phase_cmd = ['oc', 'get', 'pod', pod_name, '-n', namespace, '-o', 'jsonpath={.status.phase}']
+        phase_result = subprocess.run(phase_cmd, capture_output=True, text=True, timeout=10)
+        if phase_result.returncode == 0 and phase_result.stdout.strip() == 'Running':
+            return pod_name
+    
+    # Fallback: Prometheus pod (COO-specific labels)
+    cmd = ['oc', 'get', 'pods', '-n', namespace, '-l',
+           'app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/name=prometheus',
+           '-o', 'jsonpath={.items[0].metadata.name}']
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        pod_name = result.stdout.strip()
+        phase_cmd = ['oc', 'get', 'pod', pod_name, '-n', namespace, '-o', 'jsonpath={.status.phase}']
+        phase_result = subprocess.run(phase_cmd, capture_output=True, text=True, timeout=10)
+        if phase_result.returncode == 0 and phase_result.stdout.strip() == 'Running':
+            return pod_name
+    
+    # Fallback: standard Prometheus label
+    cmd = ['oc', 'get', 'pods', '-n', namespace, '-l',
+           'app.kubernetes.io/name=prometheus',
+           '-o', 'jsonpath={.items[0].metadata.name}']
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        pod_name = result.stdout.strip()
+        phase_cmd = ['oc', 'get', 'pod', pod_name, '-n', namespace, '-o', 'jsonpath={.status.phase}']
+        phase_result = subprocess.run(phase_cmd, capture_output=True, text=True, timeout=10)
+        if phase_result.returncode == 0 and phase_result.stdout.strip() == 'Running':
+            return pod_name
+    
     return None
 
 try:
@@ -189,7 +230,9 @@ try:
                 prom_pod = find_prometheus_pod('eip-monitoring')
             
             if prom_pod:
-                success, results, error = test_query_via_prometheus(prom_pod, namespace, expr)
+                # Determine port based on pod name (ThanosQuerier uses 10902, Prometheus uses 9090)
+                port = '10902' if 'thanos' in prom_pod.lower() or 'querier' in prom_pod.lower() else '9090'
+                success, results, error = test_query_via_prometheus(prom_pod, namespace, expr, port)
                 if success:
                     result_count = len(results) if isinstance(results, list) else 0
                     if result_count > 0:
