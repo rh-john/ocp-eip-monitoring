@@ -2122,6 +2122,16 @@ test_monitoring() {
             ((tests_passed++))
         else
             log_error "ServiceMonitor exists"
+            # Show what ServiceMonitors actually exist for debugging
+            local existing_sm=$(oc get servicemonitor.monitoring.rhobs -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            if [[ -z "$existing_sm" ]]; then
+                existing_sm=$(oc get servicemonitor -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            fi
+            if [[ -n "$existing_sm" ]]; then
+                log_info "  Found ServiceMonitor(s): $existing_sm"
+            else
+                log_info "  No ServiceMonitors found in namespace $NAMESPACE"
+            fi
             ((tests_failed++))
         fi
         ((total_tests++))
@@ -2137,6 +2147,16 @@ test_monitoring() {
             ((tests_passed++))
         else
             log_error "PrometheusRule exists"
+            # Show what PrometheusRules actually exist for debugging
+            local existing_pr=$(oc get prometheusrule.monitoring.rhobs -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            if [[ -z "$existing_pr" ]]; then
+                existing_pr=$(oc get prometheusrule -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            fi
+            if [[ -n "$existing_pr" ]]; then
+                log_info "  Found PrometheusRule(s): $existing_pr"
+            else
+                log_info "  No PrometheusRules found in namespace $NAMESPACE"
+            fi
             ((tests_failed++))
         fi
         ((total_tests++))
