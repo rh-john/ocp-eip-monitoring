@@ -11,13 +11,13 @@ Prometheus managed by COO (Cluster Observability Operator) is not discovering Se
 
 ## Current Status
 
-- ✅ ServiceMonitor `eip-monitor-coo` exists in `eip-monitoring` namespace
-- ✅ ServiceMonitor has label `app: eip-monitor` (matches selector)
-- ✅ Prometheus has `serviceMonitorSelector: {app: eip-monitor}`
-- ✅ Service `eip-monitor` exists with endpoints
-- ✅ MonitoringStack `resourceSelector` matches ServiceMonitor labels
-- ❌ Prometheus only shows `prometheus-self` and `alertmanager-self` jobs
-- ❌ No `eip-monitor` scrape job created
+- ServiceMonitor `eip-monitor-coo` exists in `eip-monitoring` namespace
+- ServiceMonitor has label `app: eip-monitor` (matches selector)
+- Prometheus has `serviceMonitorSelector: {app: eip-monitor}`
+- Service `eip-monitor` exists with endpoints
+- MonitoringStack `resourceSelector` matches ServiceMonitor labels
+- Prometheus only shows `prometheus-self` and `alertmanager-self` jobs
+- No `eip-monitor` scrape job created
 
 ## Configuration Details
 
@@ -57,14 +57,14 @@ spec:
 
 ## Troubleshooting Attempted
 
-1. ✅ Verified ServiceMonitor labels match Prometheus selector
-2. ✅ Verified service has endpoints
-3. ✅ Restarted Prometheus pods multiple times
-4. ✅ Annotated ServiceMonitor with `prometheus.io/scrape: true`
-5. ✅ Patched MonitoringStack to force reconciliation
-6. ✅ Patched Prometheus resource to force reload
-7. ✅ Checked OBO operator logs (no errors found)
-8. ✅ Verified Prometheus operator is syncing
+1. Verified ServiceMonitor labels match Prometheus selector
+2. Verified service has endpoints
+3. Restarted Prometheus pods multiple times
+4. Annotated ServiceMonitor with `prometheus.io/scrape: true`
+5. Patched MonitoringStack to force reconciliation
+6. Patched Prometheus resource to force reload
+7. Checked OBO operator logs (no errors found)
+8. Verified Prometheus operator is syncing
 
 ## Possible Causes
 

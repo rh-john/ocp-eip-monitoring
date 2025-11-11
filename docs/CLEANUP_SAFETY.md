@@ -45,7 +45,7 @@ oc delete networkpolicy eip-monitor-uwm -n eip-monitoring
 
 ## Combined NetworkPolicy Handling
 
-The combined NetworkPolicy (`eip-monitor-combined`) is handled intelligently:
+The combined NetworkPolicy (`eip-monitor-combined`) is handled as follows:
 
 - **When removing COO only**: The combined NetworkPolicy is kept if UWM is still deployed
 - **When removing UWM only**: The combined NetworkPolicy is kept if COO is still deployed
@@ -144,7 +144,7 @@ oc delete servicemonitor,prometheusrule,networkpolicy -n eip-monitoring -l monit
 
 ## Common Mistakes to Avoid
 
-### ❌ Don't Use Generic Labels for Deletion
+### Don't Use Generic Labels for Deletion
 
 ```bash
 # BAD: This deletes both COO and UWM resources
@@ -154,7 +154,7 @@ oc delete servicemonitor,prometheusrule,networkpolicy -n eip-monitoring -l monit
 oc delete servicemonitor,prometheusrule,networkpolicy -n eip-monitoring -l monitoring-type=coo
 ```
 
-### ❌ Don't Delete Combined NetworkPolicy When One Stack Remains
+### Don't Delete Combined NetworkPolicy When One Stack Remains
 
 ```bash
 # BAD: If UWM is still deployed, this breaks UWM access
@@ -193,7 +193,7 @@ The deployment script handles cleanup safely:
 
 The script automatically:
 1. Uses label selectors for safe deletion
-2. Handles combined NetworkPolicy intelligently
+2. Handles combined NetworkPolicy appropriately
 3. Falls back to name-based deletion if labels aren't present
 4. Verifies resources before deletion
 

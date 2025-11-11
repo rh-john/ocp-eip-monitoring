@@ -14,7 +14,7 @@ E2E tests verify the complete lifecycle of monitoring deployment:
 
 ### `test-monitoring-e2e.sh`
 
-Comprehensive E2E test that:
+E2E test that:
 - Deploys monitoring infrastructure using `deploy-monitoring.sh`
 - Waits for resources to become ready using shared `common.sh` functions
 - Verifies all components (ServiceMonitors, PrometheusRules, NetworkPolicies, etc.)
@@ -91,7 +91,7 @@ TIMEOUT=600 ./tests/e2e/test-monitoring-e2e.sh  # 10 minutes
 7. **Verify ThanosQuerier** and its pods
 8. **Verify AlertmanagerConfig** exists
 9. **Verify metrics** are being scraped (query Prometheus API)
-10. **Run comprehensive test** using `test/test-monitoring-deployment.sh`
+10. **Run test** using `test/test-monitoring-deployment.sh`
 
 ### UWM with Grafana Test Flow
 
@@ -180,7 +180,7 @@ spec:
 - ServiceMonitors and PrometheusRules exist
 - NetworkPolicy is applied
 - Metrics are being scraped (at least some `eip_*` metrics exist)
-- Comprehensive test script passes
+- Test script passes
 
 ### Common Issues
 
