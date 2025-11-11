@@ -321,12 +321,32 @@ test_coo() {
         log_info "Using Prometheus route for targets: $prom_targets_url"
     fi
     
+    local targets_json=""
     if [[ "$use_route" == "true" ]]; then
-        # Use route (cleaner, no exec needed)
-        targets_json=$(curl -sk "$prom_targets_url" 2>/dev/null || echo "")
-    elif [[ -n "$prom_pod" ]]; then
+        # Use route (may require authentication)
+        # Capture both response body and HTTP status code
+        local curl_output=$(curl -sk -w "\nHTTP_CODE:%{http_code}" "$prom_targets_url" 2>/dev/null || echo "")
+        local http_code=$(echo "$curl_output" | grep "HTTP_CODE:" | cut -d: -f2)
+        targets_json=$(echo "$curl_output" | sed '/HTTP_CODE:/d')
+        
+        if [[ "$http_code" != "200" ]] && [[ -n "$http_code" ]]; then
+            log_warn "Route query returned HTTP $http_code, falling back to pod exec"
+            use_route=false
+            targets_json=""
+        elif [[ -z "$targets_json" ]]; then
+            log_warn "Route query returned empty response, falling back to pod exec"
+            use_route=false
+        fi
+    fi
+    
+    if [[ "$use_route" != "true" ]] && [[ -n "$prom_pod" ]]; then
         # Fallback to pod exec
         targets_json=$(oc exec -n "$NAMESPACE" "$prom_pod" -- wget -qO- http://localhost:9090/api/v1/targets 2>/dev/null || echo "")
+        if [[ -z "$targets_json" ]]; then
+            log_warn "Pod exec query failed. Checking pod status..."
+            local pod_status=$(oc get pod "$prom_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+            log_info "  Prometheus pod status: $pod_status"
+        fi
     fi
     
     if [[ -n "$targets_json" ]]; then
@@ -350,6 +370,10 @@ test_coo() {
             log_warn "Cannot check targets - Prometheus pod not found"
         else
             log_error "Failed to query Prometheus targets API"
+            log_info "Troubleshooting:"
+            log_info "  1. Check Prometheus pod: oc get pod $prom_pod -n $NAMESPACE"
+            log_info "  2. Check pod logs: oc logs $prom_pod -n $NAMESPACE --tail=50"
+            log_info "  3. Try direct query: oc exec -n $NAMESPACE $prom_pod -- wget -qO- http://localhost:9090/api/v1/targets"
         fi
     fi
     
@@ -419,27 +443,69 @@ test_coo() {
         fi
         
         if [[ "$use_route" == "true" ]]; then
-            # Use route with curl (edge TLS termination, no auth needed)
+            # Use route with curl (edge TLS termination, may require authentication)
             # Route format: https://thanos-querier-coo-<namespace>.apps.<cluster-domain>
-            metrics_result=$(curl -sk "${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
+            # Try with OpenShift token if available
+            local token=""
+            if command -v oc &>/dev/null; then
+                token=$(oc whoami -t 2>/dev/null || echo "")
+            fi
+            
+            if [[ -n "$token" ]]; then
+                # Use token for authentication
+                metrics_result=$(curl -sk -H "Authorization: Bearer $token" "${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
+            else
+                # Try without token first
+                metrics_result=$(curl -sk "${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
+            fi
+            
+            # If route query failed, try fallback to pod exec
+            if [[ -z "$metrics_result" ]] || echo "$metrics_result" | grep -q "401\|403\|Unauthorized"; then
+                log_warn "Route query failed or requires authentication, falling back to pod exec"
+                use_route=false
+                # Try to find ThanosQuerier pod
+                local thanos_pod=""
+                thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+                if [[ -z "$thanos_pod" ]]; then
+                    thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+                fi
+                if [[ -n "$thanos_pod" ]]; then
+                    query_host="http://localhost"
+                    query_port="10902"
+                    pod_name="$thanos_pod"
+                    metrics_result=$(oc exec -n "$NAMESPACE" "$pod_name" -- wget -qO- "${query_host}:${query_port}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
+                fi
+            fi
         else
             # Use pod exec (direct HTTP access)
             metrics_result=$(oc exec -n "$NAMESPACE" "$pod_name" -- wget -qO- "${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})" 2>/dev/null || echo "")
         fi
         
         if [[ -n "$metrics_result" ]]; then
-            metric_count=$(echo "$metrics_result" | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
-            if [[ "$metric_count" != "0" ]] && [[ -n "$metric_count" ]] && [[ "$metric_count" != "null" ]]; then
-                log_success "Found $metric_count eip metric(s)"
+            # Check if response is valid JSON
+            if echo "$metrics_result" | jq . >/dev/null 2>&1; then
+                metric_count=$(echo "$metrics_result" | jq -r '.data.result[0].value[1]' 2>/dev/null || echo "0")
+                if [[ "$metric_count" != "0" ]] && [[ -n "$metric_count" ]] && [[ "$metric_count" != "null" ]]; then
+                    log_success "Found $metric_count eip metric(s)"
+                else
+                    log_error "No eip metrics found"
+                fi
             else
-                log_error "No eip metrics found"
+                log_error "Invalid JSON response from metrics API"
+                log_info "Response preview: $(echo "$metrics_result" | head -c 200)"
             fi
         else
             log_error "Failed to query metrics API"
             if [[ "$use_route" == "true" ]]; then
-                log_info "Route query failed. Try manually: curl -sk ${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})"
+                log_info "Route query failed. Troubleshooting:"
+                log_info "  1. Check route: oc get route thanos-querier-coo -n $NAMESPACE"
+                log_info "  2. Try with token: curl -sk -H \"Authorization: Bearer \$(oc whoami -t)\" ${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})"
+                log_info "  3. Try pod exec: oc exec -n $NAMESPACE <thanos-pod> -- wget -qO- http://localhost:10902/api/v1/query?query=count({__name__=~\"eip_.*\"})"
             else
-                log_info "Pod exec query failed. Check pod status: oc get pod $pod_name -n $NAMESPACE"
+                log_info "Pod exec query failed. Troubleshooting:"
+                log_info "  1. Check pod status: oc get pod $pod_name -n $NAMESPACE"
+                log_info "  2. Check pod logs: oc logs $pod_name -n $NAMESPACE --tail=50"
+                log_info "  3. Try direct query: oc exec -n $NAMESPACE $pod_name -- wget -qO- ${base_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})"
             fi
         fi
     else
