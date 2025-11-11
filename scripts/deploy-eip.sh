@@ -5,43 +5,28 @@
 
 set -euo pipefail
 
+# Get script directory and source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Source common.sh and store original check_prerequisites before we override it
+source "${SCRIPT_DIR}/lib/common.sh"
+# Store the original check_prerequisites from common.sh
+declare -f check_prerequisites > /dev/null && eval "$(declare -f check_prerequisites | sed 's/^check_prerequisites$/common_check_prerequisites/')" || true
+
 # Configuration
 IMAGE_NAME="eip-monitor"
 IMAGE_TAG="latest"
 NAMESPACE="eip-monitoring"
 REGISTRY=""  # Set this to your container registry
 CLEAN_ALL="${CLEAN_ALL:-false}"  # Flag for cleaning everything
-MONITORING_TYPE="${MONITORING_TYPE:-uwm}"  # Default to uwm
-REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
+MONITORING_TYPE="${MONITORING_TYPE:-}"  # No default - must be explicitly specified
 LOG_LEVEL="${LOG_LEVEL:-INFO}"  # Default to INFO, can be DEBUG, INFO, WARNING, ERROR, CRITICAL
 SKIP_BUILD="${SKIP_BUILD:-false}"  # Skip building the image
 QUAY_IMAGE=""  # Full Quay image path (e.g., quay.io/org/eip-monitor:tag)
 WITH_MONITORING="${WITH_MONITORING:-false}"  # Deploy monitoring with 'all' command
-
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;34m'  # Bright blue for readability on black terminals
-NC='\033[0m' # No Color
-
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+WITH_GRAFANA="${WITH_GRAFANA:-false}"  # Deploy Grafana with 'all' command
+GRAFANA_TYPE=""  # Grafana type (coo or uwm) - set when --grafana is used
 
 # Show usage
 show_usage() {
@@ -53,10 +38,10 @@ Usage: $0 <command> [options]
 Commands:
   build       Build the container image
   push        Push image to registry
-  deploy      Deploy eip-monitor application to OpenShift (no monitoring)
+  deploy      Deploy eip-monitor application to OpenShift
   restart     Restart deployment to pull new image (useful after pushing same tag)
-  monitoring  Deploy monitoring infrastructure (COO or UWM)
-  all         Build, push, and deploy (use --skip-build to use existing image, --with-monitoring to include monitoring)
+  status      Show deployment status (pods, image version, health)
+  all         Build, push, and deploy (use --skip-build to use existing image, --monitoring TYPE to include monitoring, --grafana TYPE to include Grafana)
   clean       Clean up deployment
   test        Test the deployment
   logs        Show container logs
@@ -65,13 +50,13 @@ Options:
   -r, --registry REGISTRY   Container registry URL
   -t, --tag TAG             Image tag (default: latest)
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
-  --monitoring-type TYPE    Monitoring type: coo or uwm (for monitoring command)
-  --remove-monitoring       Remove monitoring infrastructure
-  --all                     Clean up everything (Grafana, eip-monitor, and monitoring)
+  --monitoring TYPE       Deploy monitoring infrastructure with 'all' command (TYPE: coo, uwm, or all - required)
+  --grafana TYPE          Deploy Grafana dashboards with 'all' command (TYPE: coo or uwm - required)
   --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
   --skip-build              Skip building the image (use with -r/--registry)
   --quay-image IMAGE        Full Quay image path (e.g., quay.io/org/eip-monitor:tag) - automatically skips build
-  --with-monitoring         Deploy monitoring infrastructure with 'all' command
+  --all                     Clean up everything (Grafana, eip-monitor, and monitoring) - only for 'clean' command
+  -h, --help               Show this help message
 
 Environment Variables:
   None required
@@ -85,29 +70,52 @@ Examples:
   $0 all -r quay.io/myorg
   $0 all -r quay.io/myorg/eip-monitor -t v1.0.0  # Registry can include image name
   $0 all -r quay.io/myorg --log-level DEBUG
-  $0 all --quay-image quay.io/myorg/eip-monitor:v1.2.3 --with-monitoring
-  $0 all -r quay.io/myorg/eip-monitor -t v1.2.3 --with-monitoring coo  # Shorthand: coo/uwm after --with-monitoring
-  $0 all --skip-build -r quay.io/myorg -t v1.2.3 --with-monitoring --monitoring-type uwm
-  $0 restart                  Restart deployment to pull new image with same tag
+  $0 all -r quay.io/myorg/eip-monitor -t v1.2.3 --monitoring coo
+  $0 all --skip-build -r quay.io/myorg -t v1.2.3 --monitoring uwm
+  $0 all --quay-image quay.io/myorg/eip-monitor:v1.2.3 --monitoring all
+  $0 all -r quay.io/myorg --monitoring coo --grafana coo
+  $0 all -r quay.io/myorg --monitoring uwm --grafana uwm
+  $0 status                  Show deployment status
+  $0 restart                 Restart deployment to pull new image with same tag
   $0 test
   $0 clean
-  $0 clean --all              Clean up everything (Grafana, eip-monitor, monitoring)
+  $0 clean --all             Clean up everything (Grafana, eip-monitor, monitoring)
 
-Note: To deploy monitoring infrastructure, use the separate script:
-  ./scripts/deploy-monitoring.sh
+Note: To deploy monitoring infrastructure separately, use:
+  ./scripts/deploy-monitoring.sh --monitoring-type coo
+  ./scripts/deploy-monitoring.sh --monitoring-type uwm
 
-Note: To deploy Grafana dashboards, use the separate script:
-  ./scripts/deploy-grafana.sh
+Note: To deploy Grafana dashboards, use:
+  ./scripts/deploy-grafana.sh --monitoring-type coo
+  ./scripts/deploy-grafana.sh --monitoring-type uwm
 
 EOF
 }
 
 # Check prerequisites
+# Extends common.sh check_prerequisites with additional tools needed for this script
 check_prerequisites() {
+    # Use common.sh check_prerequisites first (if it exists)
+    if declare -f common_check_prerequisites > /dev/null; then
+        if ! common_check_prerequisites; then
+            exit 1
+        fi
+    else
+        # Fallback: check basic prerequisites manually
+        if ! command -v oc &>/dev/null || ! command -v jq &>/dev/null; then
+            log_error "Missing required tools: oc or jq"
+            exit 1
+        fi
+        if ! oc whoami &>/dev/null; then
+            log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
+            exit 1
+        fi
+    fi
+    
     local missing_tools=()
     
-    # Check for required tools
-    for tool in oc jq base64; do
+    # Check for additional required tools
+    for tool in base64; do
         if ! command -v "$tool" &> /dev/null; then
             missing_tools+=("$tool")
         fi
@@ -693,83 +701,6 @@ configure_coo_monitoring_stack() {
     done
 }
 
-# Remove COO monitoring
-remove_coo_monitoring() {
-    log_info "Removing COO monitoring infrastructure..."
-    
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
-    
-    # Delete MonitoringStack
-    if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO MonitoringStack..."
-        oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true || log_warn "Failed to delete MonitoringStack"
-    fi
-    
-    # Delete COO manifests
-    log_info "Removing COO manifests..."
-    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/coo/monitoring/networkpolicy-coo.yaml" 2>/dev/null || true
-    
-    # Delete COO operator subscription (optional - may want to keep operator)
-    log_warn "COO operator subscription will not be removed automatically"
-    log_info "To remove COO operator: oc delete subscription cluster-observability-operator -n openshift-operators"
-    
-    log_success "COO monitoring infrastructure removed"
-}
-
-# Remove UWM monitoring
-remove_uwm_monitoring() {
-    log_info "Removing UWM monitoring infrastructure..."
-    
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    local project_root="$(dirname "$script_dir")"
-    
-    # Delete UWM manifests
-    log_info "Removing UWM manifests..."
-    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null || true
-    oc delete -f "${project_root}/k8s/monitoring/uwm/monitoring/networkpolicy-uwm.yaml" 2>/dev/null || true
-    
-    # Disable UWM in cluster-monitoring-config
-    log_info "Disabling User Workload Monitoring in cluster-monitoring-config..."
-    local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
-    
-    if [[ -n "$cluster_config" ]] && echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
-        # Set enableUserWorkload to false
-        local temp_config=$(mktemp)
-        echo "$cluster_config" > "$temp_config"
-        
-        # Replace enableUserWorkload: true with false
-        sed -i '' 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config" 2>/dev/null || \
-        sed -i 's/enableUserWorkload:[[:space:]]*true/enableUserWorkload: false/g' "$temp_config"
-        
-        local updated_config=$(cat "$temp_config")
-        
-        # Escape for JSON
-        updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
-        updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
-        
-        if oc patch configmap cluster-monitoring-config -n openshift-monitoring --type merge \
-            -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>/dev/null; then
-            log_success "Disabled UWM in cluster-monitoring-config"
-        else
-            log_warn "Failed to disable UWM in cluster-monitoring-config (may require cluster-admin)"
-            log_info "You may need to manually edit: oc -n openshift-monitoring edit configmap cluster-monitoring-config"
-        fi
-        
-        rm -f "$temp_config"
-    else
-        log_info "UWM not enabled in cluster-monitoring-config (or config doesn't exist)"
-    fi
-    
-    # Delete user-workload-monitoring-config
-    oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring 2>/dev/null || true
-    
-    log_success "UWM monitoring infrastructure removed"
-}
-
 # Deploy monitoring infrastructure
 deploy_monitoring() {
     # Check OpenShift connectivity
@@ -796,10 +727,21 @@ deploy_monitoring() {
             return 0
         fi
         
+        # Delegate to deploy-monitoring.sh for removal
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local deploy_monitoring_script="${script_dir}/deploy-monitoring.sh"
+        
+        if [[ ! -f "$deploy_monitoring_script" ]]; then
+            log_error "deploy-monitoring.sh not found"
+            return 1
+        fi
+        
         if [[ "$current_type" == "coo" ]]; then
-            remove_coo_monitoring
+            "$deploy_monitoring_script" --remove-monitoring coo -n "$NAMESPACE"
         elif [[ "$current_type" == "uwm" ]]; then
-            remove_uwm_monitoring
+            "$deploy_monitoring_script" --remove-monitoring uwm -n "$NAMESPACE"
+        elif [[ "$current_type" == "both" ]]; then
+            "$deploy_monitoring_script" --remove-monitoring all -n "$NAMESPACE"
         fi
         return 0
     fi
@@ -808,10 +750,19 @@ deploy_monitoring() {
     if [[ "$current_type" != "none" ]] && [[ "$current_type" != "$MONITORING_TYPE" ]]; then
         log_warn "Detected $current_type monitoring, but requested $MONITORING_TYPE"
         log_info "Removing existing $current_type monitoring before installing $MONITORING_TYPE..."
-        if [[ "$current_type" == "coo" ]]; then
-            remove_coo_monitoring
-        elif [[ "$current_type" == "uwm" ]]; then
-            remove_uwm_monitoring
+        
+        # Delegate to deploy-monitoring.sh for removal
+        local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local deploy_monitoring_script="${script_dir}/deploy-monitoring.sh"
+        
+        if [[ -f "$deploy_monitoring_script" ]]; then
+            if [[ "$current_type" == "coo" ]]; then
+                "$deploy_monitoring_script" --remove-monitoring coo -n "$NAMESPACE"
+            elif [[ "$current_type" == "uwm" ]]; then
+                "$deploy_monitoring_script" --remove-monitoring uwm -n "$NAMESPACE"
+            elif [[ "$current_type" == "both" ]]; then
+                "$deploy_monitoring_script" --remove-monitoring all -n "$NAMESPACE"
+            fi
         fi
         sleep 10  # Wait a bit before installing new type
     fi
@@ -1628,6 +1579,50 @@ restart_deployment() {
     fi
 }
 
+# Show deployment status
+show_status() {
+    log_info "Checking EIP Monitor deployment status..."
+    
+    # Check namespace
+    if ! oc get namespace "$NAMESPACE" &>/dev/null; then
+        log_warn "Namespace '$NAMESPACE' does not exist"
+        return 1
+    fi
+    
+    # Check deployment
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deployment:"
+        oc get deployment eip-monitor -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas,UP-TO-DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp"
+        
+        # Show image version
+        local image=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+        log_info "Image: $image"
+        
+        # Check pods
+        log_info ""
+        log_info "Pods:"
+        oc get pods -n "$NAMESPACE" -l app=eip-monitor -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp"
+        
+        # Check service
+        if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "Service:"
+            oc get service eip-monitor -n "$NAMESPACE"
+        fi
+        
+        # Check if pods are ready
+        local ready_pods=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        if [[ "$ready_pods" -gt 0 ]]; then
+            log_success "Deployment is running ($ready_pods pod(s) running)"
+        else
+            log_warn "No running pods found"
+        fi
+    else
+        log_warn "Deployment 'eip-monitor' not found in namespace '$NAMESPACE'"
+        return 1
+    fi
+}
+
 # Show logs
 show_logs() {
     if ! oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
@@ -1683,20 +1678,34 @@ cleanup_monitoring() {
     log_info "🗑️  Step 3: Removing monitoring infrastructure..."
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     
-    # Detect and remove both COO and UWM if present
+    # Delegate to deploy-monitoring.sh for cleanup (consistent with Grafana cleanup)
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local deploy_monitoring_script="${script_dir}/deploy-monitoring.sh"
+    
+    if [[ ! -f "$deploy_monitoring_script" ]]; then
+        log_warn "deploy-monitoring.sh not found, skipping monitoring cleanup"
+        return 0
+    fi
+    
+    # Detect current monitoring type to determine what to remove
     local current_type=$(detect_current_monitoring_type)
     
-    if [[ "$current_type" == "coo" ]]; then
-        log_info "Removing COO monitoring infrastructure..."
-        remove_coo_monitoring
+    if [[ "$current_type" == "none" ]]; then
+        log_info "No monitoring infrastructure detected, skipping cleanup"
+        return 0
+    elif [[ "$current_type" == "coo" ]]; then
+        log_info "Detected COO monitoring, removing via deploy-monitoring.sh..."
+        "$deploy_monitoring_script" --remove-monitoring coo -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
     elif [[ "$current_type" == "uwm" ]]; then
-        log_info "Removing UWM monitoring infrastructure..."
-        remove_uwm_monitoring
+        log_info "Detected UWM monitoring, removing via deploy-monitoring.sh..."
+        "$deploy_monitoring_script" --remove-monitoring uwm -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
+    elif [[ "$current_type" == "both" ]]; then
+        log_info "Detected both COO and UWM monitoring, removing all via deploy-monitoring.sh..."
+        "$deploy_monitoring_script" --remove-monitoring all -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
     else
-        log_info "No monitoring infrastructure detected, but cleaning up any remaining resources..."
-        # Try to clean up both types just in case
-        remove_coo_monitoring 2>/dev/null || true
-        remove_uwm_monitoring 2>/dev/null || true
+        log_warn "Unknown monitoring type detected: $current_type"
+        log_info "Attempting to remove all monitoring types..."
+        "$deploy_monitoring_script" --remove-monitoring all -n "$NAMESPACE" 2>&1 | grep -v "^$" || true
     fi
     
     log_success "Monitoring infrastructure removed"
@@ -1955,38 +1964,23 @@ parse_args() {
                 NAMESPACE="$2"
                 shift 2
                 ;;
-            --monitoring-type)
+            --monitoring)
+                WITH_MONITORING="true"
+                if [[ $# -lt 2 ]] || [[ "$2" != "coo" && "$2" != "uwm" && "$2" != "all" ]]; then
+                    log_error "Invalid or missing monitoring type. Use: --monitoring <coo|uwm|all>"
+                    exit 1
+                fi
                 MONITORING_TYPE="$2"
                 shift 2
                 ;;
-            --remove-monitoring)
-                REMOVE_MONITORING="true"
-                shift
-                ;;
-            --all)
-                CLEAN_ALL="true"
-                shift
-                ;;
-            --log-level)
-                LOG_LEVEL="$2"
-                shift 2
-                ;;
-            --skip-build)
-                SKIP_BUILD="true"
-                shift
-                ;;
-            --quay-image)
-                QUAY_IMAGE="$2"
-                shift 2
-                ;;
-            --with-monitoring)
-                WITH_MONITORING="true"
-                shift
-                # Check if next argument is a monitoring type (coo or uwm)
-                if [[ $# -gt 0 ]] && [[ "$1" == "coo" || "$1" == "uwm" ]]; then
-                    MONITORING_TYPE="$1"
-                    shift
+            --grafana)
+                WITH_GRAFANA="true"
+                if [[ $# -lt 2 ]] || [[ "$2" != "coo" && "$2" != "uwm" ]]; then
+                    log_error "Invalid or missing Grafana type. Use: --grafana <coo|uwm>"
+                    exit 1
                 fi
+                GRAFANA_TYPE="$2"
+                shift 2
                 ;;
             -h|--help)
                 show_usage
@@ -2033,7 +2027,17 @@ main() {
             restart_deployment
             ;;
         monitoring)
-            deploy_monitoring
+            log_warn "The 'monitoring' command has been removed."
+            log_info "Please use deploy-monitoring.sh instead:"
+            log_info "  ./scripts/deploy-monitoring.sh --monitoring-type coo"
+            log_info "  ./scripts/deploy-monitoring.sh --monitoring-type uwm"
+            log_info ""
+            log_info "Or use 'all --monitoring' to deploy eip-monitor with monitoring:"
+            log_info "  $0 all -r quay.io/myorg --monitoring coo"
+            exit 1
+            ;;
+        status)
+            show_status
             ;;
         all)
             # Skip build if requested or if using --quay-image (implies using existing image)
@@ -2055,10 +2059,35 @@ main() {
                 push_image
             fi
             deploy
-            # Deploy monitoring if requested
+            # Deploy monitoring if requested (delegate to deploy-monitoring.sh)
             if [[ "$WITH_MONITORING" == "true" ]]; then
-                log_info "Deploying monitoring infrastructure..."
-                deploy_monitoring
+                if [[ -z "$MONITORING_TYPE" ]]; then
+                    log_error "Monitoring type is required. Use: --monitoring <coo|uwm|all>"
+                    exit 1
+                fi
+                if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]] && [[ "$MONITORING_TYPE" != "all" ]]; then
+                    log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo', 'uwm', or 'all'"
+                    exit 1
+                fi
+                log_info "Deploying monitoring infrastructure via deploy-monitoring.sh..."
+                local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                local project_root="$(dirname "$script_dir")"
+                "${project_root}/scripts/deploy-monitoring.sh" --monitoring-type "$MONITORING_TYPE" -n "$NAMESPACE"
+            fi
+            # Deploy Grafana if requested (delegate to deploy-grafana.sh)
+            if [[ "$WITH_GRAFANA" == "true" ]]; then
+                if [[ -z "$GRAFANA_TYPE" ]]; then
+                    log_error "Grafana type is required. Use: --grafana <coo|uwm>"
+                    exit 1
+                fi
+                if [[ "$GRAFANA_TYPE" != "coo" ]] && [[ "$GRAFANA_TYPE" != "uwm" ]]; then
+                    log_error "Invalid Grafana type: $GRAFANA_TYPE. Must be 'coo' or 'uwm'"
+                    exit 1
+                fi
+                log_info "Deploying Grafana dashboards via deploy-grafana.sh..."
+                local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                local project_root="$(dirname "$script_dir")"
+                "${project_root}/scripts/deploy-grafana.sh" --monitoring-type "$GRAFANA_TYPE" -n "$NAMESPACE"
             fi
             ;;
         test)
