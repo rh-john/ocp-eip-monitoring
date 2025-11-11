@@ -124,3 +124,34 @@ check_prerequisites() {
     return 0
 }
 
+# Find ThanosQuerier pod in a namespace
+# Tries multiple selectors in order: COO-specific labels, standard Thanos labels, name pattern
+# Usage: find_thanosquerier_pod <namespace>
+# Returns: pod name or empty string if not found
+find_thanosquerier_pod() {
+    local namespace=$1
+    local thanos_pod=""
+    
+    if [[ -z "$namespace" ]]; then
+        log_error "find_thanosquerier_pod: namespace argument required"
+        return 1
+    fi
+    
+    # First try: COO-specific labels (most reliable for COO ThanosQuerier)
+    # COO uses: app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier
+    thanos_pod=$(oc get pods -n "$namespace" -l app.kubernetes.io/managed-by=observability-operator,app.kubernetes.io/part-of=ThanosQuerier --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    
+    # Fallback: standard Thanos label
+    if [[ -z "$thanos_pod" ]]; then
+        thanos_pod=$(oc get pods -n "$namespace" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+    fi
+    
+    # Fallback: try by name pattern (for cases where labels aren't set correctly)
+    if [[ -z "$thanos_pod" ]]; then
+        thanos_pod=$(oc get pods -n "$namespace" --no-headers 2>/dev/null | grep -E "thanos.*querier|querier.*thanos" | awk '{print $1}' | head -1)
+    fi
+    
+    # Return pod name (empty string if not found)
+    echo "$thanos_pod"
+}
+
