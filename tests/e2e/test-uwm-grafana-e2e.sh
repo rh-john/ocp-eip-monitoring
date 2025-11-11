@@ -428,12 +428,12 @@ test_grafana_dashboards() {
         log_info "Deployed dashboards:"
         oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print "  - " $1}' || true
         
-        # Check a few key dashboards
+        # Check a few key dashboards (using actual metadata.name from YAML files)
         local key_dashboards=(
-            "grafana-dashboard"
-            "grafana-dashboard-eip-distribution"
-            "grafana-dashboard-cpic-health"
-            "grafana-dashboard-node-performance"
+            "eip-monitoring-dashboard"
+            "eip-distribution-heatmap"
+            "cpic-health-status"
+            "node-performance-utilization"
         )
         
         local found_key_dashboards=0
