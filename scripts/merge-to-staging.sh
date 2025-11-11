@@ -2,7 +2,7 @@
 #
 # Merge Feature Branches to Staging
 # 
-# This script merges all feature branches (dev, grafana, monitoring) into staging
+# This script merges all feature branches (eip-monitor, dev, grafana, monitoring) into staging
 # and triggers the CI/CD pipeline for integration testing and container builds.
 #
 # Usage: ./scripts/merge-to-staging.sh [options]
@@ -21,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 # Configuration
-FEATURE_BRANCHES=("dev" "grafana" "monitoring")
+FEATURE_BRANCHES=("eip-monitor" "dev" "grafana" "monitoring")
 TARGET_BRANCH="staging"
 DRY_RUN=false
 SKIP_TESTS=false
@@ -67,14 +67,15 @@ Options:
   --help, -h         Show this help message
 
 Feature Branches:
-  - dev       (EIP monitoring application + COO/UWM support)
-  - grafana   (Grafana dashboards and deployment)
-  - monitoring  (COO monitoring infrastructure - may be in dev)
+  - eip-monitor  (EIP monitoring tool: src/, k8s-manifests.yaml, build-and-deploy.sh)
+  - dev          (General development and integration work)
+  - grafana      (Grafana dashboards and deployment)
+  - monitoring   (COO monitoring infrastructure)
 
 Workflow:
   1. Fetch all branches
   2. Switch to staging branch
-  3. Merge feature branches in order (dev → grafana → monitoring)
+  3. Merge feature branches in order (eip-monitor → dev → grafana → monitoring)
   4. Resolve conflicts (if any)
   5. Run tests (optional)
   6. Push to remote (triggers CI/CD pipeline)
