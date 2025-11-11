@@ -345,12 +345,23 @@ test_grafana_deployment() {
     
     # Step 7: Verify Grafana RBAC
     log_test "Step 7: Verifying Grafana RBAC..."
-    if oc get clusterrolebinding grafana-prometheus -n "$NAMESPACE" &>/dev/null || \
-       oc get clusterrolebinding grafana-prometheus 2>/dev/null | grep -q "grafana-prometheus"; then
-        log_success "Grafana RBAC (ClusterRoleBinding) exists"
+    # For UWM, the ClusterRoleBinding is named grafana-prometheus-eip-monitoring
+    if oc get clusterrolebinding grafana-prometheus-eip-monitoring &>/dev/null; then
+        log_success "Grafana RBAC (ClusterRoleBinding grafana-prometheus-eip-monitoring) exists"
         ((TESTS_PASSED++)) || true
+        
+        # Also verify the ServiceAccount exists
+        if oc get serviceaccount grafana-prometheus -n "$NAMESPACE" &>/dev/null; then
+            log_success "Grafana ServiceAccount (grafana-prometheus) exists"
+            ((TESTS_PASSED++)) || true
+        else
+            log_warn "Grafana ServiceAccount not found"
+            ((TESTS_WARNED++)) || true
+        fi
     else
-        log_warn "Grafana RBAC not found (may be optional)"
+        log_warn "Grafana RBAC (ClusterRoleBinding grafana-prometheus-eip-monitoring) not found"
+        log_info "Checking for alternative RBAC names..."
+        oc get clusterrolebinding 2>/dev/null | grep -i grafana || true
         ((TESTS_WARNED++)) || true
     fi
 }
