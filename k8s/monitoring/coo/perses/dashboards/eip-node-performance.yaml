@@ -202,3 +202,4 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/node-cpic-status"
+

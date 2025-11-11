@@ -292,3 +292,4 @@ spec:
             height: 6
             content:
               $ref: "#/spec/panels/cpic-pending-duration"
+
