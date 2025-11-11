@@ -142,7 +142,11 @@ check_merge_status() {
         log_error "Cannot checkout $TARGET_BRANCH branch"
         exit 1
     }
-    git pull origin "$TARGET_BRANCH" &>/dev/null || true
+    # Use fetch + merge instead of pull to avoid rebase (git merge never rebases)
+    git fetch origin "$TARGET_BRANCH" &>/dev/null || true
+    if ! git merge-base --is-ancestor "origin/$TARGET_BRANCH" "$TARGET_BRANCH" 2>/dev/null; then
+        git merge "origin/$TARGET_BRANCH" --no-ff &>/dev/null || true
+    fi
     
     echo ""
     log_info "Branches to merge into $TARGET_BRANCH:"
@@ -381,11 +385,20 @@ perform_merge() {
         git checkout "$TARGET_BRANCH"
     fi
     
-    # Ensure staging is up to date
+    # Ensure staging is up to date (use fetch + merge instead of pull to avoid rebase)
     log_info "Updating $TARGET_BRANCH from remote..."
-    git pull origin "$TARGET_BRANCH" || {
-        log_warn "Could not pull $TARGET_BRANCH, continuing with local version"
+    git fetch origin "$TARGET_BRANCH" || {
+        log_warn "Could not fetch $TARGET_BRANCH, continuing with local version"
     }
+    # Merge remote changes if any (git merge never rebases, unlike git pull)
+    if git merge-base --is-ancestor "origin/$TARGET_BRANCH" "$TARGET_BRANCH" 2>/dev/null; then
+        log_info "$TARGET_BRANCH is up to date with remote"
+    else
+        log_info "Merging remote changes into $TARGET_BRANCH..."
+        git merge "origin/$TARGET_BRANCH" --no-ff -m "Update $TARGET_BRANCH from remote" || {
+            log_warn "Could not merge remote $TARGET_BRANCH, continuing with local version"
+        }
+    fi
     
     # Merge branches in order
     local merge_failed=false
