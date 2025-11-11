@@ -286,13 +286,77 @@ test_coo() {
     fi
     
     # 10. Check ServiceMonitor discovery in Prometheus
+    # This is a critical check - ServiceMonitor must be discovered for scraping to work
+    # Known issue: COO Prometheus sometimes doesn't discover ServiceMonitors immediately
+    # See docs/COO_SERVICEMONITOR_DISCOVERY_ISSUE.md for details
     log_test "10. Checking ServiceMonitor discovery in Prometheus..."
     if [[ -n "$prom_pod" ]]; then
+        # Check 1: ServiceMonitor in Prometheus configuration file
         config_check=$(oc exec -n "$NAMESPACE" "$prom_pod" -- cat /etc/prometheus/config_out/prometheus.env.yaml 2>/dev/null | grep -i "eip-monitor" || echo "")
         if [[ -n "$config_check" ]]; then
-            log_success "ServiceMonitor discovered by Prometheus"
+            log_success "ServiceMonitor found in Prometheus configuration"
+            
+            # Check 2: Verify MonitoringStack resourceSelector matches ServiceMonitor labels
+            # This is critical - if resourceSelector doesn't match, ServiceMonitor won't be discovered
+            if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
+                local resource_selector=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.spec.resourceSelector.matchLabels}' 2>/dev/null || echo "{}")
+                local app_match=$(echo "$resource_selector" | jq -r '.app' 2>/dev/null || echo "")
+                
+                if [[ "$app_match" == "eip-monitor" ]]; then
+                    log_success "MonitoringStack resourceSelector matches ServiceMonitor labels (app=eip-monitor)"
+                else
+                    log_warn "MonitoringStack resourceSelector may not match ServiceMonitor"
+                    log_info "  Expected: app=eip-monitor"
+                    log_info "  Found: app=$app_match"
+                    log_info "  This can prevent ServiceMonitor discovery"
+                    log_info "  Fix: Update MonitoringStack resourceSelector to match ServiceMonitor labels"
+                fi
+            fi
+            
+            # Check 3: Verify ServiceMonitor labels match what Prometheus expects
+            local sm_labels=$(oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" -o jsonpath='{.metadata.labels}' 2>/dev/null || echo "{}")
+            local sm_app=$(echo "$sm_labels" | jq -r '.app' 2>/dev/null || echo "")
+            if [[ "$sm_app" == "eip-monitor" ]]; then
+                log_success "ServiceMonitor has correct labels (app=eip-monitor)"
+            else
+                log_warn "ServiceMonitor labels may not match Prometheus selector"
+                log_info "  ServiceMonitor labels: $sm_labels"
+                log_info "  Prometheus expects: app=eip-monitor"
+            fi
+            
+            # Check 4: Verify scrape configs exist (ServiceMonitor in config doesn't guarantee targets)
+            # COO creates jobs with pattern: serviceMonitor/namespace/name/0
+            local prom_config=$(oc exec -n "$NAMESPACE" "$prom_pod" -- curl -s "http://localhost:9090/api/v1/status/config" 2>/dev/null | jq -r '.data.yaml' 2>/dev/null || echo "")
+            if [[ -n "$prom_config" ]]; then
+                local eip_jobs=$(echo "$prom_config" | grep -E "^\s+- job_name:" | grep -iE "eip|serviceMonitor.*eip" || echo "")
+                if [[ -n "$eip_jobs" ]]; then
+                    log_success "eip-monitor scrape job found in Prometheus config"
+                else
+                    log_warn "ServiceMonitor in config but no scrape job created yet"
+                    log_info "Prometheus may need to evaluate the ServiceMonitor"
+                fi
+            fi
         else
             log_error "ServiceMonitor not found in Prometheus configuration"
+            log_info "This means Prometheus hasn't discovered the ServiceMonitor yet"
+            log_info ""
+            log_info "Known issue: COO Prometheus sometimes doesn't discover ServiceMonitors immediately"
+            log_info "See docs/COO_SERVICEMONITOR_DISCOVERY_ISSUE.md for details"
+            log_info ""
+            log_info "Possible causes:"
+            log_info "  1. MonitoringStack resourceSelector doesn't match ServiceMonitor labels"
+            log_info "  2. Prometheus was started before ServiceMonitor was created"
+            log_info "  3. COO operator hasn't reconciled yet"
+            log_info ""
+            log_info "Troubleshooting:"
+            log_info "  1. Check MonitoringStack resourceSelector:"
+            log_info "     oc get monitoringstack eip-monitoring-stack -n $NAMESPACE -o jsonpath='{.spec.resourceSelector}'"
+            log_info "  2. Check ServiceMonitor labels:"
+            log_info "     oc get servicemonitor eip-monitor-coo -n $NAMESPACE -o jsonpath='{.metadata.labels}'"
+            log_info "  3. Restart Prometheus to force discovery:"
+            log_info "     ./scripts/fix-prometheus-discovery.sh"
+            log_info "  4. Check Prometheus logs:"
+            log_info "     oc logs $prom_pod -n $NAMESPACE --tail=100 | grep -i servicemonitor"
         fi
     else
         log_warn "Cannot check Prometheus config - pod not found"
@@ -301,6 +365,7 @@ test_coo() {
     # 11. Check Prometheus targets
     # NOTE: /api/v1/targets is Prometheus-specific - ThanosQuerier doesn't expose this endpoint
     # We must query Prometheus directly for targets, not ThanosQuerier
+    # This verifies that ServiceMonitor discovery resulted in actual scrape targets
     # Following pattern from verify-prometheus-metrics.sh: use oc exec with curl/wget
     log_test "11. Checking Prometheus targets..."
     
@@ -320,7 +385,7 @@ test_coo() {
         if [[ -n "$eip_targets" ]]; then
             health=$(echo "$eip_targets" | jq -r '.health' 2>/dev/null | head -1)
             if [[ "$health" == "up" ]]; then
-                log_success "eip-monitor target is healthy"
+                log_success "eip-monitor target is healthy (ServiceMonitor discovery working)"
             else
                 log_error "eip-monitor target health: $health"
                 error_msg=$(echo "$eip_targets" | jq -r '.lastError' 2>/dev/null | head -1)
@@ -330,6 +395,16 @@ test_coo() {
             fi
         else
             log_error "No eip-monitor targets found in Prometheus"
+            log_info "This indicates ServiceMonitor discovery failed or targets not created yet"
+            log_info "Even if ServiceMonitor is in config, targets may not exist if:"
+            log_info "  1. Service has no endpoints"
+            log_info "  2. Prometheus hasn't evaluated the ServiceMonitor yet"
+            log_info "  3. ServiceMonitor selector doesn't match service labels"
+            log_info ""
+            log_info "Check service endpoints:"
+            log_info "  oc get endpoints eip-monitor -n $NAMESPACE"
+            log_info "Check service labels match ServiceMonitor selector:"
+            log_info "  oc get service eip-monitor -n $NAMESPACE -o jsonpath='{.metadata.labels}'"
         fi
     else
         if [[ -z "$prom_pod" ]]; then
