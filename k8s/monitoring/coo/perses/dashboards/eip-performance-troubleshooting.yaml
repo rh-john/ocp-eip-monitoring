@@ -1,0 +1,295 @@
+---
+# EIP Performance & Troubleshooting Dashboard (Perses)
+# API performance, scrape duration, assignment rates, error analysis
+apiVersion: perses.dev/v1alpha1
+kind: PersesDashboard
+metadata:
+  name: eip-performance-troubleshooting
+  namespace: openshift-operators
+  labels:
+    app: eip-monitor
+    monitoring: coo
+    coo: eip-monitoring
+spec:
+  display:
+    name: "EIP Performance & Troubleshooting"
+    description: "API performance, scrape duration, assignment rates, and error analysis"
+  duration: 6h
+  refreshInterval: 30s
+  variables: []
+  panels:
+    api-response-time:
+      kind: Panel
+      spec:
+        display:
+          name: "API Response Time"
+          description: "API response time by operation"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'api_response_time_seconds'
+                  seriesNameFormat: "{{operation}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=api_response_time_seconds&g0.tab=0
+            tooltip: View query in Prometheus
+    api-success-rate:
+      kind: Panel
+      spec:
+        display:
+          name: "API Success Rate"
+          description: "API success rate percentage by operation"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'api_success_rate_percent'
+                  seriesNameFormat: "{{operation}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=api_success_rate_percent&g0.tab=0
+            tooltip: View query in Prometheus
+    api-calls-total:
+      kind: Panel
+      spec:
+        display:
+          name: "API Call Volume"
+          description: "Total API calls by operation and status"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'api_calls_total'
+                  seriesNameFormat: "{{operation}} - {{status}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=api_calls_total&g0.tab=0
+            tooltip: View query in Prometheus
+    scrape-duration:
+      kind: Panel
+      spec:
+        display:
+          name: "Scrape Duration"
+          description: "Time to complete metrics collection"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_scrape_duration_seconds'
+                  seriesNameFormat: "Scrape Duration"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_scrape_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
+    assignment-rates:
+      kind: Panel
+      spec:
+        display:
+          name: "Assignment Rates"
+          description: "EIP assignment and unassignment rates per minute"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_assignment_rate_per_minute'
+                  seriesNameFormat: "Assignment Rate"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'eip_unassignment_rate_per_minute'
+                  seriesNameFormat: "Unassignment Rate"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=eip_assignment_rate_per_minute&g0.tab=0
+            tooltip: View query in Prometheus
+    error-correlation:
+      kind: Panel
+      spec:
+        display:
+          name: "Error Correlation"
+          description: "CPIC errors, API failures, and nodes with errors"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(cpic_error_total)'
+                  seriesNameFormat: "CPIC Errors"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(eip_nodes_with_errors_total)'
+                  seriesNameFormat: "Nodes with Errors"
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'sum(api_calls_total{status="error"})'
+                  seriesNameFormat: "API Errors"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=sum%28cpic_error_total%29&g0.tab=0
+            tooltip: View query in Prometheus
+    cpic-error-duration:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Error Duration"
+          description: "Time CPIC resources spend in error state"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_error_duration_seconds'
+                  seriesNameFormat: "{{resource_name}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_error_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
+    cpic-pending-duration:
+      kind: Panel
+      spec:
+        display:
+          name: "CPIC Pending Duration"
+          description: "Time CPIC resources spend in pending state"
+        plugin:
+          kind: TimeSeriesChart
+          spec: {}
+        queries:
+          - kind: TimeSeriesQuery
+            spec:
+              plugin:
+                kind: PrometheusTimeSeriesQuery
+                spec:
+                  datasource:
+                    kind: PrometheusDatasource
+                    name: prometheus-coo
+                  query: 'cpic_pending_duration_seconds'
+                  seriesNameFormat: "{{resource_name}}"
+        links:
+          - title: Inspect in Prometheus
+            url: https://thanos-querier-coo-eip-monitoring.apps.oselzqsr.swedencentral.aroapp.io/graph?g0.expr=cpic_pending_duration_seconds&g0.tab=0
+            tooltip: View query in Prometheus
+  layouts:
+    - kind: Grid
+      spec:
+        items:
+          - x: 0
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/api-response-time"
+          - x: 8
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/api-success-rate"
+          - x: 16
+            "y": 0
+            width: 8
+            height: 6
+            content:
+              $ref: "#/spec/panels/scrape-duration"
+          - x: 0
+            "y": 6
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/api-calls-total"
+          - x: 12
+            "y": 6
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/assignment-rates"
+          - x: 0
+            "y": 12
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/error-correlation"
+          - x: 12
+            "y": 12
+            width: 12
+            height: 6
+            content:
+              $ref: "#/spec/panels/cpic-error-duration"
+          - x: 0
+            "y": 18
+            width: 24
+            height: 6
+            content:
+              $ref: "#/spec/panels/cpic-pending-duration"
+

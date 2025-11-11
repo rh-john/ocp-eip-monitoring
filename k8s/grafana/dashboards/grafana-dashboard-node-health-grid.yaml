@@ -1,0 +1,464 @@
+---
+# Node Health Status Grid Dashboard
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-node-health-grid
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+{
+  "id": null,
+  "title": "Node Health Status Grid",
+  "tags": [
+    "eip",
+    "nodes",
+    "health",
+    "status",
+    "grid"
+  ],
+  "style": "dark",
+  "timezone": "browser",
+  "refresh": "30s",
+  "schemaVersion": 16,
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Node Health Status Grid",
+      "type": "table",
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (sum(node_eip_assigned_total))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "{{node}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(node_eip_primary_total)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Primary - {{node}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(node_eip_secondary_total)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Secondary - {{node}}",
+          "refId": "C"
+        },
+        {
+          "expr": "sum by (node) (sum(node_cpic_success_total))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "CPIC Success - {{node}}",
+          "refId": "D"
+        },
+        {
+          "expr": "sum by (node) (sum(node_cpic_error_total))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "CPIC Error - {{node}}",
+          "refId": "E"
+        },
+        {
+          "expr": "sum by (node) (sum(node_cpic_pending_total))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "CPIC Pending - {{node}}",
+          "refId": "F"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "center",
+            "displayMode": "color-background",
+            "inspect": false,
+            "cellOptions": {
+              "type": "color-background"
+            }
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "Healthy",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "Warning",
+                  "color": "yellow"
+                },
+                "2": {
+                  "text": "Critical",
+                  "color": "red"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 1,
+                "color": "yellow"
+              },
+              {
+                "value": 5,
+                "color": "red"
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "node"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 250
+              },
+              {
+                "id": "custom.displayMode",
+                "value": "color-text"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "EIPs Assigned"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "blue"
+                    },
+                    {
+                      "value": 10,
+                      "color": "green"
+                    },
+                    {
+                      "value": 20,
+                      "color": "yellow"
+                    },
+                    {
+                      "value": 30,
+                      "color": "orange"
+                    },
+                    {
+                      "value": 40,
+                      "color": "red"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "EIPs Assigned"
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "indexByName": {},
+            "renameByName": {
+              "Value #A": "EIPs Assigned",
+              "Value #B": "Primary EIPs",
+              "Value #C": "Secondary EIPs",
+              "Value #D": "CPIC Success",
+              "Value #E": "CPIC Errors",
+              "Value #F": "CPIC Pending"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Node Health Summary",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "count(count by (node) (node_eip_assigned_total))",
+          "legendFormat": "Total Nodes",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "blue"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Healthy Nodes",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "count(count by (node) (cpic_success_total > 0))",
+          "legendFormat": "Healthy",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Nodes with Errors",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "count(count by (node) (cpic_error_total > 0))",
+          "legendFormat": "With Errors",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "red"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Nodes Pending",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 12
+      },
+      "targets": [
+        {
+          "expr": "count(count by (node) (cpic_pending_total > 0))",
+          "legendFormat": "Pending",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "yellow"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Node Load Distribution",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (sum(node_eip_assigned_total))",
+          "legendFormat": "{{node}}",
+          "refId": "A",
+          "instant": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "value": null,
+                "color": "green"
+              },
+              {
+                "value": 10,
+                "color": "yellow"
+              },
+              {
+                "value": 20,
+                "color": "orange"
+              },
+              {
+                "value": 30,
+                "color": "red"
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      }
+    },
+    {
+      "id": 7,
+      "title": "CPIC Status by Node",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "expr": "sum by (node) (sum(cpic_success_total))",
+          "legendFormat": "{{node}} - Success",
+          "refId": "A",
+          "instant": false
+        },
+        {
+          "expr": "sum by (node) (sum(cpic_error_total))",
+          "legendFormat": "{{node}} - Error",
+          "refId": "B"
+        },
+        {
+          "expr": "sum by (node) (sum(cpic_pending_total))",
+          "legendFormat": "{{node}} - Pending",
+          "refId": "C"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true
+      }
+    }
+  ]
+}

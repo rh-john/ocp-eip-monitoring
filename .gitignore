@@ -1,2 +1,11 @@
 __pycache__/
+
+# Build hash files (used for change detection)
 .build-hash*
+
+# Debugging and fix scripts (not tracked)
+scripts/debug/
+
+# Local development notes and analysis (not published)
+.local/
+.cursor/

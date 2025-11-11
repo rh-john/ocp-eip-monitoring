@@ -1,0 +1,256 @@
+---
+# Enhanced EIP Tables Dashboard (Boom Table)
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: eip-enhanced-tables
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+spec:
+  instanceSelector:
+    matchLabels:
+      app: eip-monitor
+  json: |
+    {
+      "id": null,
+      "title": "Enhanced EIP Tables (Boom Table)",
+      "tags": ["eip", "table", "boom", "detailed"],
+      "style": "dark",
+      "timezone": "browser",
+      "refresh": "30s",
+      "schemaVersion": 16,
+      "version": 1,
+      "panels": [
+        {
+          "id": 1,
+          "title": "EIP Assignment Table with Thresholds",
+          "type": "table",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 0},
+          "targets": [
+            {
+              "expr": "sum(node_eip_assigned_total)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "{{node}}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "displayMode": "color-background",
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 10, "color": "yellow"},
+                  {"value": 20, "color": "orange"},
+                  {"value": 30, "color": "red"}
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {"id": "byName", "options": "node"},
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 300
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "Value"
+              }
+            ]
+          },
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Value": "EIPs Assigned",
+                  "node": "Node Name"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 2,
+          "title": "CPIC Status by Node (Multi-Column)",
+          "type": "table",
+          "gridPos": {"h": 10, "w": 24, "x": 0, "y": 10},
+          "targets": [
+            {
+              "expr": "sum by (node) (sum(cpic_success_total))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Success - {{node}}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (node) (sum(cpic_error_total))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Error - {{node}}",
+              "refId": "B"
+            },
+            {
+              "expr": "sum by (node) (sum(cpic_pending_total))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Pending - {{node}}",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "center",
+                "displayMode": "color-background",
+                "inspect": false
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "green"},
+                  {"value": 1, "color": "yellow"},
+                  {"value": 5, "color": "red"}
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "short"
+            }
+          },
+          "options": {
+            "showHeader": true,
+            "sortBy": []
+          },
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Success": "CPIC Success",
+                  "Error": "CPIC Errors",
+                  "Pending": "CPIC Pending"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": 3,
+          "title": "EIP Utilization Summary",
+          "type": "table",
+          "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+          "targets": [
+            {
+              "expr": "sum(eips_configured_total)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Configured",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(eips_assigned_total)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Assigned",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(eips_unassigned_total)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Unassigned",
+              "refId": "C"
+            },
+            {
+              "expr": "(sum(eips_assigned_total) / sum(eips_configured_total)) * 100",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Utilization %",
+              "refId": "D"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "center",
+                "displayMode": "color-background"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"value": null, "color": "blue"},
+                  {"value": 50, "color": "green"},
+                  {"value": 80, "color": "yellow"},
+                  {"value": 90, "color": "red"}
+                ]
+              },
+              "color": {
+                "mode": "thresholds"
+              },
+              "unit": "short"
+            },
+            "overrides": [
+              {
+                "matcher": {"id": "byName", "options": "Utilization %"},
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "percent"
+                  },
+                  {
+                    "id": "decimals",
+                    "value": 2
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "showHeader": true
+          },
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            }
+          ]
+        }
+      ]
+    }
+

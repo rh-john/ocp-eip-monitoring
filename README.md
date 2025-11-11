@@ -1,6 +1,6 @@
 # OpenShift EIP Monitoring
 
-A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources that exposes Prometheus metrics and alerts.
+Monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources. Exposes Prometheus metrics and alerts.
 
 ## Prerequisites
 
@@ -12,16 +12,15 @@ A monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CP
 
 ```bash
 # Build and deploy
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+./scripts/deploy-eip.sh all -r quay.io/your-registry
 
 # Or deploy with existing image
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+oc apply -f k8s/deployment/k8s-manifests.yaml
 ```
 
 ## Architecture
 
-The EIP monitoring solution integrates with OpenShift's User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
+Integrates with OpenShift User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
 
 ```mermaid
 graph TB
@@ -140,14 +139,13 @@ EOF
 ```bash
 git clone https://github.com/rh-john/ocp-eip-monitoring.git
 cd ocp-eip-monitoring
-./scripts/build-and-deploy.sh all -r quay.io/your-registry
+./scripts/deploy-eip.sh all -r quay.io/your-registry
 ```
 
 ### Method 2: Deploy with Pre-built Image
 ```bash
 oc new-project eip-monitoring
-oc apply -f k8s/k8s-manifests.yaml
-oc apply -f k8s/servicemonitor.yaml
+oc apply -f k8s/deployment/k8s-manifests.yaml
 ```
 
 ## Configuration
@@ -157,8 +155,11 @@ oc apply -f k8s/servicemonitor.yaml
 | `SCRAPE_INTERVAL` | Metrics collection interval (seconds) | `30` |
 | `PORT` | HTTP server port | `8080` |
 | `LOG_LEVEL` | Logging level | `INFO` |
+| `EIP_CAPACITY_PER_NODE` | Maximum EIPs per node for capacity calculations | `75` |
 
-## Key Metrics
+## Metrics
+
+Exposes metrics for EIP and CPIC monitoring. Core metrics:
 
 - `eips_configured_total` - Total configured EIPs
 - `eips_assigned_total` - Total assigned EIPs  
@@ -168,12 +169,22 @@ oc apply -f k8s/servicemonitor.yaml
 - `cpic_error_total` - Error CPIC resources
 - `node_eip_assigned_total` - EIPs assigned per node
 
-## Key Alerts
+Additional metrics include distribution fairness (Gini coefficient), health scores, API performance, and historical trends.
+
+See [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) for complete metrics catalog.
+
+## Alerts
+
+Alert rules for EIP and CPIC monitoring. Core alerts:
 
 - **EIPUtilizationCritical**: EIP utilization > 95%
 - **EIPNotAssigned**: Unassigned EIPs detected
 - **CPICErrors**: CPIC resources in error state
 - **ClusterEIPHealthCritical**: Cluster health score < 50
+
+Additional alerts cover distribution, capacity, API performance, node health, trends, and monitoring system status.
+
+See [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) for complete alert catalog.
 
 ## Usage
 
@@ -209,10 +220,7 @@ curl http://localhost:8080/metrics
 ./scripts/deploy-test-eips.sh redistribute
 ```
 
-**Note**: The deployment script intelligently handles changes:
-- **Preserves existing IPs**: When increasing distribution, existing IPs remain assigned and new ones are added
-- **Smart scaling**: Detects existing configurations and only updates what's needed
-- **Distribution changes**: Allows changing IP distribution without full reassignment
+**Note**: The deployment script preserves existing IPs when scaling and only updates what's needed.
 
 ### Verification
 ```bash
@@ -249,20 +257,68 @@ oc get prometheusrule eip-monitor-alerts -n eip-monitoring
 ocp-eip-monitoring/
 ├── src/metrics_server.py          # Core monitoring application
 ├── k8s/                           # Kubernetes manifests
-│   ├── k8s-manifests.yaml         # Deployment resources
-│   └── servicemonitor.yaml        # Prometheus configuration
+│   ├── deployment/
+│   │   └── k8s-manifests.yaml     # Deployment resources (includes Service, Deployment, RBAC, etc.)
+│   ├── monitoring/                # Monitoring infrastructure (COO/UWM)
+│   └── grafana/                   # Grafana dashboards and configuration
 ├── scripts/                       # Operational scripts
-│   ├── build-and-deploy.sh        # Build and deployment
-│   └── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
+│   ├── deploy-eip.sh              # Build and deployment
+│   ├── deploy-monitoring.sh       # Deploy monitoring infrastructure (COO/UWM)
+│   ├── deploy-grafana.sh          # Deploy Grafana operator and dashboards
+│   ├── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
+│   ├── test/
+│   │   ├── test-monitoring-deployment.sh  # Monitoring tests
+│   └── lib/                       # Shared script library
+│       └── common.sh              # Common functions (pod finding, logging, prerequisites)
+├── tests/                         # Test suites
+│   └── e2e/                       # End-to-end tests
+│       ├── test-monitoring-e2e.sh # E2E monitoring tests
+│       └── test-uwm-grafana-e2e.sh # E2E Grafana tests
 └── docs/                          # Documentation
     ├── CONTAINER_DEPLOYMENT.md    # Deployment guide
-    └── ENHANCED_METRICS_GUIDE.md  # Metrics reference
+    └── ENHANCED_METRICS_GUIDE.md  # Complete metrics and alerts reference (50+ metrics, 30+ alerts)
 ```
+
+## Scripts and Automation
+
+### Shared Library
+
+The project includes a shared library (`scripts/lib/common.sh`) that provides reusable functions for:
+- **Pod Finding**: Locate Prometheus, ThanosQuerier, and Grafana pods using multiple selector strategies
+- **Logging**: Consistent logging functions (`log_info`, `log_success`, `log_warn`, `log_error`)
+- **Prerequisites**: Check for required tools (`oc`, `jq`) and cluster connectivity
+- **Resource Waiting**: Wait for Kubernetes resources and pods to become ready
+- **Helper Functions**: `oc_cmd()` and `oc_cmd_silent()` for verbose mode handling
+
+**Usage in scripts:**
+```bash
+# Source the common library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
+# Use shared functions
+find_prometheus_pod "$NAMESPACE" "true"
+find_query_pod "$NAMESPACE" "true"
+check_prerequisites
+```
+
+### Key Scripts
+
+- **`scripts/deploy-monitoring.sh`**: Deploy COO or UWM monitoring infrastructure
+- **`scripts/deploy-grafana.sh`**: Deploy Grafana operator, instance, and dashboards
+- **`scripts/test/test-monitoring-deployment.sh`**: Monitoring verification
+- **`tests/e2e/test-monitoring-e2e.sh`**: End-to-end monitoring tests
+- **`tests/e2e/test-uwm-grafana-e2e.sh`**: End-to-end Grafana deployment tests
+
+All scripts use the shared `common.sh` library for consistent behavior and reduced code duplication.
 
 ## Documentation
 
-- **[Deployment Guide](docs/CONTAINER_DEPLOYMENT.md)** - Complete deployment instructions
-- **[Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md)** - All metrics and alerts
+- [Deployment Guide](docs/CONTAINER_DEPLOYMENT.md) - Deployment instructions
+- [Metrics Reference](docs/ENHANCED_METRICS_GUIDE.md) - Metrics and alerts catalog
+- [E2E Tests](tests/e2e/README.md) - End-to-end testing
+- [Grafana Dashboards](k8s/grafana/README.md) - Dashboard documentation
 
 ## License
 

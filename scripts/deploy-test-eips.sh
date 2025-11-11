@@ -3,6 +3,10 @@
 # Get script directory for proper path resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Source common functions (for remove_finalizers and other helpers)
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 #
 # deploy-test-eips.sh - Dynamic EgressIP deployment with auto-discovery
 #
@@ -32,7 +36,7 @@ set -e
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
+BLUE='\033[1;36m'  # Light blue (cyan)
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
@@ -1287,19 +1291,12 @@ JQ_EOF
             for cpic_name in "${failed_cpics[@]}"; do
                 log_info "Processing CPIC: $cpic_name (failed or stale)"
                 
-                # Check if CPIC has finalizers
-                local finalizers=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_name\") | .metadata.finalizers[]?" 2>/dev/null)
-                
-                if [ -n "$finalizers" ]; then
-                    # Remove finalizers
-                    log_info "Removing finalizers from $cpic_name..."
-                    if oc patch cloudprivateipconfig "$cpic_name" -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null; then
-                        removed_finalizers=$((removed_finalizers + 1))
-                    else
-                        log_warn "Failed to remove finalizers from $cpic_name"
-                        failed_delete=$((failed_delete + 1))
-                        continue
-                    fi
+                # Remove finalizers using common function (CPIC is cluster-scoped, so namespace is empty)
+                if remove_finalizers "cloudprivateipconfig" "" "$cpic_name"; then
+                    removed_finalizers=$((removed_finalizers + 1))
+                else
+                    failed_delete=$((failed_delete + 1))
+                    continue
                 fi
                 
                 # Force delete the CPIC
@@ -1431,6 +1428,683 @@ JQ_EOF
     fi
     
     log_success "Cleanup completed"
+}
+
+# Clean up malfunctioning EIPs using eip-toolkit
+cleanup_malfunctioning_eips() {
+    local dry_run="${1:-false}"
+    local node_name="${2:-}"
+    
+    check_prerequisites
+    
+    # If node name is specified, validate it exists
+    if [ -n "$node_name" ]; then
+        if ! oc get node "$node_name" &>/dev/null; then
+            log_error "Node '$node_name' not found in cluster"
+            return 1
+        fi
+        log_info "Filtering cleanup to node: $node_name"
+    fi
+    
+    # Check if eip-toolkit is available
+    if ! command -v ./eip-toolkit &> /dev/null && ! command -v eip-toolkit &> /dev/null; then
+        log_error "eip-toolkit not found. Please ensure eip-toolkit is in PATH or current directory"
+        return 1
+    fi
+    
+    # Determine eip-toolkit command path
+    local eip_toolkit_cmd=""
+    if [ -f "./eip-toolkit" ]; then
+        eip_toolkit_cmd="./eip-toolkit"
+    elif command -v eip-toolkit &> /dev/null; then
+        eip_toolkit_cmd="eip-toolkit"
+    else
+        log_error "eip-toolkit not found"
+        return 1
+    fi
+    
+    log_info "Detecting malfunctioning EIPs using eip-toolkit..."
+    
+    # Get malfunctioning EIPs
+    local malfunctioning_output
+    if malfunctioning_output=$($eip_toolkit_cmd monitor --list-malfunctioning eips 2>&1); then
+        # Parse output to extract EIP names
+        # The output format may vary, but typically includes EIP names
+        local malfunctioning_eips=()
+        
+        # Try to extract EIP names from the output
+        # This is a best-effort parsing - adjust based on actual eip-toolkit output format
+        while IFS= read -r line; do
+            # Skip empty lines and headers
+            [ -z "$line" ] && continue
+            
+            # Try multiple patterns to extract EIP names:
+            # 1. Lines containing "test-eip-" pattern
+            # 2. Lines that look like EIP resource names (alphanumeric with hyphens)
+            # 3. Lines containing IP addresses that might be referenced
+            
+            # Pattern 1: Direct EIP name match (test-eip-* or any egressip name)
+            if [[ "$line" =~ (test-eip-[a-z0-9-]+) ]]; then
+                local eip_name="${BASH_REMATCH[1]}"
+                # Verify it's a valid EIP name by checking if it exists
+                if oc get egressip "$eip_name" &>/dev/null; then
+                    malfunctioning_eips+=("$eip_name")
+                fi
+            # Pattern 2: Check if line contains any EIP name (look for common patterns)
+            elif [[ "$line" =~ (egressip|eip)[[:space:]]+([a-z0-9][a-z0-9-]*[a-z0-9]|[a-z0-9]) ]]; then
+                local eip_name="${BASH_REMATCH[2]}"
+                if oc get egressip "$eip_name" &>/dev/null; then
+                    malfunctioning_eips+=("$eip_name")
+                fi
+            fi
+        done <<< "$malfunctioning_output"
+        
+        # Also try to get all EIPs and match against the output
+        # This helps catch cases where eip-toolkit references EIPs indirectly
+        local all_eips=$(oc get egressip -o json 2>/dev/null | jq -r '.items[].metadata.name' 2>/dev/null || echo "")
+        if [ -n "$all_eips" ]; then
+            while IFS= read -r eip_name; do
+                [ -z "$eip_name" ] && continue
+                # Check if this EIP name appears in the malfunctioning output
+                if echo "$malfunctioning_output" | grep -q "$eip_name"; then
+                    # Check if already added
+                    local already_added=0
+                    for existing in "${malfunctioning_eips[@]}"; do
+                        if [ "$eip_name" = "$existing" ]; then
+                            already_added=1
+                            break
+                        fi
+                    done
+                    [ $already_added -eq 0 ] && malfunctioning_eips+=("$eip_name")
+                fi
+            done <<< "$all_eips"
+        fi
+        
+        # Also try to extract from JSON if eip-toolkit outputs JSON
+        if echo "$malfunctioning_output" | jq -e . &>/dev/null; then
+            # If output is JSON, try to extract EIP names
+            local json_eips=$(echo "$malfunctioning_output" | jq -r '.[]?.name // .[].metadata.name // .items[]?.metadata.name // empty' 2>/dev/null)
+            while IFS= read -r eip_name; do
+                [ -n "$eip_name" ] && [ "$eip_name" != "null" ] && malfunctioning_eips+=("$eip_name")
+            done <<< "$json_eips"
+        fi
+        
+        # Remove duplicates
+        local unique_eips=()
+        for eip in "${malfunctioning_eips[@]}"; do
+            local is_duplicate=0
+            for existing in "${unique_eips[@]}"; do
+                if [ "$eip" = "$existing" ]; then
+                    is_duplicate=1
+                    break
+                fi
+            done
+            [ $is_duplicate -eq 0 ] && unique_eips+=("$eip")
+        done
+        
+        # Filter by node if specified
+        if [ -n "$node_name" ] && [ ${#unique_eips[@]} -gt 0 ]; then
+            log_info "Filtering EIPs to those assigned to node: $node_name"
+            local filtered_eips=()
+            local eip_json=$(oc get egressip -o json 2>/dev/null || echo '{"items":[]}')
+            
+            for eip_name in "${unique_eips[@]}"; do
+                # Check if this EIP has any IPs assigned to the specified node
+                local eip_data=$(echo "$eip_json" | jq -r ".items[] | select(.metadata.name == \"$eip_name\")" 2>/dev/null)
+                
+                if [ -n "$eip_data" ]; then
+                    # Check status.items for node assignment
+                    local assigned_to_node=$(echo "$eip_data" | jq -r ".status.items[]? | select(.node == \"$node_name\") | .egressIP" 2>/dev/null)
+                    
+                    # Also check CPICs for this EIP's IPs assigned to the node
+                    local eip_ips=$(echo "$eip_data" | jq -r '.spec.egressIPs[]?' 2>/dev/null)
+                    local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+                    local has_cpic_on_node=0
+                    
+                    while IFS= read -r ip; do
+                        [ -z "$ip" ] && continue
+                        local cpic_node=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$ip\") | (.status.node // .spec.node // \"\")" 2>/dev/null)
+                        if [ "$cpic_node" = "$node_name" ]; then
+                            has_cpic_on_node=1
+                            break
+                        fi
+                    done <<< "$eip_ips"
+                    
+                    # Include EIP if it has IPs assigned to the node (either in EIP status or CPIC)
+                    if [ -n "$assigned_to_node" ] || [ $has_cpic_on_node -eq 1 ]; then
+                        filtered_eips+=("$eip_name")
+                    fi
+                fi
+            done
+            
+            unique_eips=("${filtered_eips[@]}")
+            log_info "Filtered to ${#unique_eips[@]} EIP(s) related to node $node_name"
+        fi
+        
+        if [ ${#unique_eips[@]} -eq 0 ]; then
+            if [ -n "$node_name" ]; then
+                log_info "No malfunctioning EIPs detected for node: $node_name"
+            else
+                log_success "No malfunctioning EIPs detected"
+            fi
+            echo ""
+            echo "eip-toolkit output:"
+            echo "$malfunctioning_output"
+            return 0
+        fi
+        
+        log_warn "Found ${#unique_eips[@]} malfunctioning EIP(s)"
+        if [ -n "$node_name" ]; then
+            log_warn "  (filtered to node: $node_name)"
+        fi
+        for eip in "${unique_eips[@]}"; do
+            log_warn "  - $eip"
+        done
+        
+        echo ""
+        echo "eip-toolkit output:"
+        echo "$malfunctioning_output"
+        echo ""
+        
+        if [ "$dry_run" = "true" ]; then
+            log_info "Dry run mode - would delete ${#unique_eips[@]} malfunctioning EIP(s)"
+            return 0
+        fi
+        
+        # Delete malfunctioning EIPs and related CPICs
+        log_info "Deleting ${#unique_eips[@]} malfunctioning EIP(s)"
+        if [ -n "$node_name" ]; then
+            log_info "  (and related CPICs on node: $node_name)"
+        fi
+        
+        local deleted_eips=0
+        local failed_eips=0
+        local deleted_cpics=0
+        local failed_cpics=0
+        
+        # Get CPIC JSON for node filtering
+        local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+        
+        for eip_name in "${unique_eips[@]}"; do
+            log_info "Processing EIP: $eip_name"
+            
+            # If node is specified, delete CPICs on that node first
+            if [ -n "$node_name" ]; then
+                local eip_data=$(oc get egressip "$eip_name" -o json 2>/dev/null)
+                if [ -n "$eip_data" ]; then
+                    local eip_ips=$(echo "$eip_data" | jq -r '.spec.egressIPs[]?' 2>/dev/null)
+                    
+                    while IFS= read -r ip; do
+                        [ -z "$ip" ] && continue
+                        
+                        # Check if this CPIC is assigned to the specified node
+                        local cpic_node=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$ip\") | (.status.node // .spec.node // \"\")" 2>/dev/null)
+                        
+                        if [ "$cpic_node" = "$node_name" ]; then
+                            log_info "  Deleting CPIC $ip (assigned to node $node_name)"
+                            
+                            # Remove finalizers if present (CPIC is cluster-scoped, so namespace is empty)
+                            remove_finalizers "cloudprivateipconfig" "" "$ip" || true
+                            
+                            if oc delete cloudprivateipconfig "$ip" --force --grace-period=0 &>/dev/null; then
+                                deleted_cpics=$((deleted_cpics + 1))
+                                log_success "  Deleted CPIC $ip"
+                            else
+                                failed_cpics=$((failed_cpics + 1))
+                                log_warn "  Failed to delete CPIC $ip"
+                            fi
+                        fi
+                    done <<< "$eip_ips"
+                fi
+            fi
+            
+            # Delete the EIP
+            log_info "  Deleting EIP: $eip_name"
+            if oc delete egressip "$eip_name" --force --grace-period=0 &>/dev/null; then
+                deleted_eips=$((deleted_eips + 1))
+                log_success "  Deleted EIP $eip_name"
+            else
+                failed_eips=$((failed_eips + 1))
+                log_warn "  Failed to delete EIP $eip_name"
+            fi
+        done
+        
+        echo ""
+        if [ $deleted_eips -gt 0 ]; then
+            log_success "Deleted $deleted_eips malfunctioning EIP(s)"
+        fi
+        if [ $failed_eips -gt 0 ]; then
+            log_warn "$failed_eips EIP(s) failed to delete"
+        fi
+        if [ $deleted_cpics -gt 0 ]; then
+            log_success "Deleted $deleted_cpics CPIC(s) from node $node_name"
+        fi
+        if [ $failed_cpics -gt 0 ]; then
+            log_warn "$failed_cpics CPIC(s) failed to delete"
+        fi
+        
+        return 0
+    else
+        log_error "Failed to run eip-toolkit monitor --list-malfunctioning eips"
+        log_error "Output: $malfunctioning_output"
+        return 1
+    fi
+}
+
+# Clean up malfunctioning CPICs using eip-toolkit
+cleanup_malfunctioning_cpics() {
+    local dry_run="${1:-false}"
+    local node_name="${2:-}"
+    
+    check_prerequisites
+    
+    # If node name is specified, validate it exists
+    if [ -n "$node_name" ]; then
+        if ! oc get node "$node_name" &>/dev/null; then
+            log_error "Node '$node_name' not found in cluster"
+            return 1
+        fi
+        log_info "Filtering cleanup to node: $node_name"
+    fi
+    
+    # Check if eip-toolkit is available
+    if ! command -v ./eip-toolkit &> /dev/null && ! command -v eip-toolkit &> /dev/null; then
+        log_error "eip-toolkit not found. Please ensure eip-toolkit is in PATH or current directory"
+        return 1
+    fi
+    
+    # Determine eip-toolkit command path
+    local eip_toolkit_cmd=""
+    if [ -f "./eip-toolkit" ]; then
+        eip_toolkit_cmd="./eip-toolkit"
+    elif command -v eip-toolkit &> /dev/null; then
+        eip_toolkit_cmd="eip-toolkit"
+    else
+        log_error "eip-toolkit not found"
+        return 1
+    fi
+    
+    log_info "Detecting malfunctioning CPICs using eip-toolkit..."
+    
+    # Get malfunctioning CPICs
+    # Try different command variations in case the syntax differs
+    local malfunctioning_output=""
+    local cmd_success=0
+    
+    # Try: monitor --list-malfunctioning-cpic (with hyphen)
+    if malfunctioning_output=$($eip_toolkit_cmd monitor --list-malfunctioning-cpic 2>&1); then
+        cmd_success=1
+    # Try: monitor --list-malfunctioning cpic (with space)
+    elif malfunctioning_output=$($eip_toolkit_cmd monitor --list-malfunctioning cpic 2>&1); then
+        cmd_success=1
+    # Try: monitor --list-malfunctioning cpics (plural)
+    elif malfunctioning_output=$($eip_toolkit_cmd monitor --list-malfunctioning cpics 2>&1); then
+        cmd_success=1
+    # Try: monitor --list-malfunctioning cpic --type cpic
+    elif malfunctioning_output=$($eip_toolkit_cmd monitor --list-malfunctioning cpic --type cpic 2>&1); then
+        cmd_success=1
+    # Try: monitor --list-malfunctioning --resource-type cpic
+    elif malfunctioning_output=$($eip_toolkit_cmd monitor --list-malfunctioning --resource-type cpic 2>&1); then
+        cmd_success=1
+    fi
+    
+    if [ $cmd_success -eq 1 ]; then
+        # Check if output indicates an actual error (command not found, invalid argument, etc.)
+        # But don't trigger fallback just because output mentions "EIP" - the command might be working correctly
+        if echo "$malfunctioning_output" | grep -qiE "unknown.*command|invalid.*argument|not.*recognized|command.*not.*found|usage:|help:"; then
+            # Actual command error - use fallback
+            log_warn "eip-toolkit command failed or not recognized"
+            log_info "Using cluster data to detect malfunctioning CPICs instead..."
+            
+            # Fallback: Use cluster data to find malfunctioning CPICs
+            local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+            
+            # Find CPICs without CloudResponseSuccess (similar to stale cleanup logic)
+            local jq_failed_file=$(mktemp)
+            cat > "$jq_failed_file" <<'JQ_EOF'
+.items[] | 
+select(
+    ((.status.conditions // []) | length == 0) or
+    ([(.status.conditions[]? | select(.reason == "CloudResponseSuccess"))] | length == 0)
+) |
+.metadata.name
+JQ_EOF
+            local failed_cpics=($(echo "$cpic_json" | jq -r -f "$jq_failed_file" 2>/dev/null))
+            rm -f "$jq_failed_file"
+            
+            if [ ${#failed_cpics[@]} -eq 0 ]; then
+                log_success "No malfunctioning CPICs detected (using cluster data)"
+                return 0
+            fi
+            
+            # Use failed CPICs as malfunctioning CPICs
+            local malfunctioning_cpics=("${failed_cpics[@]}")
+            malfunctioning_output="Found ${#malfunctioning_cpics[@]} CPIC(s) without CloudResponseSuccess condition"
+            # Skip parsing, go straight to deduplication
+            local skip_parsing=1
+        else
+            # Command succeeded - proceed with normal parsing of eip-toolkit output
+            # Even if output says "No malfunctioning EIPs found", we should still try to parse CPICs
+            # The command might be working correctly and just returning empty results
+            local skip_parsing=0
+        fi
+        
+        # Parse output to extract CPIC names (IP addresses) only if not already populated
+        if [ "${skip_parsing:-0}" -eq 0 ]; then
+            local malfunctioning_cpics=()
+            
+            log_info "Parsing eip-toolkit output for CPIC IP addresses..."
+            
+            # Try to extract CPIC names (IP addresses) from the output
+            while IFS= read -r line; do
+                # Skip empty lines
+                [ -z "$line" ] && continue
+                
+                # Skip header lines (but not lines with "IP:" prefix which contain actual data)
+                if echo "$line" | grep -qiE "^(Malfunctioning CPICs|found|no|total|count|name|address)[^:]"; then
+                    continue
+                fi
+                
+                # Handle eip-toolkit format: "  IP: 10.0.2.102 - CPIC Node: ..."
+                # This should be checked first since it's the specific format from eip-toolkit
+                if [[ "$line" =~ IP:[[:space:]]+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
+                    local cpic_ip="${BASH_REMATCH[1]}"
+                    # Verify it's a valid CPIC by checking if it exists
+                    if oc get cloudprivateipconfig "$cpic_ip" &>/dev/null; then
+                        # Check if already added
+                        local already_added=0
+                        for existing in "${malfunctioning_cpics[@]}"; do
+                            if [ "$cpic_ip" = "$existing" ]; then
+                                already_added=1
+                                break
+                            fi
+                        done
+                        [ $already_added -eq 0 ] && malfunctioning_cpics+=("$cpic_ip")
+                    fi
+                # Try multiple patterns to extract IP addresses (CPIC names):
+                # 1. IPv4 address pattern (e.g., 10.0.2.100) - most common
+                elif [[ "$line" =~ ([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
+                    local cpic_ip="${BASH_REMATCH[1]}"
+                    # Verify it's a valid CPIC by checking if it exists
+                    if oc get cloudprivateipconfig "$cpic_ip" &>/dev/null; then
+                        # Check if already added
+                        local already_added=0
+                        for existing in "${malfunctioning_cpics[@]}"; do
+                            if [ "$cpic_ip" = "$existing" ]; then
+                                already_added=1
+                                break
+                            fi
+                        done
+                        [ $already_added -eq 0 ] && malfunctioning_cpics+=("$cpic_ip")
+                    fi
+                # Pattern 2: Check if line contains CPIC resource reference
+                elif [[ "$line" =~ (cpic|cloudprivateipconfig)[[:space:]]+([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}) ]]; then
+                    local cpic_ip="${BASH_REMATCH[2]}"
+                    if oc get cloudprivateipconfig "$cpic_ip" &>/dev/null; then
+                        local already_added=0
+                        for existing in "${malfunctioning_cpics[@]}"; do
+                            if [ "$cpic_ip" = "$existing" ]; then
+                                already_added=1
+                                break
+                            fi
+                        done
+                        [ $already_added -eq 0 ] && malfunctioning_cpics+=("$cpic_ip")
+                    fi
+                fi
+            done <<< "$malfunctioning_output"
+        
+        # Also try to get all CPICs and match against the output
+        local all_cpics=$(oc get cloudprivateipconfig -o json 2>/dev/null | jq -r '.items[].metadata.name' 2>/dev/null || echo "")
+        if [ -n "$all_cpics" ]; then
+            while IFS= read -r cpic_ip; do
+                [ -z "$cpic_ip" ] && continue
+                # Check if this CPIC IP appears in the malfunctioning output
+                if echo "$malfunctioning_output" | grep -q "$cpic_ip"; then
+                    # Check if already added
+                    local already_added=0
+                    for existing in "${malfunctioning_cpics[@]}"; do
+                        if [ "$cpic_ip" = "$existing" ]; then
+                            already_added=1
+                            break
+                        fi
+                    done
+                    [ $already_added -eq 0 ] && malfunctioning_cpics+=("$cpic_ip")
+                fi
+            done <<< "$all_cpics"
+        fi
+        
+        # Also try to extract from JSON if eip-toolkit outputs JSON
+        if echo "$malfunctioning_output" | jq -e . &>/dev/null; then
+            # If output is JSON, try to extract CPIC names (IP addresses)
+            local json_cpics=$(echo "$malfunctioning_output" | jq -r '.[]?.name // .[].metadata.name // .items[]?.metadata.name // empty' 2>/dev/null)
+            while IFS= read -r cpic_ip; do
+                [ -n "$cpic_ip" ] && [ "$cpic_ip" != "null" ] && malfunctioning_cpics+=("$cpic_ip")
+            done <<< "$json_cpics"
+        fi
+        fi  # End of skip_parsing check
+        
+        # Remove duplicates
+        local unique_cpics=()
+        for cpic in "${malfunctioning_cpics[@]}"; do
+            local is_duplicate=0
+            for existing in "${unique_cpics[@]}"; do
+                if [ "$cpic" = "$existing" ]; then
+                    is_duplicate=1
+                    break
+                fi
+            done
+            [ $is_duplicate -eq 0 ] && unique_cpics+=("$cpic")
+        done
+        
+        # Filter by node if specified
+        if [ -n "$node_name" ] && [ ${#unique_cpics[@]} -gt 0 ]; then
+            log_info "Filtering CPICs to those assigned to node: $node_name"
+            local filtered_cpics=()
+            local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+            
+            for cpic_ip in "${unique_cpics[@]}"; do
+                # Check if this CPIC is assigned to the specified node
+                local cpic_node=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_ip\") | (.status.node // .spec.node // \"\")" 2>/dev/null)
+                
+                if [ "$cpic_node" = "$node_name" ]; then
+                    filtered_cpics+=("$cpic_ip")
+                fi
+            done
+            
+            unique_cpics=("${filtered_cpics[@]}")
+            log_info "Filtered to ${#unique_cpics[@]} CPIC(s) assigned to node $node_name"
+        fi
+        
+        if [ ${#unique_cpics[@]} -eq 0 ]; then
+            if [ -n "$node_name" ]; then
+                log_info "No malfunctioning CPICs detected for node: $node_name"
+            else
+                log_success "No malfunctioning CPICs detected"
+            fi
+            echo ""
+            echo "eip-toolkit output:"
+            echo "$malfunctioning_output"
+            return 0
+        fi
+        
+        log_warn "Found ${#unique_cpics[@]} malfunctioning CPIC(s)"
+        if [ -n "$node_name" ]; then
+            log_warn "  (filtered to node: $node_name)"
+        fi
+        for cpic in "${unique_cpics[@]}"; do
+            log_warn "  - $cpic"
+        done
+        
+        echo ""
+        echo "eip-toolkit output:"
+        echo "$malfunctioning_output"
+        echo ""
+        
+        if [ "$dry_run" = "true" ]; then
+            log_info "Dry run mode - would delete ${#unique_cpics[@]} malfunctioning CPIC(s)"
+            return 0
+        fi
+        
+        # Delete malfunctioning CPICs
+        log_info "Deleting ${#unique_cpics[@]} malfunctioning CPIC(s)"
+        if [ -n "$node_name" ]; then
+            log_info "  (on node: $node_name)"
+        fi
+        
+        local deleted_cpics=0
+        local failed_cpics=0
+        
+        # Get CPIC JSON for finalizer removal
+        local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+        
+        for cpic_ip in "${unique_cpics[@]}"; do
+            log_info "Processing CPIC: $cpic_ip"
+            
+            # Remove finalizers if present (CPIC is cluster-scoped, so namespace is empty)
+            remove_finalizers "cloudprivateipconfig" "" "$cpic_ip" || true
+            
+            # Delete the CPIC
+            log_info "  Deleting CPIC: $cpic_ip"
+            if oc delete cloudprivateipconfig "$cpic_ip" --force --grace-period=0 &>/dev/null; then
+                deleted_cpics=$((deleted_cpics + 1))
+                log_success "  Deleted CPIC $cpic_ip"
+            else
+                failed_cpics=$((failed_cpics + 1))
+                log_warn "  Failed to delete CPIC $cpic_ip"
+            fi
+        done
+        
+        echo ""
+        if [ $deleted_cpics -gt 0 ]; then
+            log_success "Deleted $deleted_cpics malfunctioning CPIC(s)"
+        fi
+        if [ $failed_cpics -gt 0 ]; then
+            log_warn "$failed_cpics CPIC(s) failed to delete"
+        fi
+        
+        return 0
+    else
+        # All command attempts failed - use fallback to cluster data
+        log_warn "eip-toolkit commands for CPICs failed or not supported"
+        log_info "Using cluster data to detect malfunctioning CPICs instead..."
+        
+        local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+        
+        # Find CPICs without CloudResponseSuccess
+        local jq_failed_file=$(mktemp)
+        cat > "$jq_failed_file" <<'JQ_EOF'
+.items[] | 
+select(
+    ((.status.conditions // []) | length == 0) or
+    ([(.status.conditions[]? | select(.reason == "CloudResponseSuccess"))] | length == 0)
+) |
+.metadata.name
+JQ_EOF
+        local malfunctioning_cpics=($(echo "$cpic_json" | jq -r -f "$jq_failed_file" 2>/dev/null))
+        rm -f "$jq_failed_file"
+        
+        malfunctioning_output="Using cluster data: Found ${#malfunctioning_cpics[@]} CPIC(s) without CloudResponseSuccess condition"
+        
+        # Now process the malfunctioning_cpics we found
+        # Remove duplicates
+        local unique_cpics=()
+        for cpic in "${malfunctioning_cpics[@]}"; do
+            local is_duplicate=0
+            for existing in "${unique_cpics[@]}"; do
+                if [ "$cpic" = "$existing" ]; then
+                    is_duplicate=1
+                    break
+                fi
+            done
+            [ $is_duplicate -eq 0 ] && unique_cpics+=("$cpic")
+        done
+        
+        # Filter by node if specified
+        if [ -n "$node_name" ] && [ ${#unique_cpics[@]} -gt 0 ]; then
+            log_info "Filtering CPICs to those assigned to node: $node_name"
+            local filtered_cpics=()
+            local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+            
+            for cpic_ip in "${unique_cpics[@]}"; do
+                local cpic_node=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_ip\") | (.status.node // .spec.node // \"\")" 2>/dev/null)
+                if [ "$cpic_node" = "$node_name" ]; then
+                    filtered_cpics+=("$cpic_ip")
+                fi
+            done
+            
+            unique_cpics=("${filtered_cpics[@]}")
+            log_info "Filtered to ${#unique_cpics[@]} CPIC(s) assigned to node $node_name"
+        fi
+        
+        if [ ${#unique_cpics[@]} -eq 0 ]; then
+            if [ -n "$node_name" ]; then
+                log_info "No malfunctioning CPICs detected for node: $node_name"
+            else
+                log_success "No malfunctioning CPICs detected"
+            fi
+            echo ""
+            echo "Detection method: Cluster data analysis"
+            echo "$malfunctioning_output"
+            return 0
+        fi
+        
+        log_warn "Found ${#unique_cpics[@]} malfunctioning CPIC(s)"
+        if [ -n "$node_name" ]; then
+            log_warn "  (filtered to node: $node_name)"
+        fi
+        for cpic in "${unique_cpics[@]}"; do
+            log_warn "  - $cpic"
+        done
+        
+        echo ""
+        echo "Detection method: Cluster data analysis"
+        echo "$malfunctioning_output"
+        echo ""
+        
+        if [ "$dry_run" = "true" ]; then
+            log_info "Dry run mode - would delete ${#unique_cpics[@]} malfunctioning CPIC(s)"
+            return 0
+        fi
+        
+        # Delete malfunctioning CPICs
+        log_info "Deleting ${#unique_cpics[@]} malfunctioning CPIC(s)"
+        if [ -n "$node_name" ]; then
+            log_info "  (on node: $node_name)"
+        fi
+        
+        local deleted_cpics=0
+        local failed_cpics=0
+        local cpic_json=$(oc get cloudprivateipconfig -o json 2>/dev/null || echo '{"items":[]}')
+        
+        for cpic_ip in "${unique_cpics[@]}"; do
+            log_info "Processing CPIC: $cpic_ip"
+            
+            local finalizers=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_ip\") | .metadata.finalizers[]?" 2>/dev/null)
+            if [ -n "$finalizers" ]; then
+                log_info "  Removing finalizers from $cpic_ip"
+                oc patch cloudprivateipconfig "$cpic_ip" -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || true
+            fi
+            
+            log_info "  Deleting CPIC: $cpic_ip"
+            if oc delete cloudprivateipconfig "$cpic_ip" --force --grace-period=0 &>/dev/null; then
+                deleted_cpics=$((deleted_cpics + 1))
+                log_success "  Deleted CPIC $cpic_ip"
+            else
+                failed_cpics=$((failed_cpics + 1))
+                log_warn "  Failed to delete CPIC $cpic_ip"
+            fi
+        done
+        
+        echo ""
+        if [ $deleted_cpics -gt 0 ]; then
+            log_success "Deleted $deleted_cpics malfunctioning CPIC(s)"
+        fi
+        if [ $failed_cpics -gt 0 ]; then
+            log_warn "$failed_cpics CPIC(s) failed to delete"
+        fi
+        
+        return 0
+    fi
 }
 
 # Redistribute failed CPICs to nodes with least EIPs
@@ -1731,6 +2405,9 @@ parse_cleanup_args() {
     local egressip_timeout="$DEFAULT_EGRESSIP_TIMEOUT"
     local namespace_timeout="$DEFAULT_NAMESPACE_TIMEOUT"
     local cleanup_stale="false"
+    local cleanup_malfunctioning="false"
+    local cleanup_malfunctioning_cpic="false"
+    local node_name=""
     
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1742,6 +2419,18 @@ parse_cleanup_args() {
             --stale|-s)
                 cleanup_stale="true"
                 shift
+                ;;
+            --malfunctioning|-m)
+                cleanup_malfunctioning="true"
+                shift
+                ;;
+            --malfunctioning-cpic|-c)
+                cleanup_malfunctioning_cpic="true"
+                shift
+                ;;
+            --node|-n)
+                node_name="$2"
+                shift 2
                 ;;
             --egressip-timeout)
                 egressip_timeout="$2"
@@ -1755,6 +2444,9 @@ parse_cleanup_args() {
                 echo "Cleanup options:"
                 echo "  --force, -f                    Force deletion with --force --grace-period=0"
                 echo "  --stale, -s                   Delete failed CPICs and EgressIPs with mismatches (failed CPICs or node assignment mismatches)"
+                echo "  --malfunctioning, -m          Delete malfunctioning EIPs detected by eip-toolkit monitor --list-malfunctioning eips"
+                echo "  --malfunctioning-cpic, -c     Delete malfunctioning CPICs detected by eip-toolkit monitor --list-malfunctioning cpic"
+                echo "  --node NODE_NAME, -n           Filter cleanup to specific node (use with --malfunctioning or --malfunctioning-cpic)"
                 echo "  --egressip-timeout TIMEOUT     Timeout for EgressIP deletion (default: 30s)"
                 echo "  --namespace-timeout TIMEOUT    Timeout for namespace deletion (default: 60s)"
                 echo "  --help, -h                     Show this help"
@@ -1767,6 +2459,18 @@ parse_cleanup_args() {
                 ;;
         esac
     done
+    
+    # If --malfunctioning-cpic is specified, only run that cleanup
+    if [ "$cleanup_malfunctioning_cpic" = "true" ]; then
+        cleanup_malfunctioning_cpics "false" "$node_name"
+        return $?
+    fi
+    
+    # If --malfunctioning is specified, only run that cleanup
+    if [ "$cleanup_malfunctioning" = "true" ]; then
+        cleanup_malfunctioning_eips "false" "$node_name"
+        return $?
+    fi
     
     # Call cleanup function with parsed arguments
     cleanup_test_resources "$force_cleanup" "$egressip_timeout" "$namespace_timeout" "$cleanup_stale"
@@ -1802,6 +2506,82 @@ case "${1:-deploy}" in
     "redistribute")
         redistribute_failed_cpics
         ;;
+    "cleanup-malfunctioning"|"malfunctioning")
+        shift  # Remove command from arguments
+        node_name=""
+        # Parse --node argument if provided
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --node|-n)
+                    node_name="$2"
+                    shift 2
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    echo "Usage: $0 cleanup-malfunctioning [--node NODE_NAME]"
+                    exit 1
+                    ;;
+            esac
+        done
+        cleanup_malfunctioning_eips "false" "$node_name"
+        ;;
+    "list-malfunctioning")
+        shift  # Remove command from arguments
+        node_name=""
+        # Parse --node argument if provided
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --node|-n)
+                    node_name="$2"
+                    shift 2
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    echo "Usage: $0 list-malfunctioning [--node NODE_NAME]"
+                    exit 1
+                    ;;
+            esac
+        done
+        cleanup_malfunctioning_eips "true" "$node_name"
+        ;;
+    "cleanup-malfunctioning-cpic"|"malfunctioning-cpic")
+        shift  # Remove command from arguments
+        node_name=""
+        # Parse --node argument if provided
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --node|-n)
+                    node_name="$2"
+                    shift 2
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    echo "Usage: $0 cleanup-malfunctioning-cpic [--node NODE_NAME]"
+                    exit 1
+                    ;;
+            esac
+        done
+        cleanup_malfunctioning_cpics "false" "$node_name"
+        ;;
+    "list-malfunctioning-cpic")
+        shift  # Remove command from arguments
+        node_name=""
+        # Parse --node argument if provided
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --node|-n)
+                    node_name="$2"
+                    shift 2
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    echo "Usage: $0 list-malfunctioning-cpic [--node NODE_NAME]"
+                    exit 1
+                    ;;
+            esac
+        done
+        cleanup_malfunctioning_cpics "true" "$node_name"
+        ;;
     "--help"|"-h"|"help")
         echo "Usage: $0 [command] [options]"
         echo ""
@@ -1813,10 +2593,21 @@ case "${1:-deploy}" in
         echo "  cleanup [options]                    Remove all test resources"
         echo "                                      --force, -f: Force deletion with --force --grace-period=0"
         echo "                                      --stale, -s: Delete failed CPICs and EgressIPs with mismatches (failed CPICs or node assignment mismatches)"
+        echo "                                      --malfunctioning, -m: Delete malfunctioning EIPs detected by eip-toolkit monitor --list-malfunctioning eips"
+        echo "                                      --malfunctioning-cpic, -c: Delete malfunctioning CPICs detected by eip-toolkit monitor --list-malfunctioning cpic"
+        echo "                                      --node NODE_NAME, -n: Filter cleanup to specific node (use with --malfunctioning or --malfunctioning-cpic)"
         echo "                                      --egressip-timeout TIMEOUT: Timeout for EgressIP deletion (default: 30s)"
         echo "                                      --namespace-timeout TIMEOUT: Timeout for namespace deletion (default: 60s)"
         echo "  discover                             Show available EgressIP ranges"
         echo "  redistribute                         Redistribute failed CPICs to nodes with least EIPs"
+        echo "  cleanup-malfunctioning|malfunctioning Delete malfunctioning EIPs detected by eip-toolkit"
+        echo "                                      [--node NODE_NAME, -n]: Filter cleanup to specific node"
+        echo "  list-malfunctioning                   List malfunctioning EIPs (dry run)"
+        echo "                                      [--node NODE_NAME, -n]: Filter to specific node"
+        echo "  cleanup-malfunctioning-cpic|malfunctioning-cpic  Delete malfunctioning CPICs detected by eip-toolkit"
+        echo "                                      [--node NODE_NAME, -n]: Filter cleanup to specific node"
+        echo "  list-malfunctioning-cpic              List malfunctioning CPICs (dry run)"
+        echo "                                      [--node NODE_NAME, -n]: Filter to specific node"
         echo "  help                                 Show this help message"
         echo ""
         echo "Examples:"
@@ -1829,9 +2620,20 @@ case "${1:-deploy}" in
         echo "  $0 cleanup --force          # Force clean up test resources"
         echo "  $0 cleanup --stale          # Delete failed CPICs and EgressIPs with mismatches (failed CPICs or node assignment mismatches)"
         echo "  $0 cleanup --force --stale  # Force delete failed CPICs and mismatched EgressIPs"
+        echo "  $0 cleanup --malfunctioning # Delete malfunctioning EIPs detected by eip-toolkit"
+        echo "  $0 cleanup --malfunctioning --node NODE_NAME  # Delete malfunctioning EIPs for specific node"
+        echo "  $0 cleanup --malfunctioning-cpic --node NODE_NAME  # Delete malfunctioning CPICs for specific node"
         echo "  $0 cleanup --egressip-timeout 60s --namespace-timeout 120s  # Custom timeouts"
         echo "  $0 cleanup --force --namespace-timeout 30s  # Force cleanup with custom namespace timeout"
         echo "  $0 redistribute              # Redistribute failed CPICs to nodes with least EIPs"
+        echo "  $0 cleanup-malfunctioning   # Delete malfunctioning EIPs detected by eip-toolkit"
+        echo "  $0 cleanup-malfunctioning --node NODE_NAME  # Delete malfunctioning EIPs for specific node"
+        echo "  $0 list-malfunctioning      # List malfunctioning EIPs without deleting (dry run)"
+        echo "  $0 list-malfunctioning --node NODE_NAME  # List malfunctioning EIPs for specific node"
+        echo "  $0 cleanup-malfunctioning-cpic  # Delete malfunctioning CPICs detected by eip-toolkit"
+        echo "  $0 cleanup-malfunctioning-cpic --node NODE_NAME  # Delete malfunctioning CPICs for specific node"
+        echo "  $0 list-malfunctioning-cpic  # List malfunctioning CPICs without deleting (dry run)"
+        echo "  $0 list-malfunctioning-cpic --node NODE_NAME  # List malfunctioning CPICs for specific node"
         ;;
     *)
         # Check if first argument is a number (IP count for deploy)

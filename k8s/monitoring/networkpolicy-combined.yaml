@@ -1,0 +1,69 @@
+---
+# Combined NetworkPolicy for EIP monitor supporting both COO and UWM
+# This policy is always applied by deploy-monitoring.sh and works for both
+# single-stack (COO-only or UWM-only) and dual-stack deployments.
+# The individual NetworkPolicies (networkpolicy-coo.yaml and networkpolicy-uwm.yaml)
+# are deprecated and should not be used.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: eip-monitor-combined
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: "true"
+    monitoring-type: "both"
+spec:
+  podSelector:
+    matchLabels:
+      app: eip-monitor
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow COO Prometheus in same namespace (eip-monitoring)
+  # COO Prometheus runs in the same namespace as the monitored pods
+  - from:
+    - podSelector: {}  # Allow all pods in same namespace (required for COO)
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow UWM Prometheus in openshift-user-workload-monitoring namespace
+  # Uses podSelector + namespaceSelector together per OpenShift best practices
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+      namespaceSelector:
+        matchLabels:
+          name: openshift-user-workload-monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  # Allow platform Prometheus in openshift-monitoring namespace (optional, for platform monitoring)
+  - from:
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: prometheus
+      namespaceSelector:
+        matchLabels:
+          name: openshift-monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS (required for service discovery and API access)
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Kubernetes API access (required for EIP and CPIC resource queries)
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 6443
+

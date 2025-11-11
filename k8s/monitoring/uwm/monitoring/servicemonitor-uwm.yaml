@@ -1,0 +1,28 @@
+---
+# ServiceMonitor for Prometheus to scrape EIP metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: eip-monitor-uwm
+  namespace: eip-monitoring
+  labels:
+    app: eip-monitor
+    monitoring: "true"
+    monitoring-type: "uwm"  # Specific label for selective deletion
+    openshift.io/user-monitoring: "true"  # Required for UWM Prometheus discovery
+spec:
+  selector:
+    matchLabels:
+      app: eip-monitor
+      service: eip-monitor
+  endpoints:
+  - port: metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+    honorLabels: true
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - eip-monitoring
+

@@ -1,39 +1,15 @@
 ---
-# ServiceMonitor for Prometheus to scrape EIP metrics
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: eip-monitor
-  namespace: eip-monitoring
-  labels:
-    app: eip-monitor
-    monitoring: "true"
-spec:
-  selector:
-    matchLabels:
-      app: eip-monitor
-      service: eip-monitor
-  endpoints:
-  - port: metrics
-    interval: 30s
-    scrapeTimeout: 10s
-    path: /metrics
-    honorLabels: true
-    scheme: http
-  namespaceSelector:
-    matchNames:
-    - eip-monitoring
-
----
-# PrometheusRule for EIP monitoring alerts (optional)
-apiVersion: monitoring.coreos.com/v1
+# PrometheusRule for EIP monitoring alerts (COO)
+apiVersion: monitoring.rhobs/v1
 kind: PrometheusRule
 metadata:
-  name: eip-monitor-alerts
+  name: eip-monitor-alerts-coo
   namespace: eip-monitoring
   labels:
     app: eip-monitor
-    prometheus: kube-prometheus
+    coo: eip-monitoring
+    monitoring: "true"
+    monitoring-type: "coo"  # Specific label for selective deletion
     role: alert-rules
 spec:
   groups:
@@ -330,7 +306,7 @@ spec:
         description: "EIP metrics collection has failed {{ $value }} times in the last 5 minutes."
     
     - alert: EIPMonitoringDown
-      expr: up{job="eip-monitor"} == 0
+      expr: up{job=~"serviceMonitor/.*/eip-monitor-coo/.*|eip-monitor-coo"} == 0
       for: 3m
       labels:
         severity: critical
@@ -369,3 +345,64 @@ spec:
       annotations:
         summary: "Stale CPIC detected - CPIC count doesn't match assigned EIPs"
         description: "The total number of CPIC resources does not match the number of assigned EIPs. This may indicate stale or orphaned CPIC resources that need cleanup."
+    
+    # Health Status Alerts (New Metrics)
+    - alert: EIPMalfunctioningResources
+      expr: malfunctioning_eip_objects_count > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: health
+      annotations:
+        summary: "EIP resources have EIP-CPIC mismatches"
+        description: "{{ $value }} EIP resource(s) have mismatches between EIP status and CPIC assignments. This indicates misaligned or stale assignments."
+    
+    - alert: EIPMalfunctioningResourcesCritical
+      expr: malfunctioning_eip_objects_count > 0
+      for: 15m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "EIP resources have persistent EIP-CPIC mismatches"
+        description: "{{ $value }} EIP resource(s) have had mismatches for more than 15 minutes. Manual intervention may be required."
+    
+    - alert: EIPCriticalResources
+      expr: critical_eip_objects_count > 0
+      for: 5m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "EIP resources have no working assignments"
+        description: "{{ $value }} EIP resource(s) have no working node assignments. All assignments are misaligned or missing. Immediate action required."
+    
+    - alert: EIPOvercommitted
+      expr: overcommitted_eip_objects_count > 0
+      for: 10m
+      labels:
+        severity: warning
+        component: capacity
+      annotations:
+        summary: "EIP resources are overcommitted"
+        description: "{{ $value }} IP(s) are overcommitted (configured IPs exceed available nodes). Some IPs cannot be assigned."
+    
+    - alert: EIPCPICMismatches
+      expr: eip_cpic_mismatches_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: health
+      annotations:
+        summary: "EIP-CPIC mismatches detected"
+        description: "{{ $value }} mismatch(es) detected between EIP and CPIC assignments. Check for node assignment issues or stale CPIC resources."
+    
+    - alert: EIPCPICMismatchesCritical
+      expr: eip_cpic_mismatches_total > 5
+      for: 10m
+      labels:
+        severity: critical
+        component: health
+      annotations:
+        summary: "Multiple EIP-CPIC mismatches detected"
+        description: "{{ $value }} mismatch(es) detected. This indicates widespread assignment issues. Investigate immediately."

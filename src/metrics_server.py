@@ -53,6 +53,8 @@ node_cpic_success = Gauge('node_cpic_success_total', 'CPIC success count per nod
 node_cpic_pending = Gauge('node_cpic_pending_total', 'CPIC pending count per node', ['node'])
 node_cpic_error = Gauge('node_cpic_error_total', 'CPIC error count per node', ['node'])
 node_eip_assigned = Gauge('node_eip_assigned_total', 'EIP assigned count per node', ['node'])
+node_eip_primary = Gauge('node_eip_primary_total', 'Primary EIP count per node (first IP from each resource)', ['node'])
+node_eip_secondary = Gauge('node_eip_secondary_total', 'Secondary EIP count per node (remaining IPs)', ['node'])
 
 # Node capacity and distribution metrics
 node_eip_capacity = Gauge('node_eip_capacity_total', 'Maximum EIP capacity per node', ['node'])
@@ -78,6 +80,14 @@ cpic_recoveries_last_hour = Gauge('cpic_recoveries_last_hour', 'Number of CPIC e
 # Resource health indicators
 cluster_eip_health_score = Gauge('cluster_eip_health_score', 'Overall EIP cluster health score (0-100)')
 cluster_eip_stability_score = Gauge('cluster_eip_stability_score', 'EIP stability score based on change frequency')
+
+# Health status metrics
+malfunctioning_eip_objects_count = Gauge('malfunctioning_eip_objects_count', 'Number of EIP resources with EIP-CPIC mismatches')
+overcommitted_eip_objects_count = Gauge('overcommitted_eip_objects_count', 'Total overcommitted IPs (when configured > available nodes)')
+critical_eip_objects_count = Gauge('critical_eip_objects_count', 'Number of EIP resources with no working assignments')
+eip_cpic_mismatches_total = Gauge('eip_cpic_mismatches_total', 'Total count of all EIP-CPIC mismatches')
+eip_cpic_mismatches_node_mismatch = Gauge('eip_cpic_mismatches_node_mismatch', 'IPs with different node assignments in EIP vs CPIC')
+eip_cpic_mismatches_missing_in_eip = Gauge('eip_cpic_mismatches_missing_in_eip', 'IPs in CPIC but missing from EIP status.items')
 
 # Monitoring system metrics
 monitoring_info = Info('eip_monitoring', 'EIP monitoring information')
@@ -197,15 +207,16 @@ class EIPMetricsCollector:
         try:
             # Get EIP nodes (cached if recent)
             cached_nodes = self.get_cached_data('eip_nodes')
-            if cached_nodes:
+            if cached_nodes is not None:
                 self.eip_nodes = cached_nodes
                 logger.debug("Using cached EIP nodes")
             else:
-                if not self.get_eip_nodes():
-                    return None, None, None
+                # Try to get nodes, but continue even if none found (valid state)
+                self.get_eip_nodes()
                 self.set_cached_data('eip_nodes', self.eip_nodes)
             
             # Get all EIP and CPIC data in optimized calls
+            # Continue even if no nodes found - EIP/CPIC resources might still exist
             eip_output = self.run_oc_command(['oc', 'get', 'eip', '-o', 'json'], operation='eip_get')
             if eip_output is None:
                 return None, None, None
@@ -233,23 +244,30 @@ class EIPMetricsCollector:
         """Get list of EIP-enabled nodes with comprehensive validation"""
         output = self.run_oc_command([
             'oc', 'get', 'nodes', 
-            '-l', 'k8s.ovn.org/egress-assignable=true', 
+            '-l', 'k8s.ovn.org/egress-assignable', 
             '-o', 'name'
         ], operation='nodes_get')
         
         if output is None:
             logger.error("Failed to get EIP-enabled nodes - command failed")
+            self.eip_nodes = []
+            # Update node availability metrics even when command fails
+            node_available.set(0)
             return False
         
         if not output.strip():
             logger.warning("No EIP-enabled nodes found in cluster")
             self.eip_nodes = []
+            # Update node availability metrics
+            node_available.set(0)
             return False
             
         self.eip_nodes = [node.replace('node/', '') for node in output.split('\n') if node.strip()]
         
         if len(self.eip_nodes) == 0:
             logger.warning("No valid EIP-enabled nodes found after parsing")
+            # Update node availability metrics
+            node_available.set(0)
             return False
             
         logger.info(f"Found {len(self.eip_nodes)} EIP-enabled nodes: {self.eip_nodes}")
@@ -278,9 +296,21 @@ class EIPMetricsCollector:
                 logger.error("Invalid EIP data structure - missing 'items' field")
                 return False
             
-            configured_count = len(eip_data['items'])
-            assigned_count = sum(1 for item in eip_data['items'] 
-                               if len(item.get('status', {}).get('items', [])) > 0)
+            # Count IP addresses, not resources
+            configured_count = 0
+            assigned_count = 0
+            
+            for item in eip_data['items']:
+                # Count configured IPs from spec.egressIPs[]
+                egress_ips = item.get('spec', {}).get('egressIPs', [])
+                configured_count += len(egress_ips)
+                
+                # Count assigned IPs from status.items[] where node exists and is not nil
+                status_items = item.get('status', {}).get('items', [])
+                for status_item in status_items:
+                    if status_item.get('node') is not None and status_item.get('node') != '':
+                        assigned_count += 1
+            
             unassigned_count = configured_count - assigned_count
             
             # Set basic EIP metrics
@@ -633,13 +663,203 @@ class EIPMetricsCollector:
         
         node_with_errors.set(len(nodes_with_errors))
     
+    def detect_mismatches(self, eip_data: dict, cpic_data: dict, available_nodes: int) -> dict:
+        """
+        Detect mismatches between EIP and CPIC assignments.
+        Returns dict with mismatch counts and details.
+        """
+        mismatches = {
+            'total': 0,
+            'node_mismatch': 0,
+            'missing_in_eip': 0,
+            'missing_in_cpic': 0,
+            'mismatch_by_resource': {},  # resource_name -> set of IPs with mismatches
+            'mismatch_by_ip': {}  # ip -> mismatch_type
+        }
+        
+        # Build CPIC IP -> node mapping (priority: status.node > spec.node)
+        cpic_ip_to_node = {}
+        for item in cpic_data.get('items', []):
+            ip = item.get('metadata', {}).get('name', '')
+            if ip:
+                # Prefer status.node over spec.node
+                node = item.get('status', {}).get('node') or item.get('spec', {}).get('node', '')
+                if node:
+                    cpic_ip_to_node[ip] = node
+        
+        # Build EIP IP -> node mapping from status.items
+        eip_ip_to_node = {}
+        eip_ip_to_resource = {}
+        resource_assigned_counts = {}  # Track assigned IP count per resource
+        
+        for item in eip_data.get('items', []):
+            resource_name = f"{item.get('metadata', {}).get('namespace', '')}/{item.get('metadata', {}).get('name', '')}"
+            status_items = item.get('status', {}).get('items', [])
+            assigned_count = 0
+            
+            for status_item in status_items:
+                ip = status_item.get('egressIP') or status_item.get('ip', '')
+                node = status_item.get('node', '')
+                if ip and node:
+                    eip_ip_to_node[ip] = node
+                    eip_ip_to_resource[ip] = resource_name
+                    assigned_count += 1
+            
+            resource_assigned_counts[resource_name] = assigned_count
+        
+        # Build IP -> resource mapping from spec.egressIPs (for finding resource when IP is missing from status.items)
+        ip_to_resource_from_spec = {}
+        for item in eip_data.get('items', []):
+            resource_name = f"{item.get('metadata', {}).get('namespace', '')}/{item.get('metadata', {}).get('name', '')}"
+            egress_ips = item.get('spec', {}).get('egressIPs', [])
+            for ip in egress_ips:
+                ip_to_resource_from_spec[ip] = resource_name
+        
+        # Detect mismatches
+        for ip, cpic_node in cpic_ip_to_node.items():
+            eip_node = eip_ip_to_node.get(ip)
+            resource_name = eip_ip_to_resource.get(ip)
+            
+            # If not found in status.items, try to find resource from spec.egressIPs
+            if not resource_name:
+                resource_name = ip_to_resource_from_spec.get(ip, 'unknown')
+            
+            if eip_node:
+                if eip_node != cpic_node:
+                    # Node mismatch
+                    mismatches['total'] += 1
+                    mismatches['node_mismatch'] += 1
+                    mismatches['mismatch_by_ip'][ip] = 'node_mismatch'
+                    if resource_name not in mismatches['mismatch_by_resource']:
+                        mismatches['mismatch_by_resource'][resource_name] = set()
+                    mismatches['mismatch_by_resource'][resource_name].add(ip)
+            else:
+                # IP in CPIC but not in EIP status.items
+                # Check if resource is at capacity
+                if resource_name != 'unknown':
+                    assigned_count = resource_assigned_counts.get(resource_name, 0)
+                    if assigned_count < available_nodes:
+                        # Not at capacity, so this is a mismatch
+                        mismatches['total'] += 1
+                        mismatches['missing_in_eip'] += 1
+                        mismatches['mismatch_by_ip'][ip] = 'missing_in_eip'
+                        if resource_name not in mismatches['mismatch_by_resource']:
+                            mismatches['mismatch_by_resource'][resource_name] = set()
+                        mismatches['mismatch_by_resource'][resource_name].add(ip)
+        
+        # Check for IPs in EIP but not in CPIC
+        for ip, eip_node in eip_ip_to_node.items():
+            if ip not in cpic_ip_to_node:
+                mismatches['total'] += 1
+                mismatches['missing_in_cpic'] += 1
+                mismatches['mismatch_by_ip'][ip] = 'missing_in_cpic'
+                resource_name = eip_ip_to_resource.get(ip, 'unknown')
+                if resource_name not in mismatches['mismatch_by_resource']:
+                    mismatches['mismatch_by_resource'][resource_name] = set()
+                mismatches['mismatch_by_resource'][resource_name].add(ip)
+        
+        return mismatches
+    
+    def calculate_overcommitted(self, eip_data: dict, available_nodes: int) -> int:
+        """Calculate total overcommitted IPs across all EIP resources"""
+        overcommitted_ips = 0
+        
+        for item in eip_data.get('items', []):
+            egress_ips = item.get('spec', {}).get('egressIPs', [])
+            configured_count = len(egress_ips)
+            
+            if configured_count > available_nodes:
+                overcommitted_ips += (configured_count - available_nodes)
+        
+        return overcommitted_ips
+    
+    def detect_critical_eips(self, eip_data: dict, mismatches: dict) -> int:
+        """
+        Count EIP resources with no working assignments.
+        A resource is critical if:
+        1. status.items is empty or has no items with node assignments
+        2. All IPs in status.items have mismatches
+        """
+        critical_count = 0
+        
+        for item in eip_data.get('items', []):
+            resource_name = f"{item.get('metadata', {}).get('namespace', '')}/{item.get('metadata', {}).get('name', '')}"
+            status_items = item.get('status', {}).get('items', [])
+            
+            if not status_items:
+                # No assignments at all
+                critical_count += 1
+                continue
+            
+            # Check if all assigned IPs have mismatches
+            all_have_mismatches = True
+            has_any_assignment = False
+            
+            for status_item in status_items:
+                node = status_item.get('node', '')
+                ip = status_item.get('egressIP') or status_item.get('ip', '')
+                
+                if node:  # Has a node assignment
+                    has_any_assignment = True
+                    # Check if this IP has a mismatch
+                    if ip not in mismatches.get('mismatch_by_ip', {}):
+                        all_have_mismatches = False
+                        break
+            
+            if has_any_assignment and all_have_mismatches:
+                critical_count += 1
+            elif not has_any_assignment:
+                # No assignments with nodes
+                critical_count += 1
+        
+        return critical_count
+    
+    def calculate_primary_secondary_eips(self, eip_data: dict, eip_nodes: list) -> tuple:
+        """
+        Calculate primary and secondary EIPs per node.
+        Returns: (primary_by_node, secondary_by_node)
+        """
+        primary_by_node = {node: 0 for node in eip_nodes}
+        secondary_by_node = {node: 0 for node in eip_nodes}
+        
+        for item in eip_data.get('items', []):
+            status_items = item.get('status', {}).get('items', [])
+            
+            if not status_items:
+                continue
+            
+            # Primary EIP is the first item (status.items[0])
+            first_item = status_items[0]
+            primary_node = first_item.get('node', '')
+            if primary_node and primary_node in primary_by_node:
+                primary_by_node[primary_node] += 1
+            
+            # Secondary EIPs are all remaining items (status.items[1..n])
+            for status_item in status_items[1:]:
+                node = status_item.get('node', '')
+                if node and node in secondary_by_node:
+                    secondary_by_node[node] += 1
+        
+        return primary_by_node, secondary_by_node
+    
     def process_all_metrics_optimized(self, eip_data: dict, cpic_data: dict, eip_nodes: list):
         """Single-pass optimized processing of all metrics"""
         try:
-            # Global EIP metrics
-            configured_count = len(eip_data.get('items', []))
-            assigned_count = sum(1 for item in eip_data.get('items', []) 
-                               if len(item.get('status', {}).get('items', [])) > 0)
+            # Global EIP metrics - count IP addresses, not resources
+            configured_count = 0
+            assigned_count = 0
+            
+            for item in eip_data.get('items', []):
+                # Count configured IPs from spec.egressIPs[]
+                egress_ips = item.get('spec', {}).get('egressIPs', [])
+                configured_count += len(egress_ips)
+                
+                # Count assigned IPs from status.items[] where node exists and is not nil
+                status_items = item.get('status', {}).get('items', [])
+                for status_item in status_items:
+                    if status_item.get('node') is not None and status_item.get('node') != '':
+                        assigned_count += 1
+            
             unassigned_count = configured_count - assigned_count
             
             # Set basic EIP metrics
@@ -753,6 +973,33 @@ class EIPMetricsCollector:
             # Update error node count
             self.update_error_node_count(cpic_data)
             
+            # Calculate mismatch detection, overcommitted, critical, and primary/secondary metrics
+            available_nodes = len(eip_nodes)
+            
+            # Detect mismatches
+            mismatches = self.detect_mismatches(eip_data, cpic_data, available_nodes)
+            eip_cpic_mismatches_total.set(mismatches['total'])
+            eip_cpic_mismatches_node_mismatch.set(mismatches['node_mismatch'])
+            eip_cpic_mismatches_missing_in_eip.set(mismatches['missing_in_eip'])
+            
+            # Count malfunctioning EIP objects (unique resources with mismatches)
+            malfunctioning_count = len(mismatches['mismatch_by_resource'])
+            malfunctioning_eip_objects_count.set(malfunctioning_count)
+            
+            # Calculate overcommitted IPs
+            overcommitted_ips = self.calculate_overcommitted(eip_data, available_nodes)
+            overcommitted_eip_objects_count.set(overcommitted_ips)
+            
+            # Detect critical EIP resources
+            critical_count = self.detect_critical_eips(eip_data, mismatches)
+            critical_eip_objects_count.set(critical_count)
+            
+            # Calculate primary and secondary EIPs per node
+            primary_by_node, secondary_by_node = self.calculate_primary_secondary_eips(eip_data, eip_nodes)
+            for node in eip_nodes:
+                node_eip_primary.labels(node=node).set(primary_by_node[node])
+                node_eip_secondary.labels(node=node).set(secondary_by_node[node])
+            
             # Calculate health scores
             self.calculate_health_scores(configured_count, assigned_count, 
                                       success_count, error_count, pending_count)
@@ -815,12 +1062,17 @@ class EIPMetricsCollector:
             
             # Get all data in optimized single pass (2 API calls instead of 5+)
             eip_data, cpic_data, eip_nodes = self.collect_all_data_optimized()
-            if not all([eip_data, cpic_data, eip_nodes]):
-                logger.error("Failed to collect optimized data")
+            if eip_data is None or cpic_data is None:
+                logger.error("Failed to collect optimized data - API calls failed")
                 scrape_errors.inc()
                 return False
             
-            # Process all metrics in single pass
+            # eip_nodes can be empty list (valid state when no EIP-enabled nodes exist)
+            if eip_nodes is None:
+                eip_nodes = []
+                self.eip_nodes = []
+            
+            # Process all metrics in single pass (works with empty node list)
             self.process_all_metrics_optimized(eip_data, cpic_data, eip_nodes)
             
             # Calculate API success rates
@@ -830,9 +1082,9 @@ class EIPMetricsCollector:
             scrape_duration = time.time() - start_time
             monitoring_info.info({
                 'version': '1.0.0',
-                'nodes': ','.join(self.eip_nodes),
+                'nodes': ','.join(self.eip_nodes) if self.eip_nodes else 'none',
                 'node_count': str(len(self.eip_nodes)),
-                'metrics_count': '40+',
+                'metrics_count': '50+',
                 'last_update': datetime.now().isoformat(),
                 'scrape_duration': f"{scrape_duration:.2f}s",
                 'optimization': 'enabled'
@@ -844,7 +1096,10 @@ class EIPMetricsCollector:
             self.last_update = datetime.now()
             
             logger.info(f"Optimized metrics collection completed in {scrape_duration:.2f}s")
-            logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
+            if len(self.eip_nodes) > 0:
+                logger.info(f"Collected metrics for {len(self.eip_nodes)} nodes")
+            else:
+                logger.info("Collected metrics (no EIP-enabled nodes found in cluster)")
             
             return True
             
@@ -857,6 +1112,9 @@ class EIPMetricsCollector:
 
 # Global collector instance
 collector = EIPMetricsCollector()
+
+# Track server start time for health check grace period
+server_start_time = time.time()
 
 def metrics_worker():
     """Background worker for collecting metrics"""
@@ -879,10 +1137,38 @@ def metrics():
 @app.route('/health')
 def health():
     """Health check endpoint"""
-    if collector.last_update and (datetime.now() - collector.last_update).total_seconds() < 300:
+    current_time = time.time()
+    server_uptime = current_time - server_start_time
+    
+    # Allow grace period during startup (first 90 seconds)
+    # This gives time for initial metrics collection to complete
+    startup_grace_period = 90
+    
+    # After grace period, require metrics updated within 300 seconds
+    max_staleness = 300
+    
+    # During startup grace period, return healthy if server is running
+    if server_uptime < startup_grace_period:
+        if collector.last_update:
+            # Metrics have been collected, check staleness
+            time_since_update = (datetime.now() - collector.last_update).total_seconds()
+            if time_since_update < max_staleness:
+                return {'status': 'healthy', 'last_update': collector.last_update.isoformat(), 'uptime': f'{server_uptime:.1f}s'}, 200
+            else:
+                return {'status': 'unhealthy', 'message': f'Metrics not updated recently ({time_since_update:.0f}s ago)', 'uptime': f'{server_uptime:.1f}s'}, 503
+        else:
+            # Still in startup, server is running but metrics not collected yet
+            return {'status': 'healthy', 'message': 'Server starting up, metrics collection in progress', 'uptime': f'{server_uptime:.1f}s'}, 200
+    
+    # After grace period, require metrics to be collected
+    if collector.last_update and (datetime.now() - collector.last_update).total_seconds() < max_staleness:
         return {'status': 'healthy', 'last_update': collector.last_update.isoformat()}, 200
     else:
-        return {'status': 'unhealthy', 'message': 'Metrics not updated recently'}, 503
+        if collector.last_update:
+            time_since_update = (datetime.now() - collector.last_update).total_seconds()
+            return {'status': 'unhealthy', 'message': f'Metrics not updated recently ({time_since_update:.0f}s ago)'}, 503
+        else:
+            return {'status': 'unhealthy', 'message': 'Metrics not collected yet'}, 503
 
 @app.route('/')
 def root():
@@ -901,9 +1187,47 @@ def main():
     """Main function"""
     logger.info("Starting EIP Metrics Server")
     
+    # Initialize metrics with default values to ensure they're always present
+    # This ensures metrics are available immediately, even before first collection
+    eips_configured.set(0)
+    eips_assigned.set(0)
+    eips_unassigned.set(0)
+    eip_utilization_percent.set(0)
+    cpic_success.set(0)
+    cpic_pending.set(0)
+    cpic_error.set(0)
+    node_available.set(0)
+    node_with_errors.set(0)
+    # Counters start at 0 by default, no need to initialize
+    last_scrape_timestamp.set(0)
+    scrape_duration_seconds.set(0)
+    
+    # Set initial monitoring info
+    monitoring_info.info({
+        'version': '1.0.0',
+        'status': 'initializing',
+        'node_count': '0'
+    })
+    
+    logger.info("Metrics initialized with default values")
+    
     # Start metrics collection in background
     metrics_thread = threading.Thread(target=metrics_worker, daemon=True)
     metrics_thread.start()
+    
+    # Trigger immediate metrics collection (non-blocking)
+    # This ensures metrics are available as soon as possible
+    def initial_collection():
+        time.sleep(2)  # Give the server a moment to start
+        logger.info("Performing initial metrics collection...")
+        try:
+            collector.collect_metrics()
+            logger.info("Initial metrics collection completed")
+        except Exception as e:
+            logger.warning(f"Initial metrics collection failed (will retry): {e}")
+    
+    initial_thread = threading.Thread(target=initial_collection, daemon=True)
+    initial_thread.start()
     
     # Start Flask server
     port = int(os.getenv('PORT', '8080'))

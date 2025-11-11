@@ -1,19 +1,19 @@
-# OpenShift EIP Monitoring - Deployment Guide
+# Deployment Guide
 
-This guide provides comprehensive instructions for deploying and operating the OpenShift EIP monitoring solution that exposes 40+ Prometheus metrics and 30+ intelligent alerts for monitoring Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources.
+Deployment instructions for the OpenShift EIP monitoring solution.
 
 ## Overview
 
 The containerized EIP monitor provides:
-- **Real-time monitoring** of OpenShift EIP and CPIC resources
-- **40+ advanced Prometheus metrics** for comprehensive observability
-- **25+ intelligent alerts** for capacity planning and troubleshooting
-- **Health scoring and stability tracking** for operational excellence
-- **Distribution fairness analysis** with Gini coefficient calculations
-- **API performance monitoring** with response time and success rate tracking
-- **Historical trend analysis** for proactive capacity management
-- **Secure deployment** designed for OpenShift 4.18
-- **Simplified deployment** with no external cloud dependencies
+- Monitoring of OpenShift EIP and CPIC resources
+- Prometheus metrics for observability
+- Alert rules for capacity planning and troubleshooting
+- Health scoring and stability tracking
+- Distribution fairness analysis (Gini coefficient)
+- API performance monitoring
+- Historical trend analysis
+- Secure deployment for OpenShift 4.18
+- No external cloud dependencies
 
 ## Architecture
 
@@ -35,9 +35,9 @@ The containerized EIP monitor provides:
 | `Dockerfile` | Multi-stage container build with OpenShift CLI and monitoring tools |
 | `entrypoint.sh` | Container lifecycle management and health checks |
 | `k8s-manifests.yaml` | Complete OpenShift deployment resources (RBAC, ConfigMap, Deployment, Service) |
-| `servicemonitor.yaml` | Prometheus ServiceMonitor and comprehensive alerting rules |
-| `build-and-deploy.sh` | Build, push, and deployment script |
-| `test-deployment.sh` | Deployment validation and health check script |
+| `servicemonitor.yaml` | Prometheus ServiceMonitor and alerting rules |
+| `deploy-eip.sh` | Build, push, and deployment script |
+| `test-deployment.sh` | Deployment validation and health check script (in `scripts/test/`) |
 | `deploy-test-eips.sh` | Automated test EgressIP creation for monitoring validation |
 
 ## Quick Start
@@ -80,11 +80,11 @@ image: "your-registry.com/eip-monitor:latest"
 
 ### Step 3: Deploy to OpenShift
 
-## 🚀 **Deployment Script**
+## Deployment Script
 
-The `build-and-deploy.sh` script provides ease of deployment:
+The `deploy-eip.sh` script handles deployment:
 
-### **📋 Script Commands**
+### Script Commands
 
 | Command | Description | Use Case |
 |---------|-------------|----------|
@@ -96,66 +96,66 @@ The `build-and-deploy.sh` script provides ease of deployment:
 | `logs` | Show container logs | Debugging |
 | `clean` | Remove deployment | Cleanup |
 
-### **🎯 Intelligent Image Handling**
+### Image Handling
 
-#### **✅ Without Registry (Local Development):**
+#### Without Registry (Local Development):
 ```bash
-./scripts/build-and-deploy.sh deploy
+./scripts/deploy-eip.sh deploy
 # Result:
 # - Uses current deployment's image (no pull errors)
 # - Applies all manifests (deployment, ServiceMonitor, ConfigMap, etc.)
-# - Perfect for manifest updates (alert rules, config changes)
+# - Suitable for manifest updates (alert rules, config changes)
 ```
 
-#### **✅ With Registry (Production Deployment):**
+#### With Registry (Production Deployment):
 ```bash
-./scripts/build-and-deploy.sh deploy -r quay.io/your-org
+./scripts/deploy-eip.sh deploy -r quay.io/your-org
 # Result:
 # - Uses registry image: quay.io/your-org/eip-monitor:latest
 # - Applies all manifests with new image
 # - Full deployment with updated container
 ```
 
-#### **✅ Full Pipeline:**
+#### Full Pipeline:
 ```bash
-./scripts/build-and-deploy.sh all -r quay.io/your-org
+./scripts/deploy-eip.sh all -r quay.io/your-org
 # Result:
 # - Builds new image
 # - Pushes to registry
 # - Deploys with new image
 ```
 
-### **📊 Usage Examples**
+### Usage Examples
 
-#### **For Manifest Updates (ServiceMonitor, ConfigMap, etc.):**
+#### For Manifest Updates (ServiceMonitor, ConfigMap, etc.):
 ```bash
 # Update alert rules, config changes, etc.
-./scripts/build-and-deploy.sh deploy
+./scripts/deploy-eip.sh deploy
 ```
 
-#### **For New Container Image:**
+#### For New Container Image:
 ```bash
 # Deploy with new image from registry
-./scripts/build-and-deploy.sh deploy -r quay.io/your-org
+./scripts/deploy-eip.sh deploy -r quay.io/your-org
 ```
 
-#### **For Full Development Cycle:**
+#### For Full Development Cycle:
 ```bash
 # Build, push, and deploy
-./scripts/build-and-deploy.sh all -r quay.io/your-org
+./scripts/deploy-eip.sh all -r quay.io/your-org
 ```
 
-### **🔧 Advanced Options**
+### Advanced Options
 
 ```bash
 # Custom image tag
-./scripts/build-and-deploy.sh deploy -r quay.io/your-org -t v1.2.3
+./scripts/deploy-eip.sh deploy -r quay.io/your-org -t v1.2.3
 
 # Custom namespace
-./scripts/build-and-deploy.sh deploy -n my-monitoring
+./scripts/deploy-eip.sh deploy -n my-monitoring
 
 # Show help
-./scripts/build-and-deploy.sh --help
+./scripts/deploy-eip.sh --help
 ```
 
 ### Step 3: Deploy to OpenShift
@@ -202,9 +202,9 @@ oc port-forward svc/eip-monitor 8080:8080 -n eip-monitoring
 curl http://localhost:8080/metrics
 ```
 
-## Available Metrics (40+ Total)
+## Available Metrics
 
-### Core EIP Metrics (6)
+### Core EIP Metrics
 - `eips_configured_total` - Total configured EIPs
 - `eips_assigned_total` - Total assigned EIPs  
 - `eips_unassigned_total` - Total unassigned EIPs
@@ -212,7 +212,7 @@ curl http://localhost:8080/metrics
 - `eip_assignment_rate_per_minute` - EIP assignment rate
 - `eip_unassignment_rate_per_minute` - EIP unassignment rate
 
-### CPIC Status Metrics (6)
+### CPIC Status Metrics
 - `cpic_success_total` - Successful CPIC resources
 - `cpic_pending_total` - Pending CPIC resources
 - `cpic_error_total` - Error CPIC resources
@@ -220,7 +220,7 @@ curl http://localhost:8080/metrics
 - `cpic_pending_duration_seconds{resource_name}` - Time in pending state
 - `cpic_error_duration_seconds{resource_name}` - Time in error state
 
-### Per-Node Metrics (8)
+### Per-Node Metrics
 - `node_cpic_success_total{node}` - CPIC success per node
 - `node_cpic_pending_total{node}` - CPIC pending per node
 - `node_cpic_error_total{node}` - CPIC errors per node
@@ -230,13 +230,13 @@ curl http://localhost:8080/metrics
 - `eip_nodes_available_total` - Available EIP-enabled nodes
 - `eip_nodes_with_errors_total` - Nodes with CPIC errors
 
-### Distribution & Fairness Metrics (4)
+### Distribution and Fairness Metrics
 - `eip_distribution_stddev` - Standard deviation of EIP distribution
 - `eip_distribution_gini_coefficient` - Gini coefficient (0=fair, 1=unfair)
 - `eip_max_per_node` - Maximum EIPs on any node
 - `eip_min_per_node` - Minimum EIPs on any node
 
-### Health & Performance Metrics (8)
+### Health and Performance Metrics
 - `cluster_eip_health_score` - Overall cluster health (0-100)
 - `cluster_eip_stability_score` - Stability score (0-100)
 - `api_response_time_seconds{operation}` - API response times
@@ -246,12 +246,12 @@ curl http://localhost:8080/metrics
 - `cpic_recoveries_last_hour` - CPIC recoveries in last hour
 - `eip_scrape_duration_seconds` - Metrics collection duration
 
-### Monitoring System Metrics (4)
+### Monitoring System Metrics
 - `eip_scrape_errors_total` - Total scrape errors
 - `eip_last_scrape_timestamp_seconds` - Last successful scrape timestamp
 - `eip_monitoring_info` - Static monitoring information with enhanced details
 
-📊 **See `ENHANCED_METRICS_GUIDE.md` for complete metrics catalog and advanced usage examples.**
+See [ENHANCED_METRICS_GUIDE.md](ENHANCED_METRICS_GUIDE.md) for complete metrics catalog.
 
 ## Configuration
 
@@ -317,27 +317,27 @@ curl http://pod-ip:8080/       # Basic info
 curl http://pod-ip:8080/metrics # Prometheus metrics
 ```
 
-### Built-in Alerts (25+ Total)
+### Built-in Alerts
 
-The `servicemonitor.yaml` includes comprehensive Prometheus alerting rules:
+The `servicemonitor.yaml` includes Prometheus alerting rules:
 
-#### **Core EIP Alerts** (3)
+#### Core EIP Alerts
 - **EIPNotAssigned** - EIPs configured but not assigned
 - **EIPUtilizationHigh** - EIP utilization > 90%
 - **EIPUtilizationCritical** - EIP utilization > 95%
 
-#### **CPIC Health Alerts** (3)
+#### CPIC Health Alerts
 - **CPICErrors** - CPIC resources in error state  
 - **CPICPendingTooLong** - CPIC resources pending > 10 minutes
 - **CPICPendingCritical** - CPIC resources stuck > 30 minutes
 
-#### **Capacity & Distribution Alerts** (4)
+#### Capacity and Distribution Alerts
 - **EIPDistributionUnfair** - Gini coefficient > 0.4 (uneven distribution)
 - **EIPDistributionExtreme** - Gini coefficient > 0.7 (severe imbalance)
 - **NodeEIPCapacityWarning** - Node utilization > 80%
 - **NodeEIPCapacityCritical** - Node utilization > 95%
 
-#### **Health & Performance Alerts** (7)
+#### Health and Performance Alerts
 - **ClusterEIPHealthLow** - Health score < 70 (only when EIPs configured)
 - **ClusterEIPHealthCritical** - Health score < 50 (only when EIPs configured)
 - **ClusterEIPInstability** - Stability score < 70 (only when EIPs configured)
@@ -346,7 +346,7 @@ The `servicemonitor.yaml` includes comprehensive Prometheus alerting rules:
 - **APISuccessRateLow** - Success rate < 95%
 - **APISuccessRateCritical** - Success rate < 80%
 
-#### **Operational Alerts** (8+)
+#### Operational Alerts
 - **EIPNodesWithErrors** - Nodes have CPIC errors
 - **EIPNodesUnavailable** - No EIP nodes available
 - **HighEIPChangeRate** - High change frequency
@@ -356,7 +356,7 @@ The `servicemonitor.yaml` includes comprehensive Prometheus alerting rules:
 - **EIPMonitoringDown** - Service is down
 - **EIPMetricsStale** - Outdated metrics data
 
-🚨 **See `ENHANCED_METRICS_GUIDE.md` for complete alert catalog with thresholds and severity levels.**
+See [ENHANCED_METRICS_GUIDE.md](ENHANCED_METRICS_GUIDE.md) for complete alert catalog.
 
 ## Creating Test EgressIPs
 
@@ -440,7 +440,7 @@ spec:
 
 ### Automated EgressIP Testing
 
-The repository includes an automated script to create comprehensive test EgressIP configurations for monitoring validation.
+The repository includes an automated script to create test EgressIP configurations for monitoring validation.
 
 #### **Prerequisites**
 
@@ -468,15 +468,15 @@ Use the automated deployment script:
 ./scripts/deploy-test-eips.sh deploy
 ```
 
-#### **What the Script Does**
+#### What the Script Does
 
-The `deploy-test-eips.sh` script automatically:
+The `deploy-test-eips.sh` script:
 
-1. **🔍 Discovers EgressIP ranges** from cluster node annotations
-2. **📋 Creates test namespaces** with diverse labels (up to 200 namespaces):
+1. Discovers EgressIP ranges from cluster node annotations
+2. Creates test namespaces with labels (up to 200 namespaces):
    - `test-ns-1` through `test-ns-200` with various application and infrastructure labels
    - Includes databases, monitoring, CI/CD, microservices, protocols, security, and testing infrastructure
-3. **🚀 Deploys dynamic EgressIPs**:
+3. Deploys dynamic EgressIPs:
    - Creates one EgressIP per namespace with appropriate labels
    - Supports flexible IP distribution modes:
      - **Auto-distribute**: Evenly distributes IPs across namespaces with extras handled
@@ -515,7 +515,7 @@ The `deploy-test-eips.sh` script automatically:
 ./scripts/deploy-test-eips.sh help
 ```
 
-#### **Distribution Modes**
+#### Distribution Modes
 
 The script supports two IP distribution modes:
 
@@ -533,31 +533,31 @@ The script supports two IP distribution modes:
 #### **Expected Output**
 
 ```
-🚀 EgressIP Test Deployment with Dynamic Discovery
+EgressIP Test Deployment with Dynamic Discovery
 =================================================
 
-✅ Prerequisites validated
-ℹ️  Current cluster: https://api.your-cluster.com:6443
-ℹ️  Current user: your-username  
-ℹ️  Requested IP count: 200
-ℹ️  Requested namespace count: 200
-ℹ️  EIPs per namespace: auto-distribute
+Prerequisites validated
+Current cluster: https://api.your-cluster.com:6443
+Current user: your-username  
+Requested IP count: 200
+Requested namespace count: 200
+EIPs per namespace: auto-distribute
 
-🔍 Discovering EgressIP configuration from cluster...
-✅ Found EgressIP CIDR: 10.0.128.0/23
-🎯 Generating 200 test IP addresses...
-✅ Generated 200 test IP addresses
+Discovering EgressIP configuration from cluster...
+Found EgressIP CIDR: 10.0.128.0/23
+Generating 200 test IP addresses...
+Generated 200 test IP addresses
 
-📋 Creating 200 test namespaces...
-✅ Namespace 'test-ns-1' created/verified
-✅ Namespace 'test-ns-2' created/verified
+Creating 200 test namespaces...
+Namespace 'test-ns-1' created/verified
+Namespace 'test-ns-2' created/verified
 ... (continues for all 200 namespaces)
 
-🚀 Deploying EgressIP configurations with discovered IPs...
-ℹ️  Auto distribution: 1 IP per namespace (with 0 extra IPs)
-✅ Test EgressIPs deployed successfully!
+Deploying EgressIP configurations with discovered IPs...
+Auto distribution: 1 IP per namespace (with 0 extra IPs)
+Test EgressIPs deployed successfully!
 
-📊 Deployment Summary
+Deployment Summary
 ====================
 CIDR discovered: 10.0.128.0/23
 IPs requested: 200
@@ -607,7 +607,7 @@ The script supports enterprise-scale testing scenarios with up to 200 egress IPs
 This creates:
 - **200 namespaces**: `test-ns-1` through `test-ns-200`
 - **200 EgressIPs**: One per namespace with diverse labels
-- **200 IPs total**: 1 IP per namespace (perfect 1:1 mapping)
+- **200 IPs total**: 1 IP per namespace (1:1 mapping)
 - **Diverse labels**: Databases, monitoring, CI/CD, microservices, protocols, security, testing infrastructure
 
 #### **Namespace Categories**
@@ -650,7 +650,7 @@ For large-scale deployments:
 
 For maximum granularity and namespace isolation testing, you can deploy with a 1:1 mapping where each namespace gets exactly one egress IP:
 
-#### **Perfect Namespace Isolation**
+#### **Namespace Isolation with 1:1 Mapping**
 
 ```bash
 # Deploy with 1:1 mapping (200 IPs, 200 namespaces, 1 EIP each)
@@ -658,7 +658,7 @@ For maximum granularity and namespace isolation testing, you can deploy with a 1
 ```
 
 This configuration provides:
-- **Perfect Isolation**: Each namespace has its own dedicated egress IP
+- **Complete Isolation**: Each namespace has its own dedicated egress IP
 - **Individual Testing**: Test egress behavior per namespace independently
 - **Maximum Granularity**: 200 unique egress endpoints for testing
 - **Real-world Scenarios**: Simulates production environments with dedicated egress per application
@@ -718,7 +718,7 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 # This creates:
 # - 5 namespaces with diverse labels
 # - 5 EgressIPs with exactly 3 IPs each
-# - Perfect for testing capacity limits per namespace
+# - Suitable for testing capacity limits per namespace
 ```
 
 #### Scenario 4: Maximum Granularity Testing
@@ -729,7 +729,7 @@ The `deploy-test-eips.sh` script supports various testing scenarios through diff
 # This creates:
 # - 200 namespaces with diverse labels
 # - 200 EgressIPs with 1 IP each
-# - Perfect for testing namespace isolation
+# - Suitable for testing namespace isolation
 ```
 
 #### Scenario 5: Load Testing
