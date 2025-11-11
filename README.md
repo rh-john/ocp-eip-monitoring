@@ -282,7 +282,8 @@ ocp-eip-monitoring/
 │   ├── deploy-monitoring.sh       # Deploy monitoring infrastructure (COO/UWM)
 │   ├── deploy-grafana.sh          # Deploy Grafana operator and dashboards
 │   ├── deploy-test-eips.sh        # Test EIP creation and CPIC redistribution
-│   ├── test-monitoring-deployment.sh  # Comprehensive monitoring tests
+│   ├── test/
+│   │   ├── test-monitoring-deployment.sh  # Comprehensive monitoring tests
 │   └── lib/                       # Shared script library
 │       └── common.sh              # Common functions (pod finding, logging, prerequisites)
 ├── tests/                         # Test suites
@@ -322,7 +323,7 @@ check_prerequisites
 
 - **`scripts/deploy-monitoring.sh`**: Deploy COO or UWM monitoring infrastructure
 - **`scripts/deploy-grafana.sh`**: Deploy Grafana operator, instance, and dashboards
-- **`scripts/test-monitoring-deployment.sh`**: Comprehensive monitoring verification
+- **`scripts/test/test-monitoring-deployment.sh`**: Comprehensive monitoring verification
 - **`tests/e2e/test-monitoring-e2e.sh`**: End-to-end monitoring tests
 - **`tests/e2e/test-uwm-grafana-e2e.sh`**: End-to-end Grafana deployment tests
 

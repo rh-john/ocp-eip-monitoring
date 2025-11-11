@@ -284,7 +284,7 @@ except:
     
     # Step 10: Run comprehensive test script
     log_test "Step 10: Running comprehensive monitoring test..."
-    if "${project_root}/scripts/test-monitoring-deployment.sh" --monitoring-type coo; then
+    if "${project_root}/scripts/test/test-monitoring-deployment.sh" --monitoring-type coo; then
         log_success "Comprehensive monitoring test passed"
         ((TESTS_PASSED++)) || true
     else
@@ -397,7 +397,7 @@ test_uwm_deployment() {
     
     # Step 8: Run comprehensive test script
     log_test "Step 8: Running comprehensive monitoring test..."
-    if "${project_root}/scripts/test-monitoring-deployment.sh" --monitoring-type uwm; then
+    if "${project_root}/scripts/test/test-monitoring-deployment.sh" --monitoring-type uwm; then
         log_success "Comprehensive monitoring test passed"
         ((TESTS_PASSED++)) || true
     else

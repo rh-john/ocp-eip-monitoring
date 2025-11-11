@@ -91,7 +91,7 @@ TIMEOUT=600 ./tests/e2e/test-monitoring-e2e.sh  # 10 minutes
 7. **Verify ThanosQuerier** and its pods
 8. **Verify AlertmanagerConfig** exists
 9. **Verify metrics** are being scraped (query Prometheus API)
-10. **Run comprehensive test** using `test-monitoring-deployment.sh`
+10. **Run comprehensive test** using `test/test-monitoring-deployment.sh`
 
 ### UWM with Grafana Test Flow
 
@@ -206,7 +206,7 @@ If tests fail, you can manually verify:
 
 ```bash
 # Check monitoring deployment
-./scripts/test-monitoring-deployment.sh --monitoring-type coo
+./scripts/test/test-monitoring-deployment.sh --monitoring-type coo
 
 # Check specific resources
 oc get servicemonitor,prometheusrule,networkpolicy -n eip-monitoring

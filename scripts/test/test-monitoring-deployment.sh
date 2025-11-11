@@ -9,7 +9,7 @@ set -e
 
 # Source common functions (pod finding, prerequisites)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 source "${PROJECT_ROOT}/scripts/lib/common.sh"
 
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
