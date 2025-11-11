@@ -1978,18 +1978,38 @@ show_monitoring_status() {
             log_warn "MonitoringStack not found"
         fi
         
-        # Check ServiceMonitor
-        if oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+        # Check ServiceMonitor (try both COO API group and standard API group)
+        local sm_found=false
+        if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "ServiceMonitor (COO API):"
+            oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE"
+            sm_found=true
+        elif oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
             log_info ""
             log_info "ServiceMonitor:"
             oc get servicemonitor eip-monitor-coo -n "$NAMESPACE"
+            sm_found=true
+        fi
+        if [[ "$sm_found" == "false" ]]; then
+            log_warn "ServiceMonitor not found"
         fi
         
-        # Check PrometheusRule
-        if oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
+        # Check PrometheusRule (try both COO API group and standard API group)
+        local pr_found=false
+        if oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "PrometheusRule (COO API):"
+            oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE"
+            pr_found=true
+        elif oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
             log_info ""
             log_info "PrometheusRule:"
             oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE"
+            pr_found=true
+        fi
+        if [[ "$pr_found" == "false" ]]; then
+            log_warn "PrometheusRule not found"
         fi
         
         echo ""
@@ -2090,8 +2110,36 @@ test_monitoring() {
         log_test "Step 1: COO Monitoring Tests"
         
         run_test "MonitoringStack exists" "oc get monitoringstack eip-monitoring-stack -n \"$NAMESPACE\" &>/dev/null"
-        run_test "ServiceMonitor exists" "oc get servicemonitor eip-monitor-coo -n \"$NAMESPACE\" &>/dev/null"
-        run_test "PrometheusRule exists" "oc get prometheusrule eip-monitor-alerts-coo -n \"$NAMESPACE\" &>/dev/null"
+        
+        # Check ServiceMonitor (try both COO API group and standard API group)
+        local sm_exists=false
+        if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+            sm_exists=true
+        fi
+        if [[ "$sm_exists" == "true" ]]; then
+            log_success "ServiceMonitor exists"
+            ((tests_passed++))
+        else
+            log_error "ServiceMonitor exists"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check PrometheusRule (try both COO API group and standard API group)
+        local pr_exists=false
+        if oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
+            pr_exists=true
+        fi
+        if [[ "$pr_exists" == "true" ]]; then
+            log_success "PrometheusRule exists"
+            ((tests_passed++))
+        else
+            log_error "PrometheusRule exists"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
         
         # Check Prometheus pods
         local prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
@@ -2131,8 +2179,33 @@ test_monitoring() {
         local uwm_enabled=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null | grep -oE "enableUserWorkload:\s*true" || echo "")
         run_test "User Workload Monitoring enabled" "[[ -n \"$uwm_enabled\" ]]"
         
-        run_test "ServiceMonitor exists" "oc get servicemonitor eip-monitor-uwm -n \"$NAMESPACE\" &>/dev/null"
-        run_test "PrometheusRule exists" "oc get prometheusrule eip-monitor-alerts-uwm -n \"$NAMESPACE\" &>/dev/null"
+        # Check ServiceMonitor (UWM uses standard API group)
+        local uwm_sm_exists=false
+        if oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            uwm_sm_exists=true
+        fi
+        if [[ "$uwm_sm_exists" == "true" ]]; then
+            log_success "ServiceMonitor exists"
+            ((tests_passed++))
+        else
+            log_error "ServiceMonitor exists"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check PrometheusRule (UWM uses standard API group)
+        local uwm_pr_exists=false
+        if oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null; then
+            uwm_pr_exists=true
+        fi
+        if [[ "$uwm_pr_exists" == "true" ]]; then
+            log_success "PrometheusRule exists"
+            ((tests_passed++))
+        else
+            log_error "PrometheusRule exists"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
         
         # Check UWM Prometheus pods
         local uwm_prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
