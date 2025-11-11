@@ -1313,11 +1313,13 @@ deploy_monitoring() {
         if [[ "$VERBOSE" == "true" ]]; then
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            log_info "Deploying ThanosQuerier..."
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
         else
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
+            log_info "Deploying ThanosQuerier..."
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml" 2>/dev/null
             oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
         fi
@@ -1394,23 +1396,51 @@ deploy_monitoring() {
         
         # Verify ThanosQuerier store discovery
         log_info "Waiting for ThanosQuerier to be ready..."
-        local max_wait=60
+        
+        # First, wait for ThanosQuerier CR to exist (operator needs to reconcile it)
+        local max_wait_cr=30
+        local waited_cr=0
+        while [[ $waited_cr -lt $max_wait_cr ]]; do
+            if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+                log_success "ThanosQuerier CR exists"
+                break
+            fi
+            sleep 2
+            waited_cr=$((waited_cr + 2))
+        done
+        
+        if [[ $waited_cr -ge $max_wait_cr ]]; then
+            log_warn "ThanosQuerier CR not found after ${max_wait_cr}s (may still be creating)"
+        fi
+        
+        # Now wait for the pod to be created and running
+        local max_wait=120
         local waited=0
         while [[ $waited -lt $max_wait ]]; do
-            if oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | grep -q "Running"; then
-                log_success "ThanosQuerier pod is running"
-                break
+            local thanos_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=thanos-query --no-headers 2>/dev/null | awk '{print $1}' | head -1)
+            if [[ -n "$thanos_pod" ]]; then
+                local pod_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                if [[ "$pod_phase" == "Running" ]]; then
+                    log_success "ThanosQuerier pod is running: $thanos_pod"
+                    break
+                elif [[ -n "$pod_phase" ]]; then
+                    # Pod exists but not running yet
+                    if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
+                        log_info "ThanosQuerier pod exists but not running yet (phase: $pod_phase, waited ${waited}s)..."
+                    fi
+                fi
             fi
             sleep 5
             waited=$((waited + 5))
             if [[ $((waited % 30)) -eq 0 ]] && [[ $waited -lt $max_wait ]]; then
-                log_info "Still waiting for ThanosQuerier... (${waited}s)"
+                log_info "Still waiting for ThanosQuerier pod... (${waited}s)"
             fi
         done
         
         if [[ $waited -ge $max_wait ]]; then
             log_warn "ThanosQuerier pod may not be ready yet (waited ${max_wait}s)"
             log_info "This is non-blocking - ThanosQuerier will continue initializing"
+            log_info "Check ThanosQuerier status: oc get thanosquerier eip-monitoring-stack-querier-coo -n $NAMESPACE"
         fi
         
         # Verify store discovery (non-blocking - warns but doesn't fail deployment)
