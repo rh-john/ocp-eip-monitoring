@@ -270,25 +270,16 @@ test_grafana_deployment() {
     
     # Step 4: Wait for Grafana instance pod
     log_test "Step 4: Waiting for Grafana instance pod..."
-    # Grafana Operator creates a Deployment for the Grafana instance
-    # The deployment name is typically based on the instance name: eip-monitoring-grafana-deployment
-    # Try multiple approaches: deployment selector, common labels, then name pattern
+    # Use common function to find Grafana pod (wait for running pod)
     local grafana_timeout=120  # 2 minutes for Grafana pod to start
-    
-    # First try: use deployment name pattern (most reliable for Grafana Operator)
-    log_info "Checking for Grafana deployment pods..."
+    local grafana_pod=""
     local waited=0
-    local grafana_pod_found=false
+    
     while [[ $waited -lt $grafana_timeout ]]; do
-        # Check for pods from the Grafana deployment (deployment name pattern)
-        local grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E "grafana.*deployment" | grep -v operator | head -1 || echo "")
+        grafana_pod=$(find_grafana_pod "$NAMESPACE" "true")  # Only return running pods
         if [[ -n "$grafana_pod" ]]; then
-            local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            if [[ "$pod_phase" == "Running" ]]; then
-                grafana_pod_found=true
-                log_success "Found Grafana pod: $grafana_pod"
-                break
-            fi
+            log_success "Found Grafana pod: $grafana_pod"
+            break
         fi
         sleep 5
         waited=$((waited + 5))
@@ -297,7 +288,7 @@ test_grafana_deployment() {
         fi
     done
     
-    if [[ "$grafana_pod_found" == "true" ]]; then
+    if [[ -n "$grafana_pod" ]]; then
         ((TESTS_PASSED++)) || true
     elif wait_for_pods "$NAMESPACE" "app.kubernetes.io/managed-by=grafana-operator" 1 "$grafana_timeout"; then
         ((TESTS_PASSED++)) || true
@@ -432,26 +423,12 @@ test_grafana_dashboards() {
     
     # Step 3: Verify Grafana can access dashboards
     log_test "Step 3: Verifying Grafana can access dashboards..."
-    # Try multiple approaches to find Grafana pod (in order of reliability)
-    # Grafana Operator creates pods with name pattern: eip-monitoring-grafana-deployment-*
-    local grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E "grafana.*deployment" | grep -v operator | head -1 || echo "")
-    if [[ -z "$grafana_pod" ]]; then
-        grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/managed-by=grafana-operator -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-    fi
-    if [[ -z "$grafana_pod" ]]; then
-        grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-    fi
-    if [[ -z "$grafana_pod" ]]; then
-        # Final fallback: find by name pattern (any grafana pod except operator)
-        grafana_pod=$(oc get pods -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i grafana | grep -v operator | head -1 || echo "")
-    fi
+    # Use common function to find Grafana pod (only running pods)
+    local grafana_pod=$(find_grafana_pod "$NAMESPACE" "true")
     
     if [[ -n "$grafana_pod" ]]; then
-        # Check if Grafana pod is ready
-        local pod_status=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-        if [[ "$pod_status" == "Running" ]]; then
-            log_success "Grafana pod '$grafana_pod' is running"
-            ((TESTS_PASSED++)) || true
+        log_success "Grafana pod '$grafana_pod' is running"
+        ((TESTS_PASSED++)) || true
             
             # Try to check Grafana API (if accessible)
             local grafana_ready=$(oc exec -n "$NAMESPACE" "$grafana_pod" -- wget -qO- http://localhost:3000/api/health 2>/dev/null | \
