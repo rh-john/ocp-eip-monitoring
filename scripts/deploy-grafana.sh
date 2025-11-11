@@ -248,7 +248,22 @@ deploy_grafana() {
         fi
     fi
     
-    # Deploy Grafana DataSource
+    # Deploy Grafana Instance FIRST (DataSource and Dashboards depend on it via instanceSelector)
+    log_info "Deploying Grafana Instance..."
+    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
+    local instance_exit=$?
+    if [[ $instance_exit -eq 0 ]]; then
+        log_success "Grafana Instance deployed"
+        log_info "Waiting for Grafana Instance to be ready..."
+        # Wait a moment for the instance to start initializing
+        sleep 5
+    else
+        log_error "Failed to deploy Grafana Instance"
+        echo "$instance_output" | sed 's/^/  /'
+        return 1
+    fi
+    
+    # Deploy Grafana DataSource (now that Instance exists)
     log_info "Deploying Grafana DataSource ($MONITORING_TYPE)..."
     local ds_output=$(oc apply -f "$datasource_file" 2>&1)
     local ds_exit=$?
@@ -268,18 +283,6 @@ deploy_grafana() {
     else
         log_error "Failed to deploy Grafana DataSource"
         echo "$ds_output" | sed 's/^/  /'
-        return 1
-    fi
-    
-    # Deploy Grafana Instance
-    log_info "Deploying Grafana Instance..."
-    local instance_output=$(oc apply -f k8s/grafana/grafana-instance.yaml 2>&1)
-    local instance_exit=$?
-    if [[ $instance_exit -eq 0 ]]; then
-        log_success "Grafana Instance deployed"
-    else
-        log_error "Failed to deploy Grafana Instance"
-        echo "$instance_output" | sed 's/^/  /'
         return 1
     fi
     
