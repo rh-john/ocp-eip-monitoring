@@ -6,7 +6,8 @@ set -euo pipefail
 
 # Source common functions (logging, prerequisites)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Go up from scripts/test to get project root
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 source "${PROJECT_ROOT}/scripts/lib/common.sh"
 
 NAMESPACE="${NAMESPACE:-eip-monitoring}"

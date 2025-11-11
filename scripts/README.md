@@ -100,7 +100,7 @@ Deploy Grafana operator, instance, and dashboards.
 
 ### `test/test-monitoring-deployment.sh`
 
-Comprehensive monitoring deployment verification.
+Monitoring deployment verification.
 
 **Usage:**
 ```bash
@@ -173,9 +173,9 @@ The scripts have been refactored to use a shared library (`scripts/lib/common.sh
 - **Better error handling**: Consistent error handling across scripts
 
 **Migration Status:**
-- ✅ Phase 1: Functions added to `common.sh`
-- ✅ Phase 2: High-priority scripts migrated (`deploy-monitoring.sh`, test scripts)
-- ⏳ Phase 3: Medium-priority scripts (verification scripts) - Optional
+- Phase 1: Functions added to `common.sh`
+- Phase 2: High-priority scripts migrated (`deploy-monitoring.sh`, test scripts)
+- Phase 3: Medium-priority scripts (verification scripts) - Optional
 
 See `scripts/lib/REFACTORING_EFFECTS_ANALYSIS.md` for detailed analysis.
 
