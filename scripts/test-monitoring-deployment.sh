@@ -346,6 +346,18 @@ test_coo() {
     # 12. Check metrics (for COO, use ThanosQuerier - aggregates multiple Prometheus replicas)
     # NOTE: For metrics queries, use ThanosQuerier when available (better for HA setups)
     # ThanosQuerier aggregates and deduplicates data from all Prometheus instances
+    # 
+    # API Compatibility:
+    # - ThanosQuerier implements Prometheus HTTP v1 API for query endpoints
+    # - /api/v1/query endpoint is COMPATIBLE between ThanosQuerier and Prometheus
+    # - Same request/response format, same PromQL syntax
+    # - Only difference: port (10902 for ThanosQuerier, 9090 for Prometheus)
+    # - Fallback works seamlessly because API is identical
+    # 
+    # Endpoints NOT available in ThanosQuerier:
+    # - /api/v1/targets (Prometheus-specific, shows scrape targets)
+    # - Other Prometheus-specific endpoints
+    # 
     # Following pattern from verify-prometheus-metrics.sh: use oc exec with curl/wget
     log_test "12. Checking metrics..."
     
@@ -365,15 +377,17 @@ test_coo() {
         local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
         if [[ "$thanos_phase" == "Running" ]]; then
             query_pod="$thanos_pod"
-            query_port="10902"  # ThanosQuerier uses port 10902
+            query_port="10902"  # ThanosQuerier uses port 10902 (Prometheus-compatible API)
             log_info "Using ThanosQuerier pod for metrics: $thanos_pod (port 10902)"
         fi
     fi
     
     # Fallback to Prometheus pod if ThanosQuerier not available
+    # This works because ThanosQuerier implements Prometheus HTTP v1 API
+    # Same endpoint (/api/v1/query), same format, just different port
     if [[ -z "$query_pod" ]] && [[ -n "$prom_pod" ]]; then
         query_pod="$prom_pod"
-        query_port="9090"
+        query_port="9090"  # Prometheus uses port 9090
         log_info "Using Prometheus pod for metrics: $prom_pod (port 9090)"
     fi
     
