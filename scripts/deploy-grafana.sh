@@ -11,6 +11,7 @@ NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-}"
 REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
 REMOVE_OPERATOR="${REMOVE_OPERATOR:-false}"
+DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete Grafana CRDs during cleanup (requires cluster-admin)
 
 # Colors for output
 RED='\033[0;31m'
@@ -49,6 +50,7 @@ Options:
   -r, --remove              Remove Grafana resources (dashboards, datasources, instances, RBAC)
   --remove-operator         Also remove Grafana Operator subscription (requires --remove)
   --all                     Remove all Grafana resources including operator (equivalent to --remove --remove-operator)
+  --delete-crds             Delete Grafana CRDs during cleanup (requires cluster-admin, only with --remove-operator or --all)
   -h, --help               Show this help message
 
 Environment Variables:
@@ -56,6 +58,7 @@ Environment Variables:
   MONITORING_TYPE           Monitoring type: coo or uwm (required for deployment)
   REMOVE_GRAFANA            Set to 'true' to remove Grafana resources
   REMOVE_OPERATOR           Set to 'true' to also remove Grafana Operator subscription
+  DELETE_CRDS               Set to 'true' to delete Grafana CRDs (requires cluster-admin)
 
 Examples:
   # Deploy Grafana for COO
@@ -72,6 +75,9 @@ Examples:
   
   # Remove everything (Grafana resources and operator)
   $0 --all --monitoring-type coo
+  
+  # Remove everything including CRDs (for E2E tests, requires cluster-admin)
+  $0 --all --monitoring-type uwm --delete-crds
 
 EOF
 }
@@ -576,6 +582,36 @@ remove_grafana_operator() {
         oc delete pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana-operator --force --grace-period=0 2>&1 | grep -vE "(not found|No resources found|Warning: Immediate deletion)" || true
     fi
     
+    # Optionally delete Grafana CRDs if they still exist (requires cluster-admin)
+    # Note: CRDs are typically cleaned up by the operator, but may remain if operator cleanup fails
+    # CRDs must be deleted AFTER all resources using them are deleted and operator is removed
+    if [[ "${DELETE_CRDS:-false}" == "true" ]]; then
+        log_info "Deleting Grafana CRDs (requires cluster-admin permissions)..."
+        
+        # Wait a bit for operator to clean up CRDs automatically
+        log_info "Waiting for operator to clean up CRDs (if supported)..."
+        sleep 5
+        
+        local grafana_crds=(
+            "grafanas.integreatly.org"
+            "grafanadashboards.integreatly.org"
+            "grafanadatasources.integreatly.org"
+        )
+        
+        for crd in "${grafana_crds[@]}"; do
+            if oc get crd "$crd" &>/dev/null; then
+                log_info "Deleting CRD: $crd..."
+                oc delete crd "$crd" 2>&1 | grep -vE "(not found|No resources found)" || log_warn "Failed to delete CRD: $crd (may require cluster-admin or CRD may be in use)"
+            fi
+        done
+        
+        log_success "Grafana CRD deletion completed"
+    else
+        log_info "Grafana CRDs will not be deleted (operator should clean them up automatically)"
+        log_info "To force CRD deletion, use: $0 --all --monitoring-type <coo|uwm> --delete-crds"
+        log_info "Note: CRD deletion requires cluster-admin permissions"
+    fi
+    
     log_success "Grafana Operator removal completed"
     echo ""
 }
@@ -598,6 +634,10 @@ parse_args() {
                 ;;
             --remove-operator)
                 REMOVE_OPERATOR="true"
+                shift
+                ;;
+            --delete-crds)
+                DELETE_CRDS="true"
                 shift
                 ;;
             --all)
@@ -629,6 +669,14 @@ main() {
     
     # Handle removal
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then
+        # Validate --delete-crds is only used with --remove-operator or --all
+        if [[ "$DELETE_CRDS" == "true" ]] && [[ "$REMOVE_OPERATOR" != "true" ]]; then
+            log_error "--delete-crds requires --remove-operator or --all"
+            log_error "CRDs can only be deleted when the operator is removed"
+            show_usage
+            exit 1
+        fi
+        
         # Monitoring type is helpful for RBAC cleanup but not strictly required
         if [[ -z "$MONITORING_TYPE" ]]; then
             log_warn "Monitoring type not specified for removal"
