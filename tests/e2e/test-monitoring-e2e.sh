@@ -277,7 +277,8 @@ except:
             log_warn "No eip_* metrics found yet (may still be initializing)"
             log_info "This is normal if Prometheus was just deployed - scraping may take a few minutes"
             if [[ "$use_route" == "true" ]]; then
-                log_info "Check ThanosQuerier targets: curl -sk ${query_url}/api/v1/targets | grep eip-monitor"
+                log_info "Check ThanosQuerier metrics: curl -sk ${query_url}/api/v1/query?query=count({__name__=~\"eip_.*\"})"
+                log_info "Note: ThanosQuerier doesn't expose /api/v1/targets - use Prometheus directly for targets"
             elif [[ -n "$prom_pod" ]]; then
                 log_info "Check Prometheus targets: oc exec -n $NAMESPACE $prom_pod -- wget -qO- http://localhost:9090/api/v1/targets | grep eip-monitor"
             fi
