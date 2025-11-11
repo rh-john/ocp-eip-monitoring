@@ -988,6 +988,88 @@ remove_coo_monitoring() {
         fi
     fi
     
+    # Delete Perses dashboards and datasources (deployed in openshift-operators namespace)
+    log_info "Removing Perses dashboards and datasources..."
+    # Check if Perses CRDs exist before attempting deletion
+    if oc get crd persesdashboards.perses.dev &>/dev/null && oc get crd persesdatasources.perses.dev &>/dev/null; then
+        # Delete by label selector (safer - only deletes COO Perses resources)
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo || true
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring || true
+        else
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo &>/dev/null || true
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring &>/dev/null || true
+        fi
+        
+        # Also delete by name as fallback (in case labels weren't applied)
+        # Delete datasource
+        if oc get persesdatasource prometheus-coo -n openshift-operators &>/dev/null; then
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete persesdatasource prometheus-coo -n openshift-operators || true
+            else
+                oc delete persesdatasource prometheus-coo -n openshift-operators &>/dev/null || true
+            fi
+        fi
+        
+        # Delete dashboards (list common dashboard names)
+        local perses_dashboards=(
+            "eip-distribution"
+            "eip-distribution-fairness"
+            "eip-capacity-planning"
+            "eip-health-overview"
+            "eip-node-performance"
+            "eip-event-correlation"
+            "eip-mismatch-analysis"
+            "eip-performance-troubleshooting"
+            "eip-primary-secondary-analysis"
+            "cpic-health"
+        )
+        for dashboard in "${perses_dashboards[@]}"; do
+            if oc get persesdashboard "$dashboard" -n openshift-operators &>/dev/null; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    oc delete persesdashboard "$dashboard" -n openshift-operators || true
+                else
+                    oc delete persesdashboard "$dashboard" -n openshift-operators &>/dev/null || true
+                fi
+            fi
+        done
+    else
+        log_info "Perses CRDs not found, skipping Perses resource cleanup"
+    fi
+    
+    # Delete COO UI plugins (cluster-scoped resources, no namespace)
+    log_info "Removing COO UI plugins..."
+    # Check if UIPlugin CRD exists before attempting deletion
+    # Note: UIPlugin is cluster-scoped (observability.openshift.io/v1alpha1), not namespace-scoped
+    if oc get crd uiplugins.observability.openshift.io &>/dev/null; then
+        # Delete by label selector (safer - only deletes COO UI plugins)
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete uiplugin -l monitoring=coo || true
+            oc delete uiplugin -l coo=eip-monitoring || true
+        else
+            oc delete uiplugin -l monitoring=coo &>/dev/null || true
+            oc delete uiplugin -l coo=eip-monitoring &>/dev/null || true
+        fi
+        
+        # Also delete by name as fallback (in case labels weren't applied)
+        # Common UI plugin names (from k8s/monitoring/coo/ui-plugins/)
+        local ui_plugin_names=(
+            "monitoring"
+            "troubleshooting"
+        )
+        for plugin_name in "${ui_plugin_names[@]}"; do
+            if oc get uiplugin "$plugin_name" &>/dev/null; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    oc delete uiplugin "$plugin_name" || true
+                else
+                    oc delete uiplugin "$plugin_name" &>/dev/null || true
+                fi
+            fi
+        done
+    else
+        log_info "UIPlugin CRD not found, skipping UI plugin cleanup"
+    fi
+    
     # Remove individual NetworkPolicies (if they exist)
     log_info "Removing individual NetworkPolicies..."
     oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
