@@ -2,7 +2,8 @@
 
 # Get script directory for proper path resolution
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Go up from scripts/test to get project root
+PROJECT_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 # Source common functions (logging, prerequisites, pod finding)
 source "${PROJECT_ROOT}/scripts/lib/common.sh"

@@ -18,32 +18,10 @@ REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 VERBOSE="${VERBOSE:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete COO CRDs during cleanup (requires cluster-admin)
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'  # Light blue (cyan)
-NC='\033[0m' # No Color
-
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
+# Note: Logging functions (log_info, log_success, log_warn, log_error) are now sourced from scripts/lib/common.sh
 # Note: oc_cmd() and oc_cmd_silent() are now sourced from scripts/lib/common.sh
 # They use the VERBOSE environment variable for conditional output suppression
+# Note: Helper functions (remove_finalizers, ensure_namespace, wait_for_operator_csv) are also available from common.sh
 
 # Show usage
 show_usage() {
@@ -193,8 +171,6 @@ enable_user_workload_monitoring() {
 
 # Enable AlertManager for user workloads
 enable_user_workload_alertmanager() {
-    log_info "Checking AlertManager configuration for user workloads..."
-    
     # Wait for namespace to exist (with timeout)
     local max_wait=60
     local waited=0
@@ -214,55 +190,85 @@ enable_user_workload_alertmanager() {
     # Check if user-workload-monitoring-config exists
     if ! oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring &>/dev/null; then
         log_info "Creating user-workload-monitoring-config ConfigMap with AlertManager enabled..."
-        oc create configmap user-workload-monitoring-config -n openshift-user-workload-monitoring \
+        local create_output create_error
+        create_output=$(oc create configmap user-workload-monitoring-config -n openshift-user-workload-monitoring \
             --from-literal=config.yaml="alertmanager:
   enabled: true
-  enableAlertmanagerConfig: true" 2>/dev/null || {
+  enableAlertmanagerConfig: true" 2>&1)
+        local create_exit=$?
+        if [[ $create_exit -eq 0 ]]; then
+            log_success "Created user-workload-monitoring-config with AlertManager enabled"
+            return 0
+        else
             log_error "Failed to create user-workload-monitoring-config"
+            log_error "Error: $create_output"
             log_error "This requires cluster-admin permissions"
             return 1
-        }
-        log_success "Created user-workload-monitoring-config with AlertManager enabled"
-        return 0
+        fi
     fi
     
     # Get current config
     local uwm_config=$(oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
     
     # Check if AlertManager is already enabled
-    if echo "$uwm_config" | grep -qE "alertmanager:\s*enabled:\s*true"; then
+    # Handle multiline YAML: check for alertmanager: section with enabled: true
+    if echo "$uwm_config" | grep -q "^alertmanager:" && echo "$uwm_config" | grep -A 5 "^alertmanager:" | grep -qE "^\s*enabled:\s*true"; then
         log_info "AlertManager is already enabled for user workloads"
         return 0
     fi
     
     # Check if config is empty
     if [[ -z "$uwm_config" ]]; then
-        log_info "Enabling AlertManager for user workloads (empty config)..."
-        oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge \
-            -p '{"data":{"config.yaml":"alertmanager:\n  enabled: true\n  enableAlertmanagerConfig: true\n"}}' 2>/dev/null || {
+        if [[ "${VERBOSE:-false}" == "true" ]]; then
+            log_info "Enabling AlertManager for user workloads (empty config)..."
+        fi
+        local patch_output patch_error
+        patch_output=$(oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge \
+            -p '{"data":{"config.yaml":"alertmanager:\n  enabled: true\n  enableAlertmanagerConfig: true\n"}}' 2>&1)
+        local patch_exit=$?
+        if [[ $patch_exit -eq 0 ]]; then
+            log_success "Enabled AlertManager for user workloads"
+            return 0
+        else
             log_error "Failed to enable AlertManager"
+            log_error "Error: $patch_output"
             log_error "This requires cluster-admin permissions"
             return 1
-        }
-        log_success "Enabled AlertManager for user workloads"
-        return 0
+        fi
     fi
     
     # Config exists but doesn't have AlertManager enabled
-    log_info "Enabling AlertManager for user workloads (updating existing config)..."
+    if [[ "${VERBOSE:-false}" == "true" ]]; then
+        log_info "Enabling AlertManager for user workloads (updating existing config)..."
+        log_info "Current config (first 200 chars): $(echo "$uwm_config" | head -c 200)"
+    fi
     
     # Use a temporary file to safely update the YAML
-    local temp_config=$(mktemp)
-    echo "$uwm_config" > "$temp_config"
+    local temp_config
+    temp_config=$(mktemp) || {
+        log_error "Failed to create temporary file"
+        return 1
+    }
+    
+    # Write config to temp file
+    if ! echo "$uwm_config" > "$temp_config"; then
+        log_error "Failed to write config to temporary file"
+        rm -f "$temp_config"
+        return 1
+    fi
+    
     local temp_config_new="${temp_config}.new"
     
+    # Temporarily disable exit on error for YAML parsing operations
+    set +e
+    
     # Check if alertmanager section exists
-    if grep -q "^alertmanager:" "$temp_config"; then
+    if grep -q "^alertmanager:" "$temp_config" 2>/dev/null; then
         # Update existing alertmanager section
         # Replace enabled: false with enabled: true, or add enabled: true if missing
-        if grep -qE "alertmanager:\s*$" "$temp_config" || grep -qE "^\s*enabled:\s*false" "$temp_config"; then
+        if grep -qE "alertmanager:\s*$" "$temp_config" 2>/dev/null || grep -qE "^\s*enabled:\s*false" "$temp_config" 2>/dev/null; then
             # Use awk to update the alertmanager section
-            awk '
+            if ! awk '
             /^alertmanager:/ { 
                 print; 
                 getline; 
@@ -279,15 +285,35 @@ enable_user_workload_alertmanager() {
                 next
             }
             { print }
-            ' "$temp_config" > "$temp_config_new"
-            mv "$temp_config_new" "$temp_config"
+            ' "$temp_config" > "$temp_config_new" 2>/dev/null; then
+                log_error "Failed to update AlertManager section in config"
+                set -e
+                rm -f "$temp_config" "$temp_config_new"
+                return 1
+            fi
+            if ! mv "$temp_config_new" "$temp_config" 2>/dev/null; then
+                log_error "Failed to update temporary config file"
+                set -e
+                rm -f "$temp_config" "$temp_config_new"
+                return 1
+            fi
         else
             # AlertManager section exists but enabled might be missing or true already
             # Just ensure enableAlertmanagerConfig is set
-            if ! grep -q "enableAlertmanagerConfig" "$temp_config"; then
-                sed '/^alertmanager:/a\
-  enableAlertmanagerConfig: true' "$temp_config" > "$temp_config_new"
-                mv "$temp_config_new" "$temp_config"
+            if ! grep -q "enableAlertmanagerConfig" "$temp_config" 2>/dev/null; then
+                if ! sed '/^alertmanager:/a\
+  enableAlertmanagerConfig: true' "$temp_config" > "$temp_config_new" 2>/dev/null; then
+                    log_error "Failed to add enableAlertmanagerConfig to config"
+                    set -e
+                    rm -f "$temp_config" "$temp_config_new"
+                    return 1
+                fi
+                if ! mv "$temp_config_new" "$temp_config" 2>/dev/null; then
+                    log_error "Failed to update temporary config file"
+                    set -e
+                    rm -f "$temp_config" "$temp_config_new"
+                    return 1
+                fi
             fi
         fi
     else
@@ -298,29 +324,57 @@ enable_user_workload_alertmanager() {
             echo "  enableAlertmanagerConfig: true"
             echo ""
             cat "$temp_config"
-        } > "$temp_config_new"
-        mv "$temp_config_new" "$temp_config"
+        } > "$temp_config_new" 2>/dev/null || {
+            log_error "Failed to create updated config with AlertManager section"
+            set -e
+            rm -f "$temp_config" "$temp_config_new"
+            return 1
+        }
+        if ! mv "$temp_config_new" "$temp_config" 2>/dev/null; then
+            log_error "Failed to update temporary config file"
+            set -e
+            rm -f "$temp_config" "$temp_config_new"
+            return 1
+        fi
     fi
     
+    # Re-enable exit on error
+    set -e
+    
     # Read the updated config and escape for JSON
-    local updated_config=$(cat "$temp_config")
+    local updated_config
+    updated_config=$(cat "$temp_config") || {
+        log_error "Failed to read updated config from temporary file"
+        rm -f "$temp_config" "$temp_config_new"
+        return 1
+    }
+    
     # Escape JSON special characters
     updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
     # Convert newlines to \n for JSON
     updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
     
     # Apply the updated config
-    oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge \
-        -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>/dev/null || {
-        log_error "Failed to enable AlertManager"
-        log_error "This requires cluster-admin permissions"
+    local patch_output
+    patch_output=$(oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge \
+        -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" 2>&1)
+    local patch_exit=$?
+    if [[ $patch_exit -eq 0 ]]; then
         rm -f "$temp_config" "$temp_config_new"
+        log_success "Enabled AlertManager for user workloads"
+        log_info "AlertManager pods will start shortly (may take a few minutes)"
+        return 0
+    else
+        rm -f "$temp_config" "$temp_config_new"
+        log_error "Failed to enable AlertManager"
+        log_error "Error: $patch_output"
+        log_error "This requires cluster-admin permissions"
+        if [[ "${VERBOSE:-false}" == "true" ]]; then
+            log_info "Debug: Updated config (first 500 chars):"
+            log_info "$(echo "$updated_config" | head -c 500)"
+        fi
         return 1
-    }
-    
-    rm -f "$temp_config" "$temp_config_new"
-    log_success "Enabled AlertManager for user workloads"
-    log_info "AlertManager pods will start shortly (may take a few minutes)"
+    fi
 }
 
 # Detect currently installed monitoring type
@@ -402,15 +456,24 @@ install_coo_operator() {
         csv_exists=true
         csv_phase=$(oc get csv "$csv_name" -n openshift-operators -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
         
-        # Check if CSV is owned by a subscription
+        # If subscription is healthy and CSV matches installedCSV, we're good
+        if [[ "$subscription_healthy" == "true" ]] && [[ "$csv_name" == "$installed_csv" ]] && [[ "$csv_phase" == "Succeeded" ]]; then
+            log_success "COO operator is already installed and healthy (CSV: $csv_name, phase: $csv_phase)"
+            return 0
+        fi
+        
+        # Check if CSV is owned by a subscription (only warn if subscription is not healthy or CSV doesn't match)
         local csv_owner=$(oc get csv "$csv_name" -n openshift-operators -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Subscription")].name}' 2>/dev/null || echo "")
         
         if [[ -z "$csv_owner" ]]; then
-            log_warn "CSV $csv_name exists but is not owned by a subscription"
-            if [[ "$subscription_exists" == "true" ]] && [[ "$subscription_healthy" == "false" ]]; then
-                log_info "Subscription exists but CSV is not linked. This may cause resolution issues."
-                log_info "To fix: delete the CSV and let the subscription reinstall it:"
-                log_info "  oc delete csv $csv_name -n openshift-operators"
+            # Only warn if subscription is not healthy or CSV doesn't match installedCSV
+            if [[ "$subscription_healthy" == "false" ]] || [[ "$csv_name" != "$installed_csv" ]]; then
+                log_warn "CSV $csv_name exists but is not owned by a subscription"
+                if [[ "$subscription_exists" == "true" ]] && [[ "$subscription_healthy" == "false" ]]; then
+                    log_info "Subscription exists but CSV is not linked. This may cause resolution issues."
+                    log_info "To fix: delete the CSV and let the subscription reinstall it:"
+                    log_info "  oc delete csv $csv_name -n openshift-operators"
+                fi
             fi
         elif [[ "$csv_phase" == "Succeeded" ]] && [[ "$subscription_healthy" == "true" ]]; then
             log_success "COO operator is already installed and healthy (CSV: $csv_name, phase: $csv_phase)"
@@ -772,8 +835,6 @@ except:
 
 # Configure COO monitoring stack
 configure_coo_monitoring_stack() {
-    log_info "Deploying COO MonitoringStack..."
-    
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
     local monitoringstack_file="${project_root}/k8s/monitoring/coo/monitoring/monitoringstack-coo.yaml"
@@ -783,27 +844,21 @@ configure_coo_monitoring_stack() {
         return 1
     fi
     
-    oc apply -f "$monitoringstack_file" || {
+    oc_cmd_silent apply -f "$monitoringstack_file" || {
         log_error "Failed to deploy COO MonitoringStack"
         return 1
     }
     
-    log_success "COO MonitoringStack deployed"
-    
     # Ensure MonitoringStack has the required label for ThanosQuerier discovery
-    log_info "Ensuring MonitoringStack has required label for ThanosQuerier discovery..."
     local part_of_label=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || echo "")
     if [[ "$part_of_label" != "eip-monitoring-stack" ]]; then
-        log_info "Adding required label to MonitoringStack..."
-        oc patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
+        oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
             -p '{"metadata":{"labels":{"app.kubernetes.io/part-of":"eip-monitoring-stack"}}}' || {
             log_warn "Failed to add label to MonitoringStack (this may affect ThanosQuerier store discovery)"
         }
         # Wait a moment for the label to be applied
         sleep 2
     fi
-    
-    log_info "Waiting for COO Prometheus and Alertmanager to be ready (this may take a few minutes)..."
     
     # Wait for Prometheus pods
     local max_wait=300
@@ -812,12 +867,11 @@ configure_coo_monitoring_stack() {
         local prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | grep -c "Running" 2>/dev/null || echo "0")
         prom_pods=$(echo "$prom_pods" | tr -d '[:space:]')
         if [[ "$prom_pods" =~ ^[0-9]+$ ]] && [[ "$prom_pods" -gt 0 ]]; then
-            log_success "COO Prometheus pods are running"
             break
         fi
         sleep 5
         waited=$((waited + 5))
-        if [[ $((waited % 30)) -eq 0 ]]; then
+        if [[ $((waited % 30)) -eq 0 ]] && [[ "${VERBOSE:-false}" == "true" ]]; then
             log_info "Still waiting for COO Prometheus... (${waited}s)"
         fi
     done
@@ -986,17 +1040,9 @@ remove_coo_monitoring() {
                 log_warn "Found orphaned CSV: $csv_name (not owned by subscription)"
                 log_info "Deleting orphaned CSV: $csv_name..."
                 
-                # Remove finalizers first if they exist (CSVs can get stuck with finalizers)
-                local finalizers=$(oc get csv "$csv_name" -n openshift-operators -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
-                if [[ -n "$finalizers" ]]; then
-                    log_info "Removing finalizers from CSV: $csv_name..."
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge || log_warn "Failed to remove finalizers from CSV: $csv_name"
-                    else
-                        oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || log_warn "Failed to remove finalizers from CSV: $csv_name"
-                    fi
-                    sleep 2
-                fi
+                # Remove finalizers using common function (CSVs can get stuck with finalizers)
+                remove_finalizers "csv" "openshift-operators" "$csv_name" || log_warn "Failed to remove finalizers from CSV: $csv_name"
+                sleep 2
                 
                 # Delete the CSV
                 if [[ "$VERBOSE" == "true" ]]; then
@@ -1014,13 +1060,8 @@ remove_coo_monitoring() {
         log_warn "Found CSVs stuck in deletion:"
         echo "$stuck_csvs" | while read -r csv_name; do
             log_info "  - $csv_name"
-            # Remove finalizers to allow deletion
-            log_info "Removing finalizers from stuck CSV: $csv_name..."
-            if [[ "$VERBOSE" == "true" ]]; then
-                oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge || true
-            else
-                oc patch csv "$csv_name" -n openshift-operators -p '{"metadata":{"finalizers":[]}}' --type=merge &>/dev/null || true
-            fi
+            # Remove finalizers to allow deletion using common function
+            remove_finalizers "csv" "openshift-operators" "$csv_name" || true
         done
     fi
     
@@ -1280,70 +1321,39 @@ deploy_monitoring() {
         configure_coo_monitoring_stack
         
         # Apply COO manifests
-        log_info "Applying COO monitoring manifests..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+        if [[ "${VERBOSE:-false}" == "true" ]]; then
             log_info "Deploying ThanosQuerier..."
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
-        else
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml" 2>/dev/null
-            log_info "Deploying ThanosQuerier..."
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml" 2>/dev/null
         fi
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
         
         # Always apply combined NetworkPolicy (works for both COO and UWM)
-        log_info "Applying combined NetworkPolicy (supports both COO and UWM)..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
-        else
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>/dev/null
-        fi
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         
         # Remove individual NetworkPolicies if they exist (to avoid conflicts)
-        log_info "Removing individual NetworkPolicies (if present) to avoid conflicts..."
-        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" &>/dev/null || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" &>/dev/null || true
         
         # Deploy Route for ThanosQuerier (for Inspect links in Perses dashboards)
-        log_info "Deploying ThanosQuerier route..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml" || {
-                log_warn "Failed to deploy ThanosQuerier route (non-critical, inspect links may not work)"
-            }
-        else
-            oc apply -f "${project_root}/k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml" 2>/dev/null || {
-                log_warn "Failed to deploy ThanosQuerier route (non-critical, inspect links may not work)"
-            }
-        fi
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/route-thanos-querier-coo.yaml" || {
+            log_warn "Failed to deploy ThanosQuerier route (non-critical, inspect links may not work)"
+        }
         
         # Apply federation ScrapeConfig if it exists
         local scrapeconfig_file="${project_root}/k8s/monitoring/coo/monitoring/scrapeconfig-federation-coo.yaml"
         if [[ -f "$scrapeconfig_file" ]]; then
-            log_info "Applying federation ScrapeConfig..."
-            
             # Apply federation RBAC first (required for authentication)
             local rbac_file="${project_root}/k8s/monitoring/coo/rbac/prometheus-federation-rbac.yaml"
             if [[ -f "$rbac_file" ]]; then
-                log_info "Applying federation RBAC..."
-                if [[ "$VERBOSE" == "true" ]]; then
-                    oc apply -f "$rbac_file" || log_warn "Failed to apply federation RBAC"
-                else
-                    oc apply -f "$rbac_file" &>/dev/null || log_warn "Failed to apply federation RBAC"
-                fi
+                oc_cmd_silent apply -f "$rbac_file" || log_warn "Failed to apply federation RBAC"
             else
                 log_warn "Federation RBAC file not found: $rbac_file"
                 log_warn "Federation may fail without proper RBAC permissions"
             fi
             
-            if [[ "$VERBOSE" == "true" ]]; then
-                oc apply -f "$scrapeconfig_file"
-            else
-                oc apply -f "$scrapeconfig_file" 2>/dev/null
-            fi
+            oc_cmd_silent apply -f "$scrapeconfig_file"
             
             # Setup federation token secret
             setup_federation_token || {
@@ -1352,7 +1362,6 @@ deploy_monitoring() {
             }
             
             # Wait for Prometheus to pick up the new token
-            log_info "Waiting for Prometheus to pick up federation configuration..."
             sleep 10
             
             # Verify federation is working (non-blocking)
@@ -1494,36 +1503,31 @@ deploy_monitoring() {
         fi
         
         # Add COO monitoring labels to deployment and service for service discovery
-        log_info "Adding COO monitoring labels to eip-monitor deployment and service..."
         if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
             # Add labels to deployment metadata and pod template
             # Ensure pods have: app=eip-monitor, service=eip-monitor (required by ServiceMonitor)
-            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
+            oc_cmd_silent patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
                 {"op": "add", "path": "/metadata/labels/monitoring-coo", "value": "true"},
                 {"op": "add", "path": "/spec/template/metadata/labels/monitoring-coo", "value": "true"},
                 {"op": "add", "path": "/spec/template/metadata/labels/service", "value": "eip-monitor"}
-            ]' 2>/dev/null || {
+            ]' || {
                 # Fallback: use oc label
-                oc label deployment eip-monitor -n "$NAMESPACE" monitoring-coo="true" --overwrite &>/dev/null || true
+                oc_cmd_silent label deployment eip-monitor -n "$NAMESPACE" monitoring-coo="true" --overwrite || true
             }
-            log_success "COO monitoring labels added to deployment"
-        else
-            log_warn "Deployment eip-monitor not found, skipping label update"
         fi
         
         # Ensure service has correct labels for ServiceMonitor discovery
         if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
-            oc patch service eip-monitor -n "$NAMESPACE" --type json -p '[
+            oc_cmd_silent patch service eip-monitor -n "$NAMESPACE" --type json -p '[
                 {"op": "add", "path": "/metadata/labels/app", "value": "eip-monitor"},
                 {"op": "add", "path": "/metadata/labels/service", "value": "eip-monitor"},
                 {"op": "add", "path": "/metadata/labels/monitoring-coo", "value": "true"},
                 {"op": "replace", "path": "/spec/selector/app", "value": "eip-monitor"}
-            ]' 2>/dev/null || {
+            ]' || {
                 # Fallback: use oc label and patch
-                oc label service eip-monitor -n "$NAMESPACE" app=eip-monitor service=eip-monitor monitoring-coo="true" --overwrite &>/dev/null || true
-                oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' &>/dev/null || true
+                oc_cmd_silent label service eip-monitor -n "$NAMESPACE" app=eip-monitor service=eip-monitor monitoring-coo="true" --overwrite || true
+                oc_cmd_silent patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' || true
             }
-            log_success "Service labels updated for COO"
         fi
         
         log_success "COO monitoring infrastructure deployed!"
@@ -1558,75 +1562,45 @@ deploy_monitoring() {
         enable_user_workload_alertmanager
         
         # Apply UWM manifests
-        log_info "Applying UWM monitoring manifests..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
-        else
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml" 2>/dev/null
-            oc apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml" 2>/dev/null
-        fi
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/uwm/monitoring/prometheusrule-uwm.yaml"
         
         # Always apply combined NetworkPolicy (works for both COO and UWM)
-        log_info "Applying combined NetworkPolicy (supports both COO and UWM)..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
-        else
-            oc apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml" 2>/dev/null
-        fi
+        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         
         # Remove individual NetworkPolicies if they exist (to avoid conflicts)
-        log_info "Removing individual NetworkPolicies (if present) to avoid conflicts..."
-        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" &>/dev/null || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" &>/dev/null || true
         
         # Add UWM monitoring labels to deployment and service for service discovery
-        log_info "Adding UWM monitoring labels to eip-monitor deployment and service..."
         if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
             # Add labels to deployment metadata and pod template
             # Ensure pods have: app=eip-monitor, service=eip-monitor (required by ServiceMonitor)
-            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
+            oc_cmd_silent patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
                 {"op": "add", "path": "/metadata/labels/monitoring-uwm", "value": "true"},
                 {"op": "add", "path": "/spec/template/metadata/labels/monitoring-uwm", "value": "true"},
                 {"op": "add", "path": "/spec/template/metadata/labels/service", "value": "eip-monitor"}
-            ]' 2>/dev/null || {
+            ]' || {
                 # Fallback: use oc label
-                oc label deployment eip-monitor -n "$NAMESPACE" monitoring-uwm="true" --overwrite &>/dev/null || true
+                oc_cmd_silent label deployment eip-monitor -n "$NAMESPACE" monitoring-uwm="true" --overwrite || true
             }
-            log_success "UWM monitoring labels added to deployment"
-        else
-            log_warn "Deployment eip-monitor not found, skipping label update"
         fi
         
         # Ensure service has correct labels for ServiceMonitor discovery
         if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
-            oc patch service eip-monitor -n "$NAMESPACE" --type json -p '[
+            oc_cmd_silent patch service eip-monitor -n "$NAMESPACE" --type json -p '[
                 {"op": "add", "path": "/metadata/labels/app", "value": "eip-monitor"},
                 {"op": "add", "path": "/metadata/labels/service", "value": "eip-monitor"},
                 {"op": "add", "path": "/metadata/labels/monitoring-uwm", "value": "true"},
                 {"op": "replace", "path": "/spec/selector/app", "value": "eip-monitor"}
-            ]' 2>/dev/null || {
+            ]' || {
                 # Fallback: use oc label and patch
-                oc label service eip-monitor -n "$NAMESPACE" app=eip-monitor service=eip-monitor monitoring-uwm="true" --overwrite &>/dev/null || true
-                oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' &>/dev/null || true
+                oc_cmd_silent label service eip-monitor -n "$NAMESPACE" app=eip-monitor service=eip-monitor monitoring-uwm="true" --overwrite || true
+                oc_cmd_silent patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' || true
             }
-            log_success "Service labels updated for UWM"
         fi
         
         log_success "UWM monitoring infrastructure deployed!"
-    fi
-    
-    log_info "Monitoring infrastructure status:"
-    if [[ "$VERBOSE" == "true" ]]; then
-        local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>&1)
-    else
-        local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>/dev/null || echo "")
-    fi
-    
-    if [[ -z "$status_output" ]] || echo "$status_output" | grep -qiE "(no resources found|not found)"; then
-        log_info "  (Resources may still be initializing)"
-    else
-        echo "$status_output" | sed 's/^/  /'
     fi
 }
 
