@@ -1060,27 +1060,7 @@ deploy() {
         wait "$rollout_pid" 2>/dev/null || true
         
         log_error "Deployment failed due to detected error state"
-        log_info "Gathering error diagnostics..."
-        echo ""
-        log_info "=== Deployment Status ==="
-        oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
-        echo ""
-        log_info "=== Pod Status ==="
-        oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
-        echo ""
-        
-        if [[ -n "$pod_name" ]]; then
-            log_info "=== Pod Events (for $pod_name) ==="
-            oc get events -n "$NAMESPACE" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' | tail -10 || true
-            echo ""
-            log_info "=== Pod Description (for $pod_name) ==="
-            oc describe pod "$pod_name" -n "$NAMESPACE" | tail -40 || true
-            echo ""
-            log_info "=== Pod Logs (for $pod_name) ==="
-            oc logs "$pod_name" -n "$NAMESPACE" --tail=50 2>&1 || true
-        fi
-        
-        echo ""
+        show_deployment_diagnostics "$NAMESPACE" "eip-monitor" "app=eip-monitor" "$pod_name"
         log_error "Deployment failed. Please fix the errors above and retry."
         return 1
     fi
@@ -1090,26 +1070,7 @@ deploy() {
         kill "$rollout_pid" 2>/dev/null || true
         wait "$rollout_pid" 2>/dev/null || true
         
-        log_info "Gathering deployment diagnostics..."
-        echo ""
-        log_info "=== Deployment Status ==="
-        oc get deployment eip-monitor -n "$NAMESPACE" 2>&1 | grep -v "No resources found" || true
-        echo ""
-        log_info "=== Pod Status ==="
-        oc get pods -n "$NAMESPACE" -l app=eip-monitor 2>&1 | grep -v "No resources found" || true
-        echo ""
-        
-        # Get pod name for detailed diagnostics
-        local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-        if [[ -n "$pod_name" ]]; then
-            log_info "=== Pod Events (for $pod_name) ==="
-            oc get events -n "$NAMESPACE" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' | tail -10 || true
-            echo ""
-            log_info "=== Pod Description (for $pod_name) ==="
-            oc describe pod "$pod_name" -n "$NAMESPACE" | tail -30 || true
-        fi
-        
-        echo ""
+        show_deployment_diagnostics "$NAMESPACE" "eip-monitor" "app=eip-monitor"
         log_warn "Deployment may still be in progress. Common issues:"
         log_info "  - Image pull errors: Check if image is accessible and credentials are correct"
         log_info "  - Resource constraints: Check cluster resources with 'oc describe node'"
@@ -1687,45 +1648,7 @@ restart_deployment() {
 # Show deployment status
 show_status() {
     log_info "Checking EIP Monitor deployment status..."
-    
-    # Check namespace
-    if ! oc get namespace "$NAMESPACE" &>/dev/null; then
-        log_warn "Namespace '$NAMESPACE' does not exist"
-        return 1
-    fi
-    
-    # Check deployment
-    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deployment:"
-        oc get deployment eip-monitor -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas,UP-TO-DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp"
-        
-        # Show image version
-        local image=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
-        log_info "Image: $image"
-        
-        # Check pods
-        log_info ""
-        log_info "Pods:"
-        oc get pods -n "$NAMESPACE" -l app=eip-monitor -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp"
-        
-        # Check service
-        if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
-            log_info ""
-            log_info "Service:"
-            oc get service eip-monitor -n "$NAMESPACE"
-        fi
-        
-        # Check if pods are ready
-        local ready_pods=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
-        if [[ "$ready_pods" -gt 0 ]]; then
-            log_success "Deployment is running ($ready_pods pod(s) running)"
-        else
-            log_warn "No running pods found"
-        fi
-    else
-        log_warn "Deployment 'eip-monitor' not found in namespace '$NAMESPACE'"
-        return 1
-    fi
+    show_deployment_status "$NAMESPACE" "eip-monitor" "app=eip-monitor" "eip-monitor"
 }
 
 # Show logs

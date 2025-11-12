@@ -570,3 +570,106 @@ wait_for_operator_csv() {
     return 1
 }
 
+# Show deployment diagnostics
+# Usage: show_deployment_diagnostics <namespace> <deployment_name> [pod_selector] [pod_name]
+#   namespace: Kubernetes namespace
+#   deployment_name: Name of the deployment (e.g., "eip-monitor")
+#   pod_selector: Label selector for pods (e.g., "app=eip-monitor") - optional, defaults to app=<deployment_name>
+#   pod_name: Specific pod name for detailed diagnostics - optional, will auto-detect if not provided
+show_deployment_diagnostics() {
+    local namespace=$1
+    local deployment_name=$2
+    local pod_selector=${3:-"app=$deployment_name"}
+    local pod_name=${4:-""}
+    
+    if [[ -z "$namespace" ]] || [[ -z "$deployment_name" ]]; then
+        log_error "show_deployment_diagnostics: namespace and deployment_name arguments required"
+        return 1
+    fi
+    
+    log_info "Gathering deployment diagnostics..."
+    echo ""
+    log_info "=== Deployment Status ==="
+    oc get deployment "$deployment_name" -n "$namespace" 2>&1 | grep -v "No resources found" || true
+    echo ""
+    log_info "=== Pod Status ==="
+    oc get pods -n "$namespace" -l "$pod_selector" 2>&1 | grep -v "No resources found" || true
+    echo ""
+    
+    # Get pod name if not provided
+    if [[ -z "$pod_name" ]]; then
+        pod_name=$(oc get pods -n "$namespace" -l "$pod_selector" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    fi
+    
+    if [[ -n "$pod_name" ]]; then
+        log_info "=== Pod Events (for $pod_name) ==="
+        oc get events -n "$namespace" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' | tail -10 || true
+        echo ""
+        log_info "=== Pod Description (for $pod_name) ==="
+        oc describe pod "$pod_name" -n "$namespace" | tail -40 || true
+        echo ""
+        log_info "=== Pod Logs (for $pod_name) ==="
+        oc logs "$pod_name" -n "$namespace" --tail=50 2>&1 || true
+        echo ""
+    fi
+}
+
+# Show deployment status (generic function)
+# Usage: show_deployment_status <namespace> <deployment_name> [pod_selector] [service_name]
+#   namespace: Kubernetes namespace
+#   deployment_name: Name of the deployment
+#   pod_selector: Label selector for pods (optional, defaults to app=<deployment_name>)
+#   service_name: Name of the service (optional, defaults to <deployment_name>)
+show_deployment_status() {
+    local namespace=$1
+    local deployment_name=$2
+    local pod_selector=${3:-"app=$deployment_name"}
+    local service_name=${4:-"$deployment_name"}
+    
+    if [[ -z "$namespace" ]] || [[ -z "$deployment_name" ]]; then
+        log_error "show_deployment_status: namespace and deployment_name arguments required"
+        return 1
+    fi
+    
+    # Check namespace
+    if ! oc get namespace "$namespace" &>/dev/null; then
+        log_warn "Namespace '$namespace' does not exist"
+        return 1
+    fi
+    
+    # Check deployment
+    if oc get deployment "$deployment_name" -n "$namespace" &>/dev/null; then
+        log_info "Deployment:"
+        oc get deployment "$deployment_name" -n "$namespace" -o custom-columns="NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas,UP-TO-DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp"
+        
+        # Show image version
+        local image=$(oc get deployment "$deployment_name" -n "$namespace" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+        log_info "Image: $image"
+        
+        # Check pods
+        log_info ""
+        log_info "Pods:"
+        oc get pods -n "$namespace" -l "$pod_selector" -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>&1 | grep -v "No resources found" || true
+        
+        # Check service
+        if oc get service "$service_name" -n "$namespace" &>/dev/null; then
+            log_info ""
+            log_info "Service:"
+            oc get service "$service_name" -n "$namespace"
+        fi
+        
+        # Check if pods are ready
+        local ready_pods=$(oc get pods -n "$namespace" -l "$pod_selector" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        if [[ "$ready_pods" =~ ^[0-9]+$ ]] && [[ "$ready_pods" -gt 0 ]]; then
+            log_success "Deployment is running ($ready_pods pod(s) running)"
+            return 0
+        else
+            log_warn "No running pods found"
+            return 1
+        fi
+    else
+        log_warn "Deployment '$deployment_name' not found in namespace '$namespace'"
+        return 1
+    fi
+}
+
