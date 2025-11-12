@@ -70,32 +70,24 @@ trap cleanup EXIT
 
 # Note: wait_for_resource() and wait_for_pods() are now sourced from scripts/lib/common.sh
 
-# Auto-detect latest pre-release image from .version file and git tags
+# Auto-detect latest pre-release image from git tags
 # Format: quay.io/${QUAY_REPOSITORY}/eip-monitor:v${VERSION}-rc${RC}
 detect_latest_pre_release_image() {
     # QUAY_REPOSITORY has a default value, so we can always use it
     
-    # Read version from .version file
-    local version_file="${PROJECT_ROOT}/.version"
-    if [[ ! -f "$version_file" ]]; then
-        return 1
-    fi
-    
-    local version=$(cat "$version_file" | tr -d '[:space:]')
-    if [[ -z "$version" ]]; then
-        return 1
-    fi
-    
     # Fetch tags if in a git repository (may be needed in CI environments)
     if git rev-parse --git-dir &>/dev/null; then
         git fetch --tags --quiet 2>/dev/null || true
+    else
+        return 1
     fi
     
-    # Find the latest RC tag for this version (e.g., v0.2.2-rc1, v0.2.2-rc2, etc.)
-    local latest_rc_tag=$(git tag -l "v${version}-rc*" 2>/dev/null | sort -V | tail -1)
+    # Find the latest RC tag directly from git (e.g., v0.2.2-rc1, v0.2.2-rc2, etc.)
+    # This avoids relying on potentially stale .version file
+    local latest_rc_tag=$(git tag -l "v*-rc*" 2>/dev/null | sort -V | tail -1)
     
     if [[ -z "$latest_rc_tag" ]]; then
-        # No RC tag found for this version, return failure
+        # No RC tag found, return failure
         return 1
     fi
     
@@ -107,25 +99,20 @@ detect_latest_pre_release_image() {
 check_auto_detection_status() {
     local reason=""
     
-    # Check if .version file exists
-    local version_file="${PROJECT_ROOT}/.version"
-    if [[ ! -f "$version_file" ]]; then
-        reason=".version file not found"
+    # Check if we're in a git repository
+    if ! git rev-parse --git-dir &>/dev/null; then
+        reason="not in a git repository"
         echo "$reason"
         return
     fi
     
-    local version=$(cat "$version_file" | tr -d '[:space:]' 2>/dev/null || echo "")
-    if [[ -z "$version" ]]; then
-        reason=".version file is empty"
-        echo "$reason"
-        return
-    fi
+    # Fetch tags
+    git fetch --tags --quiet 2>/dev/null || true
     
-    # Check if RC tags exist for this version
-    local latest_rc_tag=$(git tag -l "v${version}-rc*" 2>/dev/null | sort -V | tail -1)
+    # Check if RC tags exist
+    local latest_rc_tag=$(git tag -l "v*-rc*" 2>/dev/null | sort -V | tail -1)
     if [[ -z "$latest_rc_tag" ]]; then
-        reason="no pre-release tags found for version ${version} (v${version}-rc*)"
+        reason="no pre-release tags found (v*-rc*)"
     else
         reason="unknown (tag found: $latest_rc_tag)"
     fi
