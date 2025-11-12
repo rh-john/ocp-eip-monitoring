@@ -15,7 +15,9 @@ spec:
       admin_user: "admin"
       admin_password: "admin"
     server:
-      root_url: "%(protocol)s://%(domain)s:%(http_port)s/"
+      # For OpenShift Routes (reverse proxy without subpath), let Grafana auto-detect root_url
+      # The template variables will be resolved from the Route request headers
+      # Removing explicit root_url to allow auto-detection from X-Forwarded-* headers
   deployment:
     replicas: 1
     resources:

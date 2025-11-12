@@ -113,6 +113,59 @@ wait_for_pods() {
     return 1
 }
 
+# Verify OpenShift authentication with detailed diagnostics
+# Usage: verify_openshift_auth
+# Returns: 0 if authenticated, 1 if not authenticated
+verify_openshift_auth() {
+    local whoami_output
+    local whoami_exit
+    whoami_output=$(oc whoami 2>&1)
+    whoami_exit=$?
+    
+    if [[ $whoami_exit -ne 0 ]]; then
+        log_error "OpenShift authentication failed"
+        
+        # Check for specific error patterns
+        if echo "$whoami_output" | grep -qiE "forbidden|403|system:anonymous"; then
+            log_error "Error: User is not authenticated (403 Forbidden)"
+            log_info "The cluster returned: $whoami_output"
+            log_info ""
+            log_info "Possible causes:"
+            log_info "  1. Not logged in - run: oc login <cluster-url>"
+            log_info "  2. Token expired - get a new token and run: oc login --token=<token>"
+            log_info "  3. Invalid kubeconfig - check: ${KUBECONFIG:-~/.kube/config}"
+            log_info "  4. Wrong cluster context - check: oc config current-context"
+        elif echo "$whoami_output" | grep -qiE "unauthorized|401"; then
+            log_error "Error: Invalid credentials (401 Unauthorized)"
+            log_info "Please login again: oc login <cluster-url>"
+        elif echo "$whoami_output" | grep -qiE "connection refused|no route to host|timeout"; then
+            log_error "Error: Cannot reach OpenShift cluster"
+            log_info "Check network connectivity and cluster URL"
+        else
+            log_info "Error details: $whoami_output"
+        fi
+        
+        log_info ""
+        log_info "Current configuration:"
+        log_info "  Kubeconfig: ${KUBECONFIG:-~/.kube/config}"
+        log_info "  Context: $(oc config current-context 2>/dev/null || echo 'none')"
+        log_info "  Server: $(oc config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || echo 'unknown')"
+        
+        return 1
+    fi
+    
+    # Verify we're not anonymous
+    local current_user
+    current_user=$(oc whoami 2>/dev/null || echo "")
+    if [[ "$current_user" == "system:anonymous" ]]; then
+        log_error "Authenticated as anonymous user - proper authentication required"
+        log_info "Please login: oc login <cluster-url>"
+        return 1
+    fi
+    
+    return 0
+}
+
 # Check prerequisites
 # Usage: check_prerequisites
 # Returns: 0 if all prerequisites are met, 1 if any are missing
@@ -133,8 +186,8 @@ check_prerequisites() {
         return 1
     fi
     
-    if ! oc whoami &>/dev/null; then
-        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
+    # Check OpenShift authentication
+    if ! verify_openshift_auth; then
         return 1
     fi
     
