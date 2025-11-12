@@ -25,24 +25,34 @@ BLUE='\033[1;36m'  # Light blue (cyan)
 NC='\033[0m' # No Color
 
 # Logging functions
+
+# Log info message
+# Usage: log_info <message>
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
 
+# Log success message
+# Usage: log_success <message>
 log_success() {
     echo -e "${GREEN}[✓]${NC} $1"
 }
 
+# Log warning message
+# Usage: log_warn <message>
 log_warn() {
     echo -e "${YELLOW}[⚠]${NC} $1"
 }
 
+# Log error message
+# Usage: log_error <message>
 log_error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
 # Wait for resource to be ready
 # Usage: wait_for_resource <resource_type> <resource_name> <namespace> [timeout]
+# Returns: 0 if resource is ready, 1 on timeout
 wait_for_resource() {
     local resource_type=$1
     local resource_name=$2
@@ -74,6 +84,7 @@ wait_for_resource() {
 
 # Wait for pods to be running
 # Usage: wait_for_pods <namespace> <selector> [expected_count] [timeout]
+# Returns: 0 if expected pods are running, 1 on timeout
 wait_for_pods() {
     local namespace=$1
     local selector=$2
@@ -102,8 +113,62 @@ wait_for_pods() {
     return 1
 }
 
+# Verify OpenShift authentication with detailed diagnostics
+# Usage: verify_openshift_auth
+# Returns: 0 if authenticated, 1 if not authenticated
+verify_openshift_auth() {
+    local whoami_output
+    local whoami_exit
+    whoami_output=$(oc whoami 2>&1)
+    whoami_exit=$?
+    
+    if [[ $whoami_exit -ne 0 ]]; then
+        log_error "OpenShift authentication failed"
+        
+        # Check for specific error patterns
+        if echo "$whoami_output" | grep -qiE "forbidden|403|system:anonymous"; then
+            log_error "Error: User is not authenticated (403 Forbidden)"
+            log_info "The cluster returned: $whoami_output"
+            log_info ""
+            log_info "Possible causes:"
+            log_info "  1. Not logged in - run: oc login <cluster-url>"
+            log_info "  2. Token expired - get a new token and run: oc login --token=<token>"
+            log_info "  3. Invalid kubeconfig - check: ${KUBECONFIG:-~/.kube/config}"
+            log_info "  4. Wrong cluster context - check: oc config current-context"
+        elif echo "$whoami_output" | grep -qiE "unauthorized|401"; then
+            log_error "Error: Invalid credentials (401 Unauthorized)"
+            log_info "Please login again: oc login <cluster-url>"
+        elif echo "$whoami_output" | grep -qiE "connection refused|no route to host|timeout"; then
+            log_error "Error: Cannot reach OpenShift cluster"
+            log_info "Check network connectivity and cluster URL"
+        else
+            log_info "Error details: $whoami_output"
+        fi
+        
+        log_info ""
+        log_info "Current configuration:"
+        log_info "  Kubeconfig: ${KUBECONFIG:-~/.kube/config}"
+        log_info "  Context: $(oc config current-context 2>/dev/null || echo 'none')"
+        log_info "  Server: $(oc config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || echo 'unknown')"
+        
+        return 1
+    fi
+    
+    # Verify we're not anonymous
+    local current_user
+    current_user=$(oc whoami 2>/dev/null || echo "")
+    if [[ "$current_user" == "system:anonymous" ]]; then
+        log_error "Authenticated as anonymous user - proper authentication required"
+        log_info "Please login: oc login <cluster-url>"
+        return 1
+    fi
+    
+    return 0
+}
+
 # Check prerequisites
 # Usage: check_prerequisites
+# Returns: 0 if all prerequisites are met, 1 if any are missing
 check_prerequisites() {
     local missing_tools=()
     
@@ -121,8 +186,8 @@ check_prerequisites() {
         return 1
     fi
     
-    if ! oc whoami &>/dev/null; then
-        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
+    # Check OpenShift authentication
+    if ! verify_openshift_auth; then
         return 1
     fi
     
@@ -231,7 +296,9 @@ find_query_pod() {
         if [[ -z "$query_pod" ]]; then
             local prom_pod=$(find_prometheus_pod "$namespace" "true")
             if [[ -n "$prom_pod" ]]; then
-                local prom_phase=$(oc get pod "$prom_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                # Optimized: get pod phase in same call as pod lookup (if we have pod name, get JSON once)
+                local prom_json=$(oc get pod "$prom_pod" -n "$namespace" -o json 2>/dev/null || echo '{}')
+                local prom_phase=$(echo "$prom_json" | jq -r '.status.phase // ""' 2>/dev/null || echo "")
                 if [[ "$prom_phase" == "Running" ]]; then
                     query_pod="$prom_pod"
                     query_port="9090"  # Prometheus uses port 9090
@@ -242,7 +309,9 @@ find_query_pod() {
         # Try Prometheus first
         local prom_pod=$(find_prometheus_pod "$namespace" "false")
         if [[ -n "$prom_pod" ]]; then
-            local prom_phase=$(oc get pod "$prom_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            # Optimized: get pod phase in same call as pod lookup
+            local prom_json=$(oc get pod "$prom_pod" -n "$namespace" -o json 2>/dev/null || echo '{}')
+            local prom_phase=$(echo "$prom_json" | jq -r '.status.phase // ""' 2>/dev/null || echo "")
             if [[ "$prom_phase" == "Running" ]]; then
                 query_pod="$prom_pod"
                 query_port="9090"
@@ -253,7 +322,9 @@ find_query_pod() {
         if [[ -z "$query_pod" ]]; then
             local thanos_pod=$(find_thanosquerier_pod "$namespace")
             if [[ -n "$thanos_pod" ]]; then
-                local thanos_phase=$(oc get pod "$thanos_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                # Optimized: get pod phase in same call as pod lookup
+                local thanos_json=$(oc get pod "$thanos_pod" -n "$namespace" -o json 2>/dev/null || echo '{}')
+                local thanos_phase=$(echo "$thanos_json" | jq -r '.status.phase // ""' 2>/dev/null || echo "")
                 if [[ "$thanos_phase" == "Running" ]]; then
                     query_pod="$thanos_pod"
                     query_port="10902"
@@ -274,6 +345,7 @@ find_query_pod() {
 # Usage: oc_cmd <oc-args...>
 #   If VERBOSE environment variable is "true", shows full output
 #   Otherwise, suppresses stderr
+# Returns: exit code from oc command
 oc_cmd() {
     if [[ "${VERBOSE:-false}" == "true" ]]; then
         oc "$@"
@@ -286,11 +358,95 @@ oc_cmd() {
 # Usage: oc_cmd_silent <oc-args...>
 #   If VERBOSE environment variable is "true", shows full output
 #   Otherwise, suppresses both stdout and stderr
+# Returns: exit code from oc command
 oc_cmd_silent() {
     if [[ "${VERBOSE:-false}" == "true" ]]; then
         oc "$@"
     else
         oc "$@" &>/dev/null
+    fi
+}
+
+# Batch apply multiple Kubernetes manifest files
+# Usage: batch_apply <namespace> <file1> [file2] [file3] ...
+#   Applies all files in a single oc apply command for better performance
+#   Returns: 0 on success, 1 on error
+batch_apply() {
+    local namespace=$1
+    shift
+    local files=("$@")
+    
+    if [[ ${#files[@]} -eq 0 ]]; then
+        log_error "batch_apply: at least one file required"
+        return 1
+    fi
+    
+    # Check if all files exist
+    for file in "${files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            log_error "batch_apply: file not found: $file"
+            return 1
+        fi
+    done
+    
+    # Apply all files at once using process substitution
+    # This is more efficient than applying them sequentially
+    if [[ -n "$namespace" ]]; then
+        if oc apply -n "$namespace" -f "${files[@]}" &>/dev/null; then
+            return 0
+        else
+            # If batch apply fails, try applying individually for better error messages
+            local failed=0
+            for file in "${files[@]}"; do
+                if ! oc apply -n "$namespace" -f "$file" &>/dev/null; then
+                    log_error "Failed to apply: $file"
+                    ((failed++))
+                fi
+            done
+            return $((failed > 0 ? 1 : 0))
+        fi
+    else
+        if oc apply -f "${files[@]}" &>/dev/null; then
+            return 0
+        else
+            local failed=0
+            for file in "${files[@]}"; do
+                if ! oc apply -f "$file" &>/dev/null; then
+                    log_error "Failed to apply: $file"
+                    ((failed++))
+                fi
+            done
+            return $((failed > 0 ? 1 : 0))
+        fi
+    fi
+}
+
+# Check if a CRD exists (cached to avoid repeated calls)
+# Usage: check_crd_exists <crd_name>
+#   Returns: 0 if CRD exists, 1 if not
+#   Uses a cache to avoid repeated oc get calls
+#   Compatible with bash 3.x (uses regular array instead of associative array)
+check_crd_exists() {
+    local crd_name=$1
+    
+    # Check cache first (if available)
+    # Use a simple naming convention: CRD_CACHE_<sanitized_crd_name>
+    local cache_var="CRD_CACHE_$(echo "$crd_name" | tr '.-' '__')"
+    local cached_value="${!cache_var:-}"
+    
+    if [[ -n "$cached_value" ]]; then
+        [[ "$cached_value" == "true" ]]
+        return $?
+    fi
+    
+    # Check CRD existence
+    if oc get crd "$crd_name" &>/dev/null; then
+        # Cache the result (use eval for dynamic variable assignment)
+        eval "${cache_var}=true"
+        return 0
+    else
+        eval "${cache_var}=false"
+        return 1
     fi
 }
 
@@ -485,5 +641,110 @@ wait_for_operator_csv() {
     
     log_warn "$operator_name operator may not be fully ready yet (waited ${timeout}s)"
     return 1
+}
+
+# Show deployment diagnostics
+# Usage: show_deployment_diagnostics <namespace> <deployment_name> [pod_selector] [pod_name]
+#   namespace: Kubernetes namespace
+#   deployment_name: Name of the deployment (e.g., "eip-monitor")
+#   pod_selector: Label selector for pods (e.g., "app=eip-monitor") - optional, defaults to app=<deployment_name>
+#   pod_name: Specific pod name for detailed diagnostics - optional, will auto-detect if not provided
+# Returns: 0 on success, 1 on error
+show_deployment_diagnostics() {
+    local namespace=$1
+    local deployment_name=$2
+    local pod_selector=${3:-"app=$deployment_name"}
+    local pod_name=${4:-""}
+    
+    if [[ -z "$namespace" ]] || [[ -z "$deployment_name" ]]; then
+        log_error "show_deployment_diagnostics: namespace and deployment_name arguments required"
+        return 1
+    fi
+    
+    log_info "Gathering deployment diagnostics..."
+    echo ""
+    log_info "=== Deployment Status ==="
+    oc get deployment "$deployment_name" -n "$namespace" 2>&1 | grep -v "No resources found" || true
+    echo ""
+    log_info "=== Pod Status ==="
+    oc get pods -n "$namespace" -l "$pod_selector" 2>&1 | grep -v "No resources found" || true
+    echo ""
+    
+    # Get pod name if not provided
+    if [[ -z "$pod_name" ]]; then
+        pod_name=$(oc get pods -n "$namespace" -l "$pod_selector" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    fi
+    
+    if [[ -n "$pod_name" ]]; then
+        log_info "=== Pod Events (for $pod_name) ==="
+        oc get events -n "$namespace" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' | tail -10 || true
+        echo ""
+        log_info "=== Pod Description (for $pod_name) ==="
+        oc describe pod "$pod_name" -n "$namespace" | tail -40 || true
+        echo ""
+        log_info "=== Pod Logs (for $pod_name) ==="
+        oc logs "$pod_name" -n "$namespace" --tail=50 2>&1 || true
+        echo ""
+    fi
+}
+
+# Show deployment status (generic function)
+# Usage: show_deployment_status <namespace> <deployment_name> [pod_selector] [service_name]
+#   namespace: Kubernetes namespace
+#   deployment_name: Name of the deployment
+#   pod_selector: Label selector for pods (optional, defaults to app=<deployment_name>)
+#   service_name: Name of the service (optional, defaults to <deployment_name>)
+# Returns: 0 if deployment is running, 1 if not found or no running pods
+show_deployment_status() {
+    local namespace=$1
+    local deployment_name=$2
+    local pod_selector=${3:-"app=$deployment_name"}
+    local service_name=${4:-"$deployment_name"}
+    
+    if [[ -z "$namespace" ]] || [[ -z "$deployment_name" ]]; then
+        log_error "show_deployment_status: namespace and deployment_name arguments required"
+        return 1
+    fi
+    
+    # Check namespace
+    if ! oc get namespace "$namespace" &>/dev/null; then
+        log_warn "Namespace '$namespace' does not exist"
+        return 1
+    fi
+    
+    # Check deployment
+    if oc get deployment "$deployment_name" -n "$namespace" &>/dev/null; then
+        log_info "Deployment:"
+        oc get deployment "$deployment_name" -n "$namespace" -o custom-columns="NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas,UP-TO-DATE:.status.updatedReplicas,AVAILABLE:.status.availableReplicas,AGE:.metadata.creationTimestamp"
+        
+        # Show image version
+        local image=$(oc get deployment "$deployment_name" -n "$namespace" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "unknown")
+        log_info "Image: $image"
+        
+        # Check pods
+        log_info ""
+        log_info "Pods:"
+        oc get pods -n "$namespace" -l "$pod_selector" -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>&1 | grep -v "No resources found" || true
+        
+        # Check service
+        if oc get service "$service_name" -n "$namespace" &>/dev/null; then
+            log_info ""
+            log_info "Service:"
+            oc get service "$service_name" -n "$namespace"
+        fi
+        
+        # Check if pods are ready
+        local ready_pods=$(oc get pods -n "$namespace" -l "$pod_selector" --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+        if [[ "$ready_pods" =~ ^[0-9]+$ ]] && [[ "$ready_pods" -gt 0 ]]; then
+            log_success "Deployment is running ($ready_pods pod(s) running)"
+            return 0
+        else
+            log_warn "No running pods found"
+            return 1
+        fi
+    else
+        log_warn "Deployment '$deployment_name' not found in namespace '$namespace'"
+        return 1
+    fi
 }
 

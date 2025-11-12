@@ -30,61 +30,14 @@ source "${PROJECT_ROOT}/scripts/lib/common.sh"
 # - jq installed
 # - Nodes labeled with k8s.ovn.org/egress-assignable=""
 
-set -e
+set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'  # Light blue (cyan)
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+# Note: Logging functions (log_info, log_success, log_warn, log_error) are sourced from scripts/lib/common.sh
+# Note: check_prerequisites() is sourced from scripts/lib/common.sh
 
 # Default timeouts
 DEFAULT_EGRESSIP_TIMEOUT="30s"
 DEFAULT_NAMESPACE_TIMEOUT="60s"
-
-# Logging functions
-log_info() {
-    echo -e "${CYAN}ℹ️  $1${NC}"
-}
-
-log_success() {
-    echo -e "${GREEN}✅ $1${NC}"
-}
-
-log_warn() {
-    echo -e "${YELLOW}⚠️  $1${NC}"
-}
-
-log_error() {
-    echo -e "${RED}❌ $1${NC}"
-}
-
-# Check prerequisites
-check_prerequisites() {
-    log_info "Checking prerequisites..."
-    
-    # Check oc CLI
-    if ! command -v oc &> /dev/null; then
-        log_error "OpenShift CLI (oc) is not installed"
-        exit 1
-    fi
-    
-    # Check jq
-    if ! command -v jq &> /dev/null; then
-        log_error "jq is not installed (required for JSON parsing)"
-        exit 1
-    fi
-    
-    # Check cluster connectivity
-    if ! oc whoami &>/dev/null; then
-        log_error "Not logged into OpenShift cluster. Please run 'oc login' first"
-        exit 1
-    fi
-    
-    log_success "Prerequisites validated"
-}
 
 # EgressIP discovery and IP generation functions
 get_eip_ranges() {
@@ -479,7 +432,7 @@ main() {
             # Define namespace templates with different characteristics
             # This array provides diverse labels for up to 200 namespaces
             local namespace_templates=(
-                "test-ns-1:environment=production tier=database"
+                "test-ns-1:environment=sandbox tier=database"
         "test-ns-2:environment=development"
         "test-ns-3:app=api-gateway"
         "test-ns-4:app=monitoring tier=observability"
@@ -596,7 +549,7 @@ main() {
         "test-ns-115:app=quality tier=management"
         "test-ns-116:app=testing tier=ci-cd"
         "test-ns-117:app=staging tier=ci-cd"
-        "test-ns-118:app=production tier=ci-cd"
+        "test-ns-118:app=sandbox tier=ci-cd"
         "test-ns-119:app=rollback tier=ci-cd"
         "test-ns-120:app=canary tier=ci-cd"
         "test-ns-121:app=blue-green tier=ci-cd"
@@ -678,7 +631,7 @@ main() {
         "test-ns-197:app=test-signoff tier=testing"
         "test-ns-198:app=test-release tier=testing"
         "test-ns-199:app=test-deployment tier=testing"
-            "test-ns-200:app=test-production tier=testing"
+            "test-ns-200:app=test-sandbox tier=testing"
         )
         
             # Build batch YAML for new namespaces only (starting from existing_count)

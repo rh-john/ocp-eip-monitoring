@@ -1,5 +1,9 @@
 # OpenShift EIP Monitoring
 
+> **⚠️ DISCLAIMER: This is a Proof of Concept (PoC) application intended for learning purposes only.**
+> 
+> This monitoring solution should **ONLY** be deployed in well-contained, sandboxed environments for educational and testing purposes. It is **NOT** intended for production use or enterprise deployments.
+
 Monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC) resources. Exposes Prometheus metrics and alerts.
 
 ## Prerequisites

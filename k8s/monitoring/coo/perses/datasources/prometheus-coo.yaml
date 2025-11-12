@@ -26,7 +26,7 @@ spec:
         # - Deduplicates data from multiple replicas
         # - Provides consistent query results
         # - Handles replica failures gracefully
-        # - Better for production use with high availability
+        # - Better for high availability scenarios
         proxy:
           kind: HTTPProxy
           spec:

@@ -62,6 +62,13 @@ oc apply -f k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml
 oc apply -f k8s/grafana/coo/grafana-rbac-coo.yaml
 ```
 
+**Note**: The COO MonitoringStack is configured with best practices for sandbox environments:
+- **High Availability**: 2 Prometheus replicas for redundancy
+- **Resource Limits**: CPU (500m-2000m) and Memory (2Gi-4Gi) limits configured
+- **Persistent Storage**: 50Gi per replica (enabled by default)
+- **External Labels**: Configured for multi-cluster and federation scenarios
+- **Alert Organization**: Alerts grouped by component (11 groups) for better management
+
 ### 3. Deploy UWM Monitoring Stack
 
 ```bash
@@ -197,7 +204,7 @@ If Prometheus cannot scrape metrics:
 1. **Redundancy**: If one monitoring stack fails, the other continues monitoring
 2. **Comparison**: Compare metrics from both stacks to verify consistency
 3. **Migration**: Gradually migrate from one stack to another
-4. **Testing**: Test new monitoring configurations without affecting production
+4. **Testing**: Test new monitoring configurations in isolated sandbox environments
 
 ## Single Stack Deployment
 

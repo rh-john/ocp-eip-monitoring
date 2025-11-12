@@ -6,36 +6,21 @@
 
 set -euo pipefail
 
+# Get script directory and source common functions
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Source common functions (logging, prerequisites, oc_cmd helpers)
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
+
 # Configuration
 NAMESPACE="${NAMESPACE:-eip-monitoring}"
 MONITORING_TYPE="${MONITORING_TYPE:-}"
 REMOVE_GRAFANA="${REMOVE_GRAFANA:-false}"
 REMOVE_OPERATOR="${REMOVE_OPERATOR:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete Grafana CRDs during cleanup (requires cluster-admin)
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'  # Light blue (cyan)
-NC='\033[0m' # No Color
-
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
+SHOW_STATUS="${SHOW_STATUS:-false}"  # Show Grafana status
+TEST_GRAFANA="${TEST_GRAFANA:-false}"  # Test Grafana deployment
 
 # Show usage
 show_usage() {
@@ -54,6 +39,10 @@ Removal:
   --operator                   Also remove Grafana Operator (use with --remove)
   --crds                       Also delete Grafana CRDs (use with --remove, requires cluster-admin)
   --remove-all                 Remove everything: resources, operator, and CRDs (shorthand for --remove --operator --crds)
+
+Status and Testing:
+  --status                    Show Grafana deployment status
+  --test                      Test Grafana deployment
 
 Other:
   -h, --help                  Show this help message
@@ -83,34 +72,18 @@ Examples:
   
   # Shorthand: remove everything
   $0 --remove-all --monitoring-type coo
+  
+  # Show Grafana status
+  $0 --status --monitoring-type coo
+  
+  # Test Grafana deployment
+  $0 --test --monitoring-type uwm
 
 EOF
 }
 
-# Check prerequisites
-check_prerequisites() {
-    local missing_tools=()
-    
-    if ! command -v oc &> /dev/null; then
-        missing_tools+=("oc")
-    fi
-    
-    if ! command -v jq &> /dev/null; then
-        missing_tools+=("jq")
-    fi
-    
-    if [[ ${#missing_tools[@]} -gt 0 ]]; then
-        log_error "Missing required tools: ${missing_tools[*]}"
-        log_info "Please install the missing tools and try again"
-        exit 1
-    fi
-    
-    # Check OpenShift connectivity
-    if ! oc whoami &>/dev/null; then
-        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
-        exit 1
-    fi
-}
+# Note: check_prerequisites() is sourced from scripts/lib/common.sh
+# It checks for oc, jq, and OpenShift connectivity
 
 # Deploy Grafana resources
 deploy_grafana() {
@@ -136,7 +109,7 @@ deploy_grafana() {
     
     if [[ "$cluster_csv_phase" == "Succeeded" ]] || [[ "$namespace_csv_phase" == "Succeeded" ]]; then
         log_info "Grafana Operator is already installed and ready (CSV phase: Succeeded)"
-    elif oc get crd grafanas.integreatly.org &>/dev/null; then
+    elif check_crd_exists grafanas.integreatly.org; then
         log_info "Grafana Operator CRD found, operator is available"
     else
         log_info "Installing Grafana Operator (namespace-scoped in $NAMESPACE)..."
@@ -203,7 +176,7 @@ deploy_grafana() {
                 if [[ "$csv_phase" == "Succeeded" ]]; then
                     log_success "Grafana Operator installed successfully (CSV phase: Succeeded)"
                     break
-                elif oc get crd grafanas.integreatly.org &>/dev/null; then
+                elif check_crd_exists grafanas.integreatly.org; then
                     log_success "Grafana Operator CRD available"
                     break
                 fi
@@ -396,50 +369,62 @@ deploy_grafana() {
     # Plugins are configured in grafana-instance.yaml via spec.plugins
     # The Grafana Operator will automatically install them during deployment
     log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
-    # Deploy Grafana Dashboards
+    # Deploy Grafana Dashboards (optimized: batch apply for better performance)
     log_info "Deploying Grafana Dashboards..."
-    local dashboard_files=(
-        # Original dashboards
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
-        # Event correlation dashboard (node/cluster metrics with EIP metrics)
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
-        # New advanced plugin dashboards
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
-    )
     
-    local dashboards_deployed=0
-    local dashboards_failed=0
+    # Automatically discover all dashboard files instead of hardcoding
+    local dashboard_dir="${project_root}/k8s/grafana/dashboards"
+    local dashboard_files=()
     
-    for dashboard_file in "${dashboard_files[@]}"; do
-        local dashboard_name=$(basename "$dashboard_file" .yaml)
-        local dashboard_output=$(oc apply -f "$dashboard_file" 2>&1)
-        local dashboard_exit=$?
-        if [[ $dashboard_exit -eq 0 ]]; then
-            log_success "  ✓ $dashboard_name deployed"
-            ((dashboards_deployed++))
-        else
-            log_error "  ✗ Failed to deploy $dashboard_name"
-            echo "$dashboard_output" | sed 's/^/    /'
-            ((dashboards_failed++))
-        fi
-    done
-    
-    if [[ $dashboards_failed -eq 0 ]]; then
-        log_success "All $dashboards_deployed Grafana Dashboards deployed successfully!"
+    if [[ -d "$dashboard_dir" ]]; then
+        # Find all .yaml files in the dashboards directory
+        while IFS= read -r -d '' file; do
+            dashboard_files+=("$file")
+        done < <(find "$dashboard_dir" -maxdepth 1 -name "*.yaml" -type f -print0 | sort -z)
     else
-        log_warn "$dashboards_failed dashboard(s) failed to deploy, $dashboards_deployed succeeded"
+        log_error "Dashboard directory not found: $dashboard_dir"
+        return 1
+    fi
+    
+    if [[ ${#dashboard_files[@]} -eq 0 ]]; then
+        log_warn "No dashboard files found in $dashboard_dir"
+        return 0
+    fi
+    
+    # Batch apply all dashboards at once (more efficient than sequential applies)
+    log_info "Applying ${#dashboard_files[@]} dashboards..."
+    if oc apply -n "$NAMESPACE" -f "${dashboard_files[@]}" &>/dev/null; then
+        log_success "All ${#dashboard_files[@]} Grafana Dashboards deployed successfully!"
+    else
+        # If batch apply fails, apply individually for better error reporting
+        log_warn "Batch apply failed, applying dashboards individually..."
+        local dashboards_deployed=0
+        local dashboards_failed=0
+        
+        for dashboard_file in "${dashboard_files[@]}"; do
+            local dashboard_name=$(basename "$dashboard_file" .yaml)
+            local apply_output=$(oc apply -n "$NAMESPACE" -f "$dashboard_file" 2>&1)
+            local apply_exit=$?
+            
+            if [[ $apply_exit -eq 0 ]]; then
+                log_success "  ✓ $dashboard_name deployed"
+                ((dashboards_deployed++))
+            else
+                log_error "  ✗ Failed to deploy $dashboard_name"
+                # Show the actual error message (first line usually contains the key error)
+                local error_msg=$(echo "$apply_output" | grep -iE "(error|failed|invalid)" | head -1 || echo "$apply_output" | head -1)
+                if [[ -n "$error_msg" ]]; then
+                    log_info "    Error: $error_msg"
+                fi
+                ((dashboards_failed++))
+            fi
+        done
+        
+        if [[ $dashboards_failed -eq 0 ]]; then
+            log_success "All $dashboards_deployed Grafana Dashboards deployed successfully!"
+        else
+            log_warn "$dashboards_failed dashboard(s) failed to deploy, $dashboards_deployed succeeded"
+        fi
     fi
     
     log_success "Grafana deployment completed!"
@@ -474,7 +459,8 @@ remove_grafana() {
     # Delete Grafana resources in correct dependency order
     # Order: Dashboards -> DataSources -> Instances (reverse of creation order)
     # Check if CRDs exist before attempting deletion (operator may not be installed)
-    if oc get crd grafanadashboards.integreatly.org &>/dev/null; then
+    # Use cached CRD check for better performance
+    if check_crd_exists grafanadashboards.integreatly.org; then
         log_info "Deleting GrafanaDashboards..."
         oc delete grafanadashboard -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
         
@@ -494,7 +480,7 @@ remove_grafana() {
         log_info "GrafanaDashboards CRD not found (operator not installed), skipping dashboard cleanup"
     fi
     
-    if oc get crd grafanadatasources.integreatly.org &>/dev/null; then
+    if check_crd_exists grafanadatasources.integreatly.org; then
         log_info "Deleting GrafanaDataSources..."
         oc delete grafanadatasource -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
         
@@ -512,7 +498,7 @@ remove_grafana() {
         log_info "GrafanaDataSources CRD not found (operator not installed), skipping datasource cleanup"
     fi
     
-    if oc get crd grafanas.integreatly.org &>/dev/null; then
+    if check_crd_exists grafanas.integreatly.org; then
         log_info "Deleting Grafana Instances..."
         oc delete grafana -n "$NAMESPACE" --all --wait=false --timeout=30s 2>&1 | grep -vE "(No resources found|the server doesn't have a resource type)" || true
         
@@ -860,6 +846,14 @@ parse_args() {
                 DELETE_CRDS="true"
                 shift
                 ;;
+            --status)
+                SHOW_STATUS="true"
+                shift
+                ;;
+            --test)
+                TEST_GRAFANA="true"
+                shift
+                ;;
             # Legacy flags for backward compatibility
             --all)
                 # Legacy: same as --remove-all
@@ -889,6 +883,428 @@ parse_args() {
     done
 }
 
+# Show Grafana status
+show_grafana_status() {
+    log_info "Checking Grafana deployment status..."
+    echo ""
+    
+    # Check namespace
+    if ! oc get namespace "$NAMESPACE" &>/dev/null; then
+        log_warn "Namespace '$NAMESPACE' does not exist"
+        return 1
+    fi
+    
+    # Check Grafana Operator
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana Operator Status"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Check if operator is installed (cluster-wide or namespace-scoped)
+    local cluster_csv=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+    local namespace_csv=$(oc get csv -n "$NAMESPACE" -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("grafana-operator")) | .metadata.name' | head -1 || echo "")
+    
+    if [[ -n "$cluster_csv" ]]; then
+        log_info "Grafana Operator (cluster-wide):"
+        oc get csv "$cluster_csv" -n openshift-operators -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,PHASE:.status.phase,AGE:.metadata.creationTimestamp"
+    elif [[ -n "$namespace_csv" ]]; then
+        log_info "Grafana Operator (namespace-scoped):"
+        oc get csv "$namespace_csv" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,PHASE:.status.phase,AGE:.metadata.creationTimestamp"
+    else
+        log_warn "Grafana Operator not found"
+    fi
+    
+    # Check if CRDs exist (with retry since they may take a moment after CSV Succeeded)
+    local crd_found=false
+    local crd_names=(
+        "grafanas.integreatly.org"
+        "grafanadashboards.integreatly.org"
+        "grafanadatasources.integreatly.org"
+    )
+    
+    # Try checking CRDs with a small retry (up to 3 attempts, 2 seconds apart)
+    local attempt=1
+    while [[ $attempt -le 3 ]] && [[ "$crd_found" == "false" ]]; do
+        for crd in "${crd_names[@]}"; do
+            if check_crd_exists "$crd"; then
+                crd_found=true
+                break  # Break out of inner loop
+            fi
+        done
+        
+        if [[ "$crd_found" == "false" ]] && [[ $attempt -lt 3 ]]; then
+            sleep 2
+        fi
+        attempt=$((attempt + 1))
+    done
+    
+    # Also try to find any Grafana-related CRD as fallback
+    if [[ "$crd_found" == "false" ]]; then
+        local grafana_crds=$(oc get crd 2>/dev/null | grep -iE "(grafana|integreatly)" | awk '{print $1}' || echo "")
+        if [[ -n "$grafana_crds" ]]; then
+            crd_found=true
+        fi
+    fi
+    
+    if [[ "$crd_found" == "true" ]]; then
+        log_success "Grafana CRDs are available"
+        # Show which CRDs are found
+        local found_crds=""
+        for crd in "${crd_names[@]}"; do
+            if check_crd_exists "$crd"; then
+                found_crds="${found_crds}${crd} "
+            fi
+        done
+        if [[ -n "$found_crds" ]]; then
+            log_info "  Found: $found_crds"
+        fi
+    else
+        log_warn "Grafana CRDs not found"
+        log_info "  Expected CRDs: grafanas.integreatly.org, grafanadashboards.integreatly.org, grafanadatasources.integreatly.org"
+        log_info "  Note: CRDs may take a moment to become available after operator installation"
+        if [[ -n "$namespace_csv" ]] || [[ -n "$cluster_csv" ]]; then
+            log_info "  Operator CSV is installed - CRDs should be available soon"
+        fi
+    fi
+    
+    echo ""
+    
+    # Check Grafana Instance
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana Instance Status"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if oc get grafana eip-monitoring-grafana -n "$NAMESPACE" &>/dev/null; then
+        log_info "Grafana Instance:"
+        oc get grafana eip-monitoring-grafana -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+        
+        # Check Grafana pods
+        log_info ""
+        log_info "Grafana Pods:"
+        oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No Grafana pods found)"
+        
+        # Check Route
+        log_info ""
+        log_info "Grafana Route:"
+        oc get route -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o custom-columns="NAME:.metadata.name,HOST:.spec.host,PORT:.spec.port.targetPort,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No Grafana route found)"
+    else
+        log_warn "Grafana Instance not found"
+    fi
+    
+    echo ""
+    
+    # Check DataSources
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana DataSources"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local datasource_name=""
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        datasource_name="prometheus-coo"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        datasource_name="prometheus-uwm"
+    fi
+    
+    if [[ -n "$datasource_name" ]]; then
+        if oc get grafanadatasource "$datasource_name" -n "$NAMESPACE" &>/dev/null; then
+            oc get grafanadatasource "$datasource_name" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+        else
+            log_warn "DataSource '$datasource_name' not found"
+            # List all datasources that do exist for debugging
+            local existing_datasources=$(oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            if [[ -n "$existing_datasources" ]]; then
+                log_info "  Found DataSource(s): $existing_datasources"
+            else
+                log_info "  No DataSources found in namespace $NAMESPACE"
+            fi
+            log_info "  To deploy: ./scripts/deploy-grafana.sh --monitoring-type $MONITORING_TYPE"
+        fi
+    else
+        # List all datasources
+        local datasources=$(oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+        if [[ -n "$datasources" ]]; then
+            oc get grafanadatasource -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+        else
+            log_info "  (No DataSources found)"
+        fi
+    fi
+    
+    echo ""
+    
+    # Check Dashboards
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Grafana Dashboards"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    local dashboard_count=$(oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    if [[ "$dashboard_count" -gt 0 ]]; then
+        log_info "Found $dashboard_count dashboard(s):"
+        oc get grafanadashboard -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp" | head -20
+        if [[ "$dashboard_count" -gt 20 ]]; then
+            log_info "  ... and $((dashboard_count - 20)) more"
+        fi
+    else
+        log_info "  (No Dashboards found)"
+    fi
+    
+    echo ""
+    log_success "Status check completed"
+}
+
+# Test Grafana deployment
+test_grafana() {
+    log_info "Testing Grafana deployment..."
+    echo ""
+    
+    local tests_passed=0
+    local tests_failed=0
+    local total_tests=0
+    
+    # Test-specific logging function
+    log_test() { echo -e "\n${BLUE}[TEST]${NC} $1"; }
+    
+    # Helper function to run a test
+    run_test() {
+        local test_name="$1"
+        local test_command="$2"
+        ((total_tests++))
+        
+        if eval "$test_command" &>/dev/null; then
+            log_success "$test_name"
+            ((tests_passed++))
+            return 0
+        else
+            log_error "$test_name"
+            ((tests_failed++))
+            return 1
+        fi
+    }
+    
+    # Validate monitoring type
+    if [[ -z "$MONITORING_TYPE" ]]; then
+        log_error "Monitoring type is required for testing. Use --monitoring-type coo or --monitoring-type uwm"
+        return 1
+    fi
+    
+    if [[ "$MONITORING_TYPE" != "coo" ]] && [[ "$MONITORING_TYPE" != "uwm" ]]; then
+        log_error "Invalid monitoring type: $MONITORING_TYPE. Must be 'coo' or 'uwm'"
+        return 1
+    fi
+    
+    # 1. Basic Deployment Tests
+    log_test "Step 1: Basic Deployment Tests"
+    
+    run_test "Namespace exists" "oc get namespace \"$NAMESPACE\" &>/dev/null"
+    
+    # Check Grafana Operator CRD (try multiple possible names)
+    local crd_exists=false
+    local crd_name=""
+    local expected_crds=(
+        "grafanas.integreatly.org"
+        "grafanadashboards.integreatly.org"
+        "grafanadatasources.integreatly.org"
+    )
+    
+    # Check if any Grafana CRD exists
+    for crd in "${expected_crds[@]}"; do
+        if check_crd_exists "$crd"; then
+            crd_exists=true
+            if [[ -z "$crd_name" ]]; then
+                crd_name="$crd"
+            fi
+        fi
+    done
+    
+    # Also try to find any Grafana-related CRD
+    if [[ "$crd_exists" == "false" ]]; then
+        local grafana_crds=$(oc get crd 2>/dev/null | grep -iE "(grafana|integreatly)" | awk '{print $1}' || echo "")
+        if [[ -n "$grafana_crds" ]]; then
+            crd_exists=true
+            crd_name=$(echo "$grafana_crds" | head -1)
+        fi
+    fi
+    
+    if [[ "$crd_exists" == "true" ]]; then
+        log_success "Grafana Operator CRD exists"
+        if [[ -n "$crd_name" ]]; then
+            log_info "  Found CRD: $crd_name"
+        fi
+        ((tests_passed++))
+    else
+        log_error "Grafana Operator CRD exists"
+        log_info "  No Grafana CRDs found. The Grafana Operator may not be installed."
+        log_info "  Install it with: ./scripts/deploy-grafana.sh --monitoring-type $MONITORING_TYPE"
+        ((tests_failed++))
+    fi
+    ((total_tests++))
+    
+    run_test "Grafana Instance exists" "oc get grafana eip-monitoring-grafana -n \"$NAMESPACE\" &>/dev/null"
+    
+    # Check Grafana pods (try multiple label selectors)
+    local grafana_pod=""
+    local grafana_pods=0
+    
+    # Try standard label first
+    grafana_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    if [[ "$grafana_pods" -gt 0 ]]; then
+        grafana_pod=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    fi
+    
+    # Try alternative label if not found
+    if [[ -z "$grafana_pod" ]]; then
+        grafana_pods=$(oc get pods -n "$NAMESPACE" -l app=eip-monitoring-grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$grafana_pods" -gt 0 ]]; then
+            grafana_pod=$(oc get pods -n "$NAMESPACE" -l app=eip-monitoring-grafana -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        fi
+    fi
+    
+    # Try finding by name pattern if still not found
+    if [[ -z "$grafana_pod" ]]; then
+        grafana_pod=$(oc get pods -n "$NAMESPACE" --no-headers 2>/dev/null | grep -i "grafana.*deployment" | awk '{print $1}' | head -1 || echo "")
+        if [[ -n "$grafana_pod" ]]; then
+            grafana_pods=1
+        fi
+    fi
+    
+    if [[ "$grafana_pods" -gt 0 ]] && [[ -n "$grafana_pod" ]]; then
+        local pod_phase=$(oc get pod "$grafana_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+        if [[ "$pod_phase" == "Running" ]]; then
+            log_success "Grafana pod running"
+            log_info "  Pod: $grafana_pod"
+            ((tests_passed++))
+        else
+            log_error "Grafana pod running"
+            log_info "  Pod: $grafana_pod (Status: $pod_phase)"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+    else
+        log_error "Grafana pods not found"
+        log_info "  Checked labels: app.kubernetes.io/name=grafana, app=eip-monitoring-grafana"
+        log_info "  Grafana Instance exists but no pods found. Pods may still be starting."
+        ((tests_failed++))
+        ((total_tests++))
+    fi
+    
+    echo ""
+    
+    # 2. DataSource Tests
+    log_test "Step 2: DataSource Tests"
+    
+    local datasource_name=""
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        datasource_name="prometheus-coo"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        datasource_name="prometheus-uwm"
+    fi
+    
+    if [[ -n "$datasource_name" ]]; then
+        run_test "DataSource exists" "oc get grafanadatasource \"$datasource_name\" -n \"$NAMESPACE\" &>/dev/null"
+    fi
+    
+    echo ""
+    
+    # 3. Dashboard Tests
+    log_test "Step 3: Dashboard Tests"
+    
+    local dashboard_count=$(oc get grafanadashboard -n "$NAMESPACE" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    if [[ "$dashboard_count" -gt 0 ]]; then
+        run_test "Dashboards exist ($dashboard_count found)" "[[ \"$dashboard_count\" -gt 0 ]]"
+        
+        # Test a few specific dashboards (check multiple possible names)
+        local main_dashboard_found=false
+        local main_dashboard_name=""
+        
+        # Try different possible main dashboard names
+        for dashboard_name in "eip-monitoring-dashboard" "grafana-dashboard" "eip-dashboard"; do
+            if oc get grafanadashboard "$dashboard_name" -n "$NAMESPACE" &>/dev/null; then
+                main_dashboard_found=true
+                main_dashboard_name="$dashboard_name"
+                break
+            fi
+        done
+        
+        if [[ "$main_dashboard_found" == "true" ]]; then
+            log_success "Main dashboard exists"
+            log_info "  Dashboard: $main_dashboard_name"
+            ((tests_passed++))
+        else
+            log_error "Main dashboard exists"
+            log_info "  Checked names: eip-monitoring-dashboard, grafana-dashboard, eip-dashboard"
+            log_info "  Found $dashboard_count dashboard(s) but none match expected main dashboard names"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Test EIP distribution dashboard (check multiple possible names)
+        local eip_dist_found=false
+        local eip_dist_name=""
+        
+        for dashboard_name in "grafana-dashboard-eip-distribution" "eip-distribution" "eip-distribution-dashboard"; do
+            if oc get grafanadashboard "$dashboard_name" -n "$NAMESPACE" &>/dev/null; then
+                eip_dist_found=true
+                eip_dist_name="$dashboard_name"
+                break
+            fi
+        done
+        
+        if [[ "$eip_dist_found" == "true" ]]; then
+            log_success "EIP distribution dashboard exists"
+            log_info "  Dashboard: $eip_dist_name"
+            ((tests_passed++))
+        else
+            log_warn "EIP distribution dashboard exists"
+            log_info "  Checked names: grafana-dashboard-eip-distribution, eip-distribution, eip-distribution-dashboard"
+            log_info "  This is optional, continuing..."
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+    else
+        log_error "No dashboards found"
+        ((tests_failed++))
+        ((total_tests++))
+    fi
+    
+    echo ""
+    
+    # 4. Route and Accessibility Tests
+    log_test "Step 4: Route and Accessibility Tests"
+    
+    local route_exists=$(oc get route -n "$NAMESPACE" -l app.kubernetes.io/name=grafana --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+    run_test "Grafana Route exists" "[[ \"$route_exists\" -gt 0 ]]"
+    
+    if [[ "$route_exists" -gt 0 ]] && [[ -n "$grafana_pod" ]] && [[ "$pod_phase" == "Running" ]]; then
+        # Test Grafana API endpoint (inside pod)
+        local api_response=$(oc exec "$grafana_pod" -n "$NAMESPACE" -- curl -sf http://localhost:3000/api/health 2>/dev/null || echo "")
+        run_test "Grafana API accessible" "echo \"$api_response\" | grep -qE \"(ok|database)\""
+    fi
+    
+    echo ""
+    
+    # 5. RBAC Tests
+    log_test "Step 5: RBAC Tests"
+    
+    if [[ "$MONITORING_TYPE" == "coo" ]]; then
+        run_test "ServiceAccount exists" "oc get serviceaccount grafana-prometheus-coo -n \"$NAMESPACE\" &>/dev/null"
+        run_test "RoleBinding exists" "oc get rolebinding grafana-prometheus-coo -n \"$NAMESPACE\" &>/dev/null"
+    elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
+        run_test "ServiceAccount exists" "oc get serviceaccount grafana-prometheus -n \"$NAMESPACE\" &>/dev/null"
+        run_test "ClusterRoleBinding exists" "oc get clusterrolebinding grafana-prometheus-eip-monitoring &>/dev/null"
+    fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Test Summary: $tests_passed/$total_tests passed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    if [[ $tests_failed -eq 0 ]]; then
+        log_success "All tests passed!"
+        return 0
+    else
+        log_warn "$tests_failed test(s) failed"
+        return 1
+    fi
+}
+
 # Main function
 main() {
     parse_args "$@"
@@ -897,6 +1313,18 @@ main() {
     
     log_info "Connected to OpenShift as: $(oc whoami)"
     log_info "Namespace: $NAMESPACE"
+    
+    # Handle status command
+    if [[ "$SHOW_STATUS" == "true" ]]; then
+        show_grafana_status
+        return 0
+    fi
+    
+    # Handle test command
+    if [[ "$TEST_GRAFANA" == "true" ]]; then
+        test_grafana
+        return $?
+    fi
     
     # Handle removal
     if [[ "$REMOVE_GRAFANA" == "true" ]]; then

@@ -17,20 +17,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 VERSION_FILE="${PROJECT_ROOT}/.version"
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;36m'
-NC='\033[0m'
+# Source common functions (logging)
+source "${PROJECT_ROOT}/scripts/lib/common.sh"
 
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+# Note: Logging functions (log_info, log_success, log_warn, log_error) are sourced from scripts/lib/common.sh
 
-# Check prerequisites
-check_prerequisites() {
+# Check prerequisites (git-specific, extends common.sh)
+check_git_prerequisites() {
     if ! command -v git &>/dev/null; then
         log_error "git command not found"
         exit 1
@@ -165,7 +158,7 @@ main() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
-    check_prerequisites
+    check_git_prerequisites
     
     # Get current version
     local current_version=$(get_current_version)

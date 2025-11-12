@@ -107,7 +107,7 @@ The `deploy-eip.sh` script handles deployment:
 # - Suitable for manifest updates (alert rules, config changes)
 ```
 
-#### With Registry (Production Deployment):
+#### With Registry (Registry Deployment):
 ```bash
 ./scripts/deploy-eip.sh deploy -r quay.io/your-org
 # Result:
@@ -381,13 +381,13 @@ spec:
   - <discovered-from-node-annotation>.11
   namespaceSelector:
     matchLabels:
-      environment: production
+      environment: sandbox
       tier: database
 ```
 
 #### Example 2: Multi-Node EgressIP
 ```yaml
-# Multiple IPs for production database tier
+# Multiple IPs for database tier in sandbox environment
 apiVersion: k8s.ovn.org/v1
 kind: EgressIP
 metadata:
@@ -399,7 +399,7 @@ spec:
   - <discovered-from-node-annotation>.14
   namespaceSelector:
     matchLabels:
-      environment: production
+      environment: sandbox
       tier: database
 ```
 
@@ -595,7 +595,7 @@ curl http://eip-monitor-service:8080/metrics | grep eip
 
 ### Large-Scale Testing
 
-The script supports enterprise-scale testing scenarios with up to 200 egress IPs distributed across 200 namespaces:
+The script supports large-scale testing scenarios with up to 200 egress IPs distributed across 200 namespaces:
 
 #### **Maximum Scale Deployment**
 
@@ -661,7 +661,7 @@ This configuration provides:
 - **Complete Isolation**: Each namespace has its own dedicated egress IP
 - **Individual Testing**: Test egress behavior per namespace independently
 - **Maximum Granularity**: 200 unique egress endpoints for testing
-- **Real-world Scenarios**: Simulates production environments with dedicated egress per application
+- **Real-world Scenarios**: Simulates sandbox environments with dedicated egress per application
 
 #### **Use Cases for 1:1 Mapping**
 
@@ -908,7 +908,7 @@ oc get events -n eip-monitoring --sort-by='.lastTimestamp'
 ### High Availability
 - Health checks configured
 - Graceful shutdown handling
-- Pod disruption budget recommended for production
+- Pod disruption budget can be configured if needed
 
 ### Scaling
 - Single replica sufficient for most clusters

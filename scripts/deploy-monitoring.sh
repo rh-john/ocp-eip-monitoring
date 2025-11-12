@@ -17,6 +17,9 @@ MONITORING_TYPE="${MONITORING_TYPE:-}"  # No default - must be explicitly specif
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 VERBOSE="${VERBOSE:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete COO CRDs during cleanup (requires cluster-admin)
+PERSISTENT_STORAGE="${PERSISTENT_STORAGE:-true}"  # Enable persistent storage for Prometheus (default: true)
+SHOW_STATUS="${SHOW_STATUS:-false}"  # Show monitoring status
+TEST_MONITORING="${TEST_MONITORING:-false}"  # Test monitoring infrastructure
 
 # Note: Logging functions (log_info, log_success, log_warn, log_error) are now sourced from scripts/lib/common.sh
 # Note: oc_cmd() and oc_cmd_silent() are now sourced from scripts/lib/common.sh
@@ -34,6 +37,9 @@ Options:
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
   --monitoring-type TYPE    Monitoring type: coo, uwm, or all (required for deployment)
   --all                     Deploy both COO and UWM monitoring (same as --monitoring-type all)
+  --persistent              Enable persistent storage for Prometheus (both COO and UWM)
+  --status                  Show monitoring infrastructure status
+  --test                    Test monitoring infrastructure
   --remove-monitoring [TYPE] Remove monitoring infrastructure (TYPE: coo, uwm, or all - required)
   --delete-crds              Delete COO CRDs during cleanup (requires cluster-admin, only for COO removal)
   -v, --verbose            Show verbose output (raw oc command output)
@@ -44,12 +50,20 @@ Environment Variables:
   MONITORING_TYPE           Monitoring type: coo or uwm (required)
   REMOVE_MONITORING         Set to true to remove monitoring (default: false)
   VERBOSE                   Set to true to show verbose output (default: false)
+  PERSISTENT_STORAGE        Set to true to enable persistent storage (default: true)
+                            Set to false to use ephemeral storage
 
 Examples:
   $0 --monitoring-type uwm
   $0 --monitoring-type coo -n my-namespace
   $0 --monitoring-type all              # Deploy both COO and UWM
   $0 --all                               # Deploy both COO and UWM
+  $0 --monitoring-type coo --persistent  # Deploy COO with persistent storage
+  $0 --monitoring-type all --persistent  # Deploy both with persistent storage
+  $0 --status                            # Show monitoring status
+  $0 --status --monitoring-type coo      # Show COO monitoring status
+  $0 --test                              # Test monitoring infrastructure
+  $0 --test --monitoring-type uwm        # Test UWM monitoring
   $0 --remove-monitoring coo
   $0 --remove-monitoring --monitoring-type uwm
   $0 --remove-monitoring all
@@ -833,6 +847,94 @@ except:
     fi
 }
 
+# Configure UWM persistent storage
+configure_uwm_persistent_storage() {
+    log_info "Configuring persistent storage for UWM Prometheus..."
+    
+    # Get current config
+    local uwm_config=$(oc get configmap user-workload-monitoring-config -n openshift-user-workload-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
+    
+    # Check if persistent storage is already configured
+    if echo "$uwm_config" | grep -qE "prometheus:\s*$" && echo "$uwm_config" | grep -A 10 "^prometheus:" | grep -qE "^\s*volumeClaimTemplate:"; then
+        log_info "Persistent storage already configured for UWM Prometheus"
+        return 0
+    fi
+    
+    # Use a temporary file to safely update the YAML
+    local temp_config=$(mktemp)
+    if [[ -n "$uwm_config" ]]; then
+        echo "$uwm_config" > "$temp_config"
+    else
+        # Create empty config
+        echo "" > "$temp_config"
+    fi
+    
+    local temp_config_new="${temp_config}.new"
+    
+    # Add or update prometheus section with persistent storage
+    if grep -q "^prometheus:" "$temp_config" 2>/dev/null; then
+        # Update existing prometheus section - add volumeClaimTemplate if missing
+        if ! grep -A 10 "^prometheus:" "$temp_config" | grep -qE "^\s*volumeClaimTemplate:"; then
+            # Add volumeClaimTemplate after prometheus:
+            awk '
+            /^prometheus:/ {
+                print
+                print "  volumeClaimTemplate:"
+                print "    spec:"
+                print "      accessModes:"
+                print "      - ReadWriteOnce"
+                print "      resources:"
+                print "        requests:"
+                print "          storage: 50Gi"
+                next
+            }
+            { print }
+            ' "$temp_config" > "$temp_config_new" 2>/dev/null || {
+                log_error "Failed to update UWM config with persistent storage"
+                rm -f "$temp_config" "$temp_config_new"
+                return 1
+            }
+        else
+            # volumeClaimTemplate already exists, just log
+            log_info "Persistent storage already configured in UWM config"
+            rm -f "$temp_config" "$temp_config_new"
+            return 0
+        fi
+    else
+        # Add new prometheus section
+        cat "$temp_config" > "$temp_config_new"
+        if [[ -n "$uwm_config" ]]; then
+            echo "" >> "$temp_config_new"
+        fi
+        echo "prometheus:" >> "$temp_config_new"
+        echo "  volumeClaimTemplate:" >> "$temp_config_new"
+        echo "    spec:" >> "$temp_config_new"
+        echo "      accessModes:" >> "$temp_config_new"
+        echo "      - ReadWriteOnce" >> "$temp_config_new"
+        echo "      resources:" >> "$temp_config_new"
+        echo "        requests:" >> "$temp_config_new"
+        echo "          storage: 50Gi" >> "$temp_config_new"
+    fi
+    
+    # Update the ConfigMap
+    local updated_config=$(cat "$temp_config_new")
+    # Escape special characters for JSON
+    updated_config=$(echo "$updated_config" | sed 's/\\/\\\\/g' | sed 's/"/\\"/g')
+    updated_config=$(echo "$updated_config" | awk '{printf "%s\\n", $0}' | sed 's/\\n$//')
+    
+    if oc patch configmap user-workload-monitoring-config -n openshift-user-workload-monitoring --type merge \
+        -p "{\"data\":{\"config.yaml\":\"$updated_config\"}}" &>/dev/null; then
+        log_success "Persistent storage configured for UWM Prometheus (50Gi)"
+        rm -f "$temp_config" "$temp_config_new"
+        return 0
+    else
+        log_error "Failed to configure persistent storage for UWM Prometheus"
+        log_error "This requires cluster-admin permissions"
+        rm -f "$temp_config" "$temp_config_new"
+        return 1
+    fi
+}
+
 # Configure COO monitoring stack
 configure_coo_monitoring_stack() {
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -848,6 +950,45 @@ configure_coo_monitoring_stack() {
         log_error "Failed to deploy COO MonitoringStack"
         return 1
     }
+    
+    # Configure persistent storage if explicitly requested
+    if [[ "${PERSISTENT_STORAGE:-false}" == "true" ]]; then
+        log_info "Configuring persistent storage for COO Prometheus..."
+        # Check if persistent storage is already configured
+        local existing_pvc=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.spec.prometheusConfig.persistentVolumeClaim}' 2>/dev/null || echo "")
+        if [[ -n "$existing_pvc" ]] && [[ "$existing_pvc" != "null" ]]; then
+            log_info "Persistent storage already configured for COO Prometheus"
+        else
+            # Patch MonitoringStack to enable persistent storage
+            # Default: 50Gi storage, ReadWriteOnce access mode
+            oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
+                -p '{
+                    "spec": {
+                        "prometheusConfig": {
+                            "persistentVolumeClaim": {
+                                "accessModes": ["ReadWriteOnce"],
+                                "resources": {
+                                    "requests": {
+                                        "storage": "50Gi"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }' || {
+                log_warn "Failed to configure persistent storage for COO MonitoringStack"
+            }
+            log_success "Persistent storage configured for COO Prometheus (50Gi)"
+        fi
+    else
+        # Don't modify existing persistent storage configuration - leave it as-is (idempotent)
+        local existing_pvc=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.spec.prometheusConfig.persistentVolumeClaim}' 2>/dev/null || echo "")
+        if [[ -n "$existing_pvc" ]] && [[ "$existing_pvc" != "null" ]]; then
+            log_info "Persistent storage is already configured (leaving as-is)"
+        else
+            log_info "Using default ephemeral storage (persistent storage not configured)"
+        fi
+    fi
     
     # Ensure MonitoringStack has the required label for ThanosQuerier discovery
     local part_of_label=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || echo "")
@@ -986,6 +1127,94 @@ remove_coo_monitoring() {
         else
             oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null || true
         fi
+    fi
+    
+    # Delete Perses dashboards and datasources (deployed in openshift-operators namespace)
+    log_info "Removing Perses dashboards and datasources..."
+    # Check if Perses CRDs exist before attempting deletion
+    if oc get crd persesdashboards.perses.dev &>/dev/null && oc get crd persesdatasources.perses.dev &>/dev/null; then
+        # Delete by label selector (safer - only deletes COO Perses resources)
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo || true
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring || true
+        else
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo &>/dev/null || true
+            oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring &>/dev/null || true
+        fi
+        
+        # Also delete by name as fallback (in case labels weren't applied)
+        # Delete datasource
+        if oc get persesdatasource prometheus-coo -n openshift-operators &>/dev/null; then
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete persesdatasource prometheus-coo -n openshift-operators || true
+            else
+                oc delete persesdatasource prometheus-coo -n openshift-operators &>/dev/null || true
+            fi
+        fi
+        
+        # Delete dashboards (list common dashboard names)
+        local perses_dashboards=(
+            "eip-distribution"
+            "eip-distribution-fairness"
+            "eip-capacity-planning"
+            "eip-health-overview"
+            "eip-node-performance"
+            "eip-event-correlation"
+            "eip-mismatch-analysis"
+            "eip-performance-troubleshooting"
+            "eip-primary-secondary-analysis"
+            "cpic-health"
+        )
+        for dashboard in "${perses_dashboards[@]}"; do
+            if oc get persesdashboard "$dashboard" -n openshift-operators &>/dev/null; then
+                if [[ "$VERBOSE" == "true" ]]; then
+                    oc delete persesdashboard "$dashboard" -n openshift-operators || true
+                else
+                    oc delete persesdashboard "$dashboard" -n openshift-operators &>/dev/null || true
+                fi
+            fi
+        done
+    else
+        log_info "Perses CRDs not found, skipping Perses resource cleanup"
+    fi
+    
+    # Delete COO UI plugins (cluster-scoped resources, no namespace)
+    log_info "Removing COO UI plugins..."
+    # Note: UIPlugin is cluster-scoped (observability.openshift.io/v1alpha1), not namespace-scoped
+    # Try to delete by name directly (skip CRD check to avoid hanging)
+    # Common UI plugin names (from k8s/monitoring/coo/ui-plugins/)
+    local ui_plugin_names=(
+        "monitoring"
+        "troubleshooting"
+    )
+    local deleted_count=0
+    for plugin_name in "${ui_plugin_names[@]}"; do
+        # Try to delete directly with timeout and non-blocking flags
+        # Use --wait=false and --timeout to prevent hanging
+        if [[ "$VERBOSE" == "true" ]]; then
+            if oc delete uiplugin "$plugin_name" --wait=false --timeout=5s 2>&1 | grep -vE "(not found|No resources found|Error from server)"; then
+                ((deleted_count++))
+            fi
+        else
+            if oc delete uiplugin "$plugin_name" --wait=false --timeout=5s &>/dev/null 2>&1; then
+                ((deleted_count++))
+            fi
+        fi
+    done
+    
+    # Also try label-based deletion (non-blocking)
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
+        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
+    else
+        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s &>/dev/null 2>&1 || true
+        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s &>/dev/null 2>&1 || true
+    fi
+    
+    if [[ $deleted_count -gt 0 ]]; then
+        log_success "Removed $deleted_count UI plugin(s)"
+    else
+        log_info "No UI plugins found to remove (or already removed)"
     fi
     
     # Remove individual NetworkPolicies (if they exist)
@@ -1320,17 +1549,29 @@ deploy_monitoring() {
         # Configure monitoring stack
         configure_coo_monitoring_stack
         
-        # Apply COO manifests
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
-        if [[ "${VERBOSE:-false}" == "true" ]]; then
-            log_info "Deploying ThanosQuerier..."
+        # Apply COO manifests (optimized: batch apply for better performance)
+        log_info "Applying COO monitoring resources..."
+        local coo_manifests=(
+            "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+            "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
+            "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
+            "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
+        )
+        if oc apply -n "$NAMESPACE" -f "${coo_manifests[@]}" &>/dev/null; then
+            log_success "COO monitoring resources deployed"
+        else
+            # Fallback to individual applies for better error reporting
+            log_warn "Batch apply failed, applying individually..."
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/servicemonitor-coo.yaml"
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/prometheusrule-coo.yaml"
+            if [[ "${VERBOSE:-false}" == "true" ]]; then
+                log_info "Deploying ThanosQuerier..."
+            fi
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
+            oc_cmd_silent apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         fi
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/thanosquerier-coo.yaml"
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/coo/monitoring/alertmanagerconfig-coo.yaml"
-        
-        # Always apply combined NetworkPolicy (works for both COO and UWM)
-        oc_cmd_silent apply -f "${project_root}/k8s/monitoring/networkpolicy-combined.yaml"
         
         # Remove individual NetworkPolicies if they exist (to avoid conflicts)
         oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" &>/dev/null || true
@@ -1443,39 +1684,47 @@ deploy_monitoring() {
         # The Perses instance is created automatically by UIPlugin
         log_info "Installing Perses datasources and dashboards for console integration..."
         if [[ -d "${project_root}/k8s/monitoring/coo/perses" ]]; then
-            # Install datasources
+            # Install datasources (optimized: batch apply)
             if [[ -d "${project_root}/k8s/monitoring/coo/perses/datasources" ]]; then
-                for datasource in "${project_root}"/k8s/monitoring/coo/perses/datasources/*.yaml; do
-                    if [[ -f "$datasource" ]]; then
-                        local ds_name=$(basename "$datasource" .yaml)
-                        if [[ "$VERBOSE" == "true" ]]; then
-                            oc apply -f "$datasource" && log_success "  ✓ Installed Perses datasource: $ds_name"
-                        else
-                            if oc apply -f "$datasource" &>/dev/null; then
-                                log_success "  ✓ Installed Perses datasource: $ds_name"
-                            else
-                                log_warn "  ✗ Failed to install Perses datasource: $ds_name"
+                local datasource_files=("${project_root}"/k8s/monitoring/coo/perses/datasources/*.yaml)
+                if [[ -f "${datasource_files[0]}" ]]; then
+                    if oc apply -f "${datasource_files[@]}" &>/dev/null; then
+                        log_success "Installed ${#datasource_files[@]} Perses datasource(s)"
+                    else
+                        # Fallback to individual applies
+                        for datasource in "${datasource_files[@]}"; do
+                            if [[ -f "$datasource" ]]; then
+                                local ds_name=$(basename "$datasource" .yaml)
+                                if oc apply -f "$datasource" &>/dev/null; then
+                                    log_success "  ✓ Installed Perses datasource: $ds_name"
+                                else
+                                    log_warn "  ✗ Failed to install Perses datasource: $ds_name"
+                                fi
                             fi
-                        fi
+                        done
                     fi
-                done
+                fi
             fi
-            # Install dashboards
+            # Install dashboards (optimized: batch apply)
             if [[ -d "${project_root}/k8s/monitoring/coo/perses/dashboards" ]]; then
-                for dashboard in "${project_root}"/k8s/monitoring/coo/perses/dashboards/*.yaml; do
-                    if [[ -f "$dashboard" ]]; then
-                        local db_name=$(basename "$dashboard" .yaml)
-                        if [[ "$VERBOSE" == "true" ]]; then
-                            oc apply -f "$dashboard" && log_success "  ✓ Installed Perses dashboard: $db_name"
-                        else
-                            if oc apply -f "$dashboard" &>/dev/null; then
-                                log_success "  ✓ Installed Perses dashboard: $db_name"
-                            else
-                                log_warn "  ✗ Failed to install Perses dashboard: $db_name"
+                local dashboard_files=("${project_root}"/k8s/monitoring/coo/perses/dashboards/*.yaml)
+                if [[ -f "${dashboard_files[0]}" ]]; then
+                    if oc apply -f "${dashboard_files[@]}" &>/dev/null; then
+                        log_success "Installed ${#dashboard_files[@]} Perses dashboard(s)"
+                    else
+                        # Fallback to individual applies
+                        for dashboard in "${dashboard_files[@]}"; do
+                            if [[ -f "$dashboard" ]]; then
+                                local db_name=$(basename "$dashboard" .yaml)
+                                if oc apply -f "$dashboard" &>/dev/null; then
+                                    log_success "  ✓ Installed Perses dashboard: $db_name"
+                                else
+                                    log_warn "  ✗ Failed to install Perses dashboard: $db_name"
+                                fi
                             fi
-                        fi
+                        done
                     fi
-                done
+                fi
             fi
         else
             log_warn "Perses directory not found: ${project_root}/k8s/monitoring/coo/perses"
@@ -1484,16 +1733,146 @@ deploy_monitoring() {
         # Install COO UI plugins (for OpenShift console integration)
         log_info "Installing COO UI plugins..."
         if [[ -d "${project_root}/k8s/monitoring/coo/ui-plugins" ]]; then
+            # Get OpenShift version for troubleshooting plugin check
+            local ocp_version=$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "")
+            local ocp_major_minor=""
+            if [[ -n "$ocp_version" ]]; then
+                # Extract major.minor version (e.g., "4.19" from "4.19.0")
+                ocp_major_minor=$(echo "$ocp_version" | cut -d. -f1,2)
+            fi
+            
             for ui_plugin in "${project_root}"/k8s/monitoring/coo/ui-plugins/*.yaml; do
                 if [[ -f "$ui_plugin" ]]; then
                     local plugin_name=$(basename "$ui_plugin" .yaml)
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        oc apply -f "$ui_plugin" && log_success "  ✓ Installed UI plugin: $plugin_name"
-                    else
-                        if oc apply -f "$ui_plugin" &>/dev/null; then
-                            log_success "  ✓ Installed UI plugin: $plugin_name"
+                    local is_troubleshooting=false
+                    if [[ "$plugin_name" == "troubleshooting-ui-plugin" ]] || [[ "$plugin_name" == "troubleshooting" ]]; then
+                        is_troubleshooting=true
+                    fi
+                    
+                    # Check if troubleshooting plugin requires OCP 4.19+
+                    if [[ "$is_troubleshooting" == "true" ]]; then
+                        if [[ -z "$ocp_major_minor" ]]; then
+                            log_warn "  ⚠ Cannot determine OpenShift version, attempting to install troubleshooting plugin anyway"
+                            log_info "    Troubleshooting UI Plugin requires OpenShift 4.19 or newer"
                         else
-                            log_warn "  ✗ Failed to install UI plugin: $plugin_name"
+                            # Compare versions: 4.19+ required
+                            # Extract major and minor for comparison
+                            local ocp_major=$(echo "$ocp_major_minor" | cut -d. -f1)
+                            local ocp_minor=$(echo "$ocp_major_minor" | cut -d. -f2)
+                            local min_major=4
+                            local min_minor=19
+                            
+                            # Check if version is >= 4.19
+                            local version_ok=false
+                            if [[ $ocp_major -gt $min_major ]]; then
+                                version_ok=true
+                            elif [[ $ocp_major -eq $min_major ]] && [[ $ocp_minor -ge $min_minor ]]; then
+                                version_ok=true
+                            fi
+                            
+                            if [[ "$version_ok" == "false" ]]; then
+                                log_warn "  ⚠ Skipping troubleshooting plugin (requires OCP 4.19+, cluster is $ocp_version)"
+                                continue
+                            fi
+                            log_info "  Installing troubleshooting UI plugin (OCP $ocp_version detected, 4.19+ required)"
+                        fi
+                    fi
+                    
+                    # Try to install the plugin
+                    local apply_output
+                    local apply_exit
+                    apply_output=$(oc apply -f "$ui_plugin" 2>&1)
+                    apply_exit=$?
+                    
+                    if [[ $apply_exit -eq 0 ]]; then
+                        # Verify the resource actually exists (oc apply can succeed but resource might not be created)
+                        # Extract the resource name from the YAML file
+                        local resource_name=$(grep -E "^  name:" "$ui_plugin" | head -1 | awk '{print $2}' | tr -d '"' || echo "")
+                        if [[ -z "$resource_name" ]]; then
+                            # Fallback: use plugin_name without -ui-plugin suffix
+                            resource_name="$plugin_name"
+                            if [[ "$resource_name" == "troubleshooting-ui-plugin" ]]; then
+                                resource_name="troubleshooting-panel"
+                            elif [[ "$resource_name" == "monitoring-ui-plugin" ]]; then
+                                resource_name="monitoring"
+                            fi
+                        fi
+                        
+                        # Wait a moment for the resource to be created, then verify it exists
+                        sleep 2
+                        if oc get uiplugin "$resource_name" &>/dev/null; then
+                            log_success "  ✓ Installed UI plugin: $plugin_name (verified)"
+                            
+                            # Enable troubleshooting-panel in Console operator immediately after successful installation
+                            # Note: UIPlugin creates a ConsolePlugin resource named "troubleshooting-panel-console-plugin"
+                            if [[ "$is_troubleshooting" == "true" ]]; then
+                                local console_plugins=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins[*]}' 2>/dev/null || echo "")
+                                # The ConsolePlugin resource created by UIPlugin is named "troubleshooting-panel-console-plugin"
+                                local console_plugin_name="troubleshooting-panel-console-plugin"
+                                
+                                # Check if plugin is already in the list
+                                if echo "$console_plugins" | grep -qE "\b${console_plugin_name}\b"; then
+                                    log_info "  ✓ Troubleshooting plugin already enabled in Console operator"
+                                else
+                                    log_info "  Enabling troubleshooting-panel-console-plugin in Console operator..."
+                                    # Get current plugins and add troubleshooting-panel-console-plugin if not present
+                                    local current_plugins_json=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}' 2>/dev/null || echo "[]")
+                                    # Add troubleshooting-panel-console-plugin to the plugins list using jq if available, otherwise use patch
+                                    if command -v jq &>/dev/null; then
+                                        local updated_plugins=$(echo "$current_plugins_json" | jq '. + ["troubleshooting-panel-console-plugin"] | unique' 2>/dev/null || echo "")
+                                        if [[ -n "$updated_plugins" ]]; then
+                                            if oc patch console.operator.openshift.io cluster --type=json \
+                                                -p "[{\"op\": \"replace\", \"path\": \"/spec/plugins\", \"value\": $updated_plugins}]" &>/dev/null; then
+                                                log_success "  ✓ Enabled troubleshooting-panel-console-plugin in Console operator"
+                                                log_info "  Note: Troubleshooting panel appears when viewing alerts (Observe > Alerting > select alert)"
+                                                log_info "  Console pods will restart automatically to load the plugin"
+                                                log_info "  If troubleshooting panel shows 'Request Failed', check:"
+                                                log_info "    - Browser console for detailed error messages"
+                                                log_info "    - Korrel8r pod logs: oc logs -n openshift-operators -l app.kubernetes.io/instance=korrel8r"
+                                                log_info "    - Console pod logs: oc logs -n openshift-console -l app=console | grep -i korrel"
+                                            else
+                                                log_warn "  ⚠ Failed to enable troubleshooting-panel-console-plugin in Console operator (may require cluster-admin)"
+                                            fi
+                                        fi
+                                    else
+                                        # Fallback: use simple patch to add the plugin
+                                        if oc patch console.operator.openshift.io cluster --type=json \
+                                            -p '[{"op": "add", "path": "/spec/plugins/-", "value": "troubleshooting-panel-console-plugin"}]' &>/dev/null; then
+                                            log_success "  ✓ Enabled troubleshooting-panel-console-plugin in Console operator"
+                                            log_info "  Note: Troubleshooting panel appears when viewing alerts (Observe > Alerting > select alert)"
+                                            log_info "  Console pods will restart automatically to load the plugin"
+                                        else
+                                            log_warn "  ⚠ Failed to enable troubleshooting-panel-console-plugin in Console operator (may require cluster-admin)"
+                                        fi
+                                    fi
+                                fi
+                            fi
+                        else
+                            log_warn "  ⚠ Applied UI plugin: $plugin_name but resource not found (may still be creating)"
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                log_info "    Apply output: $apply_output"
+                            fi
+                            if [[ "$is_troubleshooting" == "true" ]]; then
+                                log_info "    Troubleshooting plugin may require:"
+                                log_info "    - OpenShift 4.19 or newer (detected: ${ocp_version:-unknown})"
+                                log_info "    - Cluster Observability Operator installed"
+                                log_info "    - Cluster-admin permissions"
+                                log_info "    Check status: oc get uiplugin $resource_name"
+                            fi
+                        fi
+                    else
+                        log_error "  ✗ Failed to install UI plugin: $plugin_name"
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            log_info "    Error output: $apply_output"
+                        else
+                            # Show first line of error even in non-verbose mode
+                            log_info "    Error: $(echo "$apply_output" | head -1)"
+                        fi
+                        if [[ "$is_troubleshooting" == "true" ]]; then
+                            log_info "    Troubleshooting plugin requires:"
+                            log_info "    - OpenShift 4.19 or newer (detected: ${ocp_version:-unknown})"
+                            log_info "    - Cluster Observability Operator installed"
+                            log_info "    - Cluster-admin permissions"
                         fi
                     fi
                 fi
@@ -1560,6 +1939,11 @@ deploy_monitoring() {
         # Enable UWM
         enable_user_workload_monitoring
         enable_user_workload_alertmanager
+        
+        # Configure persistent storage for UWM if requested
+        if [[ "${PERSISTENT_STORAGE:-false}" == "true" ]]; then
+            configure_uwm_persistent_storage
+        fi
         
         # Apply UWM manifests
         oc_cmd_silent apply -f "${project_root}/k8s/monitoring/uwm/monitoring/servicemonitor-uwm.yaml"
@@ -1647,6 +2031,18 @@ parse_args() {
                 DELETE_CRDS="true"
                 shift
                 ;;
+            --persistent)
+                PERSISTENT_STORAGE="true"
+                shift
+                ;;
+            --status)
+                SHOW_STATUS="true"
+                shift
+                ;;
+            --test)
+                TEST_MONITORING="true"
+                shift
+                ;;
             -v|--verbose)
                 VERBOSE="true"
                 shift
@@ -1664,6 +2060,510 @@ parse_args() {
     done
 }
 
+# Show monitoring status
+show_monitoring_status() {
+    log_info "Checking monitoring infrastructure status..."
+    echo ""
+    
+    # Check namespace
+    if ! oc get namespace "$NAMESPACE" &>/dev/null; then
+        log_warn "Namespace '$NAMESPACE' does not exist"
+        return 1
+    fi
+    
+    # Detect current monitoring type if not specified
+    local status_type="${MONITORING_TYPE:-}"
+    if [[ -z "$status_type" ]]; then
+        status_type=$(detect_current_monitoring_type)
+        if [[ "$status_type" == "none" ]]; then
+            log_warn "No monitoring infrastructure detected in namespace '$NAMESPACE'"
+            return 1
+        fi
+        log_info "Detected monitoring type: $status_type"
+    fi
+    
+    # Show COO status if applicable
+    if [[ "$status_type" == "coo" ]] || [[ "$status_type" == "all" ]]; then
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "COO Monitoring Status"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Check MonitoringStack
+        if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
+            log_info "MonitoringStack:"
+            oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+            
+            # Check Prometheus pods
+            log_info ""
+            log_info "Prometheus Pods:"
+            oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No Prometheus pods found)"
+            
+            # Check ThanosQuerier
+            if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+                log_info ""
+                log_info "ThanosQuerier:"
+                oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
+                
+                local thanos_pod=$(find_thanosquerier_pod "$NAMESPACE")
+                if [[ -n "$thanos_pod" ]]; then
+                    log_info ""
+                    log_info "ThanosQuerier Pod:"
+                    oc get pod "$thanos_pod" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp"
+                fi
+            fi
+        else
+            log_warn "MonitoringStack not found"
+        fi
+        
+        # Check ServiceMonitor (try both COO API group and standard API group)
+        # Optimized: store result of first check to avoid duplicate calls
+        local sm_output=""
+        local sm_api_group=""
+        if sm_output=$(oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" 2>/dev/null); then
+            sm_api_group="COO API"
+        elif sm_output=$(oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null); then
+            sm_api_group="standard"
+        fi
+        
+        if [[ -n "$sm_output" ]]; then
+            log_info ""
+            if [[ "$sm_api_group" == "COO API" ]]; then
+                log_info "ServiceMonitor (COO API):"
+            else
+                log_info "ServiceMonitor:"
+            fi
+            echo "$sm_output"
+        else
+            log_warn "ServiceMonitor not found"
+        fi
+        
+        # Check PrometheusRule (try both COO API group and standard API group)
+        # Optimized: store result of first check to avoid duplicate calls
+        local pr_output=""
+        local pr_api_group=""
+        if pr_output=$(oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null); then
+            pr_api_group="COO API"
+        elif pr_output=$(oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null); then
+            pr_api_group="standard"
+        fi
+        
+        if [[ -n "$pr_output" ]]; then
+            log_info ""
+            if [[ "$pr_api_group" == "COO API" ]]; then
+                log_info "PrometheusRule (COO API):"
+            else
+                log_info "PrometheusRule:"
+            fi
+            echo "$pr_output"
+        else
+            log_warn "PrometheusRule not found"
+        fi
+        
+        echo ""
+    fi
+    
+    # Show UWM status if applicable
+    if [[ "$status_type" == "uwm" ]] || [[ "$status_type" == "all" ]]; then
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        log_info "UWM Monitoring Status"
+        log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        
+        # Check if UWM is enabled
+        local uwm_enabled=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null | grep -oE "enableUserWorkload:\s*true" || echo "")
+        if [[ -n "$uwm_enabled" ]]; then
+            log_success "User Workload Monitoring is enabled"
+        else
+            log_warn "User Workload Monitoring may not be enabled"
+        fi
+        
+        # Check Prometheus pods in openshift-user-workload-monitoring
+        log_info ""
+        log_info "UWM Prometheus Pods:"
+        oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus -o custom-columns="NAME:.metadata.name,STATUS:.status.phase,RESTARTS:.status.containerStatuses[0].restartCount,AGE:.metadata.creationTimestamp" 2>/dev/null || log_info "  (No UWM Prometheus pods found)"
+        
+        # Check ServiceMonitor
+        if oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "ServiceMonitor:"
+            oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE"
+        fi
+        
+        # Check PrometheusRule
+        if oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null; then
+            log_info ""
+            log_info "PrometheusRule:"
+            oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE"
+        fi
+        
+        echo ""
+    fi
+    
+    # Show common resources
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Common Resources"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # NetworkPolicy
+    if oc get networkpolicy eip-monitor-combined -n "$NAMESPACE" &>/dev/null; then
+        log_info "NetworkPolicy:"
+        oc get networkpolicy eip-monitor-combined -n "$NAMESPACE"
+    fi
+    
+    log_success "Status check completed"
+}
+
+# Test monitoring infrastructure
+test_monitoring() {
+    # Save current error handling state and disable exit on error to ensure all tests run to completion
+    local original_set_e
+    if [[ $- == *e* ]]; then
+        original_set_e=1
+    else
+        original_set_e=0
+    fi
+    set +e
+    
+    log_info "Testing monitoring infrastructure..."
+    echo ""
+    
+    local tests_passed=0
+    local tests_failed=0
+    local total_tests=0
+    
+    # Test-specific logging function
+    log_test() { echo -e "\n${BLUE}[TEST]${NC} $1"; }
+    
+    # Helper function to run a test
+    run_test() {
+        local test_name="$1"
+        local test_command="$2"
+        ((total_tests++))
+        
+        # Run test command, capturing exit code
+        eval "$test_command" &>/dev/null
+        local test_exit=$?
+        
+        if [[ $test_exit -eq 0 ]]; then
+            log_success "$test_name"
+            ((tests_passed++))
+            return 0
+        else
+            log_error "$test_name"
+            ((tests_failed++))
+            return 1
+        fi
+    }
+    
+    # Detect monitoring type if not specified
+    local test_type="${MONITORING_TYPE:-}"
+    if [[ -z "$test_type" ]]; then
+        test_type=$(detect_current_monitoring_type || echo "none")
+        if [[ "$test_type" == "none" ]]; then
+            log_error "No monitoring infrastructure detected"
+            # Continue with tests anyway - they will fail but we'll get a complete picture
+            log_warn "Continuing with tests to show what's missing..."
+        else
+            log_info "Testing detected monitoring type: $test_type"
+        fi
+    fi
+    
+    # Test COO if applicable
+    if [[ "$test_type" == "coo" ]] || [[ "$test_type" == "all" ]]; then
+        log_test "Step 1: COO Monitoring Tests"
+        
+        run_test "MonitoringStack exists" "oc get monitoringstack eip-monitoring-stack -n \"$NAMESPACE\" &>/dev/null"
+        
+        # Check ServiceMonitor (try both COO API group and standard API group)
+        local sm_exists=false
+        if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+            sm_exists=true
+        fi
+        if [[ "$sm_exists" == "true" ]]; then
+            log_success "ServiceMonitor exists"
+            ((tests_passed++))
+        else
+            log_error "ServiceMonitor exists"
+            # Show what ServiceMonitors actually exist for debugging
+            local existing_sm=$(oc get servicemonitor.monitoring.rhobs -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            if [[ -z "$existing_sm" ]]; then
+                existing_sm=$(oc get servicemonitor -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            fi
+            if [[ -n "$existing_sm" ]]; then
+                log_info "  Found ServiceMonitor(s): $existing_sm"
+            else
+                log_info "  No ServiceMonitors found in namespace $NAMESPACE"
+            fi
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check PrometheusRule (try both COO API group and standard API group)
+        local pr_exists=false
+        if oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null || \
+           oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
+            pr_exists=true
+        fi
+        if [[ "$pr_exists" == "true" ]]; then
+            log_success "PrometheusRule exists"
+            ((tests_passed++))
+        else
+            log_error "PrometheusRule exists"
+            # Show what PrometheusRules actually exist for debugging
+            local existing_pr=$(oc get prometheusrule.monitoring.rhobs -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            if [[ -z "$existing_pr" ]]; then
+                existing_pr=$(oc get prometheusrule -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            fi
+            if [[ -n "$existing_pr" ]]; then
+                log_info "  Found PrometheusRule(s): $existing_pr"
+            else
+                log_info "  No PrometheusRules found in namespace $NAMESPACE"
+            fi
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check Prometheus pods
+        local prom_pods=$(oc get pods -n "$NAMESPACE" -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$prom_pods" -gt 0 ]]; then
+            run_test "Prometheus pods running" "oc get pods -n \"$NAMESPACE\" -l app.kubernetes.io/name=prometheus --field-selector=status.phase=Running --no-headers 2>/dev/null | grep -q ."
+        else
+            log_error "Prometheus pods not found"
+            ((tests_failed++))
+            ((total_tests++))
+        fi
+        
+        # Check ThanosQuerier
+        if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+            run_test "ThanosQuerier exists" "oc get thanosquerier eip-monitoring-stack-querier-coo -n \"$NAMESPACE\" &>/dev/null"
+            
+            local thanos_pod=$(find_thanosquerier_pod "$NAMESPACE")
+            if [[ -n "$thanos_pod" ]]; then
+                local thanos_phase=$(oc get pod "$thanos_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                run_test "ThanosQuerier pod running" "[[ \"$thanos_phase\" == \"Running\" ]]"
+                
+                # Test ThanosQuerier query endpoint
+                if [[ "$thanos_phase" == "Running" ]]; then
+                    local query_result=$(oc exec "$thanos_pod" -n "$NAMESPACE" -- curl -sf http://localhost:10902/api/v1/query?query=up 2>/dev/null || echo "")
+                    run_test "ThanosQuerier query endpoint accessible" "[[ -n \"$query_result\" ]]"
+                fi
+            fi
+        fi
+        
+        # Test UI Plugins (cluster-scoped resources)
+        log_test "Step 1b: COO UI Plugins Tests"
+        run_test "Monitoring UI Plugin exists" "oc get uiplugin monitoring &>/dev/null"
+        
+        # Troubleshooting UI Plugin is Technology Preview and may not be available
+        # Check for both possible names: troubleshooting and troubleshooting-panel
+        local troubleshooting_found=false
+        local troubleshooting_resource_name=""
+        if oc get uiplugin troubleshooting-panel &>/dev/null; then
+            troubleshooting_found=true
+            troubleshooting_resource_name="troubleshooting-panel"
+        elif oc get uiplugin troubleshooting &>/dev/null; then
+            troubleshooting_found=true
+            troubleshooting_resource_name="troubleshooting"
+        fi
+        
+        if [[ "$troubleshooting_found" == "true" ]]; then
+            log_success "Troubleshooting UI Plugin exists"
+            ((tests_passed++))
+            
+            # Verify it's enabled in Console operator
+            # Note: UIPlugin creates a ConsolePlugin resource named "troubleshooting-panel-console-plugin"
+            local console_plugins=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins[*]}' 2>/dev/null || echo "")
+            local console_plugin_name="troubleshooting-panel-console-plugin"
+            
+            if echo "$console_plugins" | grep -qE "\b${console_plugin_name}\b"; then
+                log_success "Troubleshooting UI Plugin enabled in Console operator"
+                ((tests_passed++))
+            else
+                log_error "Troubleshooting UI Plugin installed but not enabled in Console operator"
+                log_info "  Plugin should be in Console operator spec.plugins list"
+                log_info "  Current plugins: $console_plugins"
+                log_info "  Expected: troubleshooting-panel-console-plugin (ConsolePlugin resource name)"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+        else
+            log_warn "Troubleshooting UI Plugin not found (Technology Preview - may not be available)"
+            # Don't count as failure since it's optional/Technology Preview
+            ((tests_passed++))
+        fi
+        ((total_tests++))
+        
+        # Test Perses configuration (deployed in openshift-operators namespace)
+        log_test "Step 1c: COO Perses Configuration Tests"
+        local perses_namespace="openshift-operators"
+        
+        # Check PersesDatasource
+        run_test "PersesDatasource prometheus-coo exists" "oc get persesdatasource prometheus-coo -n \"$perses_namespace\" &>/dev/null"
+        
+        # Check PersesDashboards - verify they are loaded and have no errors
+        local actual_dashboards=$(oc get persesdashboard -n "$perses_namespace" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$actual_dashboards" -gt 0 ]]; then
+            log_success "PersesDashboards loaded ($actual_dashboards found)"
+            ((tests_passed++))
+            
+            # Check for errors in dashboard status/conditions
+            local dashboards_with_errors=0
+            local dashboard_list=$(oc get persesdashboard -n "$perses_namespace" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+            if [[ -n "$dashboard_list" ]]; then
+                for db_name in $dashboard_list; do
+                    # Try to get the full dashboard resource - if this fails, there's an error
+                    local dashboard_json=$(oc get persesdashboard "$db_name" -n "$perses_namespace" -o json 2>/dev/null || echo "")
+                    if [[ -z "$dashboard_json" ]]; then
+                        ((dashboards_with_errors++))
+                        if [[ "$dashboards_with_errors" -eq 1 ]]; then
+                            log_info "  Dashboard with error: $db_name (cannot retrieve resource)"
+                        fi
+                        continue
+                    fi
+                    
+                    # Check status.conditions for any error conditions
+                    local error_condition=$(echo "$dashboard_json" | jq -r '.status.conditions[]? | select(.type=="Error" or .type=="Failed") | .status' 2>/dev/null | head -1 || echo "")
+                    local error_message=$(echo "$dashboard_json" | jq -r '.status.conditions[]? | select(.type=="Error" or .type=="Failed") | .message' 2>/dev/null | head -1 || echo "")
+                    local error_reason=$(echo "$dashboard_json" | jq -r '.status.conditions[]? | select(.type=="Error" or .type=="Failed") | .reason' 2>/dev/null | head -1 || echo "")
+                    
+                    # Check if there are any error conditions
+                    if [[ "$error_condition" == "True" ]] || [[ -n "$error_message" ]] || [[ -n "$error_reason" ]]; then
+                        ((dashboards_with_errors++))
+                        if [[ "$dashboards_with_errors" -eq 1 ]]; then
+                            log_info "  Dashboard with error: $db_name"
+                            if [[ -n "$error_message" ]]; then
+                                log_info "    Error: $error_message"
+                            fi
+                            if [[ -n "$error_reason" ]]; then
+                                log_info "    Reason: $error_reason"
+                            fi
+                        fi
+                    fi
+                done
+            fi
+            
+            if [[ "$dashboards_with_errors" -eq 0 ]]; then
+                log_success "PersesDashboards have no errors"
+                ((tests_passed++))
+            else
+                log_error "PersesDashboards have errors ($dashboards_with_errors dashboard(s) with errors)"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+        else
+            log_error "No PersesDashboards found"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check if Perses instance exists (may be auto-created by UIPlugin)
+        # Note: Perses instance might be in openshift-operators or the monitoring namespace
+        local perses_instance_found=false
+        if oc get perses -n "$perses_namespace" --no-headers 2>/dev/null | grep -q .; then
+            perses_instance_found=true
+        elif oc get perses -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
+            perses_instance_found=true
+        fi
+        if [[ "$perses_instance_found" == "true" ]]; then
+            log_success "Perses instance exists"
+            ((tests_passed++))
+        else
+            log_error "Perses instance not found"
+            log_info "  Expected in namespace: $perses_namespace or $NAMESPACE"
+            log_info "  Perses instance should be auto-created by UIPlugin when Monitoring UI Plugin is installed"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        echo ""
+    fi
+    
+    # Test UWM if applicable
+    if [[ "$test_type" == "uwm" ]] || [[ "$test_type" == "all" ]]; then
+        log_test "Step 2: UWM Monitoring Tests"
+        
+        # Check if UWM is enabled
+        local uwm_enabled=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null | grep -oE "enableUserWorkload:\s*true" || echo "")
+        run_test "User Workload Monitoring enabled" "[[ -n \"$uwm_enabled\" ]]"
+        
+        # Check ServiceMonitor (UWM uses standard API group)
+        local uwm_sm_exists=false
+        if oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+            uwm_sm_exists=true
+        fi
+        if [[ "$uwm_sm_exists" == "true" ]]; then
+            log_success "ServiceMonitor exists"
+            ((tests_passed++))
+        else
+            log_error "ServiceMonitor exists"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check PrometheusRule (UWM uses standard API group)
+        local uwm_pr_exists=false
+        if oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null; then
+            uwm_pr_exists=true
+        fi
+        if [[ "$uwm_pr_exists" == "true" ]]; then
+            log_success "PrometheusRule exists"
+            ((tests_passed++))
+        else
+            log_error "PrometheusRule exists"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check UWM Prometheus pods
+        local uwm_prom_pods=$(oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$uwm_prom_pods" -gt 0 ]]; then
+            run_test "UWM Prometheus pods running" "oc get pods -n openshift-user-workload-monitoring -l app.kubernetes.io/name=prometheus --field-selector=status.phase=Running --no-headers 2>/dev/null | grep -q ."
+        else
+            log_error "UWM Prometheus pods not found"
+            ((tests_failed++))
+            ((total_tests++))
+        fi
+        
+        echo ""
+    fi
+    
+    # Test common resources
+    log_test "Step 3: Common Resources Tests"
+    
+    run_test "NetworkPolicy exists" "oc get networkpolicy eip-monitor-combined -n \"$NAMESPACE\" &>/dev/null"
+    
+    # Test metrics availability (if Prometheus is accessible)
+    if [[ "$test_type" == "coo" ]] || [[ "$test_type" == "all" ]]; then
+        local prom_pod=$(find_prometheus_pod "$NAMESPACE" "true")
+        if [[ -n "$prom_pod" ]]; then
+            local prom_phase=$(oc get pod "$prom_pod" -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [[ "$prom_phase" == "Running" ]]; then
+                # Test if eip-monitor metrics are being scraped
+                local metrics_query=$(oc exec "$prom_pod" -n "$NAMESPACE" -- curl -sf "http://localhost:9090/api/v1/query?query=eips_configured_total" 2>/dev/null || echo "")
+                run_test "EIP metrics available in Prometheus" "echo \"$metrics_query\" | grep -q \"eips_configured_total\""
+            fi
+        fi
+    fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_info "Test Summary: $tests_passed/$total_tests passed"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Restore original error handling state
+    if [[ $original_set_e -eq 1 ]]; then
+        set -e
+    fi
+    
+    if [[ $tests_failed -eq 0 ]]; then
+        log_success "All tests passed!"
+        return 0
+    else
+        log_warn "$tests_failed test(s) failed"
+        return 1
+    fi
+}
+
 # Main function
 main() {
     parse_args "$@"
@@ -1673,6 +2573,19 @@ main() {
     fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
+    
+    # Handle status command
+    if [[ "$SHOW_STATUS" == "true" ]]; then
+        show_monitoring_status
+        return 0
+    fi
+    
+    # Handle test command
+    if [[ "$TEST_MONITORING" == "true" ]]; then
+        test_monitoring
+        return $?
+    fi
+    
     log_info "Deploying to namespace: $NAMESPACE"
     
     # If removing, detect the actual type first and log it
