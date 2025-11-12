@@ -16,6 +16,8 @@ NAMESPACE="${NAMESPACE:-eip-monitoring}"
 CLEANUP="${CLEANUP:-true}"  # Set to false to keep resources after test
 DELETE_CRDS="${DELETE_CRDS:-true}"  # Set to false to skip CRD deletion (requires cluster-admin)
 TIMEOUT="${TIMEOUT:-120}"  # Timeout in seconds for resource readiness (default: 2 minutes)
+EIP_MONITOR_IMAGE="${EIP_MONITOR_IMAGE:-}"  # Optional: image to deploy before testing
+QUAY_REPOSITORY="${QUAY_REPOSITORY:-rh_ee_jjohanss}"  # Default quay.io organization for auto-detection
 UWM_NAMESPACE="openshift-user-workload-monitoring"
 
 # E2E-specific logging function
@@ -68,6 +70,132 @@ trap cleanup EXIT
 
 # Note: wait_for_resource() and wait_for_pods() are now sourced from scripts/lib/common.sh
 
+# Auto-detect latest pre-release image from .version file and git tags
+# Format: quay.io/${QUAY_REPOSITORY}/eip-monitor:v${VERSION}-rc${RC}
+detect_latest_pre_release_image() {
+    # QUAY_REPOSITORY has a default value, so we can always use it
+    
+    # Read version from .version file
+    local version_file="${PROJECT_ROOT}/.version"
+    if [[ ! -f "$version_file" ]]; then
+        return 1
+    fi
+    
+    local version=$(cat "$version_file" | tr -d '[:space:]')
+    if [[ -z "$version" ]]; then
+        return 1
+    fi
+    
+    # Fetch tags if in a git repository (may be needed in CI environments)
+    if git rev-parse --git-dir &>/dev/null; then
+        git fetch --tags --quiet 2>/dev/null || true
+    fi
+    
+    # Find the latest RC tag for this version (e.g., v0.2.2-rc1, v0.2.2-rc2, etc.)
+    local latest_rc_tag=$(git tag -l "v${version}-rc*" 2>/dev/null | sort -V | tail -1)
+    
+    if [[ -z "$latest_rc_tag" ]]; then
+        # No RC tag found for this version, return failure
+        return 1
+    fi
+    
+    # Construct image name: quay.io/${QUAY_REPOSITORY}/eip-monitor:${tag}
+    echo "quay.io/${QUAY_REPOSITORY}/eip-monitor:${latest_rc_tag}"
+}
+
+# Check why auto-detection might have failed (for better diagnostics)
+check_auto_detection_status() {
+    local reason=""
+    
+    # Check if .version file exists
+    local version_file="${PROJECT_ROOT}/.version"
+    if [[ ! -f "$version_file" ]]; then
+        reason=".version file not found"
+        echo "$reason"
+        return
+    fi
+    
+    local version=$(cat "$version_file" | tr -d '[:space:]' 2>/dev/null || echo "")
+    if [[ -z "$version" ]]; then
+        reason=".version file is empty"
+        echo "$reason"
+        return
+    fi
+    
+    # Check if RC tags exist for this version
+    local latest_rc_tag=$(git tag -l "v${version}-rc*" 2>/dev/null | sort -V | tail -1)
+    if [[ -z "$latest_rc_tag" ]]; then
+        reason="no pre-release tags found for version ${version} (v${version}-rc*)"
+    else
+        reason="unknown (tag found: $latest_rc_tag)"
+    fi
+    
+    echo "$reason"
+}
+
+# Deploy eip-monitor application if needed
+# Uses deploy-eip.sh which handles idempotency, image updates, and rollout waiting
+deploy_eip_monitor_if_needed() {
+    # Auto-detect image from latest pre-release tag if not specified
+    if [[ -z "$EIP_MONITOR_IMAGE" ]]; then
+        local detected_image=$(detect_latest_pre_release_image)
+        if [[ -n "$detected_image" ]]; then
+            EIP_MONITOR_IMAGE="$detected_image"
+            log_info "Auto-detected latest pre-release image: $EIP_MONITOR_IMAGE"
+        fi
+    fi
+    
+    # Only deploy if image is specified
+    if [[ -z "$EIP_MONITOR_IMAGE" ]]; then
+        # Check if deployment exists
+        if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+            local current_image=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
+            log_info "eip-monitor is already deployed (image: ${current_image:-unknown})"
+            
+            # Provide helpful diagnostics about why auto-detection didn't work
+            local detection_reason=$(check_auto_detection_status)
+            if [[ "$detection_reason" == "no pre-release tags found (v*-rc*)" ]]; then
+                log_info "Auto-detection skipped: $detection_reason"
+                log_info "  Pre-release tags are created by the staging workflow"
+            fi
+            log_info "Using existing deployment"
+            return 0
+        else
+            log_warn "eip-monitor deployment not found and no EIP_MONITOR_IMAGE specified"
+            
+            # Provide helpful diagnostics
+            local detection_reason=$(check_auto_detection_status)
+            if [[ "$detection_reason" == "no pre-release tags found (v*-rc*)" ]]; then
+                log_info "Auto-detection failed: $detection_reason"
+                log_info "  Pre-release tags are created by the staging workflow"
+            fi
+            
+            log_info "Tests will check for service endpoints, but deployment may be missing"
+            log_info "To deploy: ./scripts/deploy-eip.sh deploy --quay-image <image>"
+            log_info "Or set EIP_MONITOR_IMAGE environment variable"
+            return 0  # Don't fail - let tests proceed and fail if needed
+        fi
+    fi
+    
+    # Deploy or update using deploy-eip.sh (handles idempotency automatically)
+    log_test "Deploying/updating eip-monitor application with image: $EIP_MONITOR_IMAGE"
+    # Set MONITORING_TYPE to uwm so deploy-eip.sh applies correct labels
+    if MONITORING_TYPE="uwm" "${PROJECT_ROOT}/scripts/deploy-eip.sh" deploy --quay-image "$EIP_MONITOR_IMAGE"; then
+        log_success "eip-monitor application deployed/updated"
+        # deploy-eip.sh already waits for rollout, but verify pods are ready
+        log_info "Verifying eip-monitor pods are ready..."
+        if wait_for_pods "$NAMESPACE" "app=eip-monitor-uwm" 1 60 || \
+           wait_for_pods "$NAMESPACE" "app=eip-monitor" 1 60; then
+            log_success "eip-monitor pods are ready"
+        else
+            log_warn "eip-monitor pods may still be initializing"
+        fi
+    else
+        log_error "Failed to deploy eip-monitor application"
+        return 1
+    fi
+}
+
 # Test UWM monitoring deployment
 test_uwm_deployment() {
     log_test "Testing UWM Monitoring Deployment"
@@ -75,6 +203,15 @@ test_uwm_deployment() {
     
     # Use PROJECT_ROOT from sourced common.sh
     local project_root="$PROJECT_ROOT"
+    
+    # Step 0: Deploy eip-monitor application if needed
+    log_test "Step 0: Ensuring eip-monitor application is deployed..."
+    if ! deploy_eip_monitor_if_needed; then
+        log_error "Failed to ensure eip-monitor is deployed"
+        ((TESTS_FAILED++)) || true
+        EXIT_CODE=1
+        return 1
+    fi
     
     # Step 1: Deploy UWM monitoring
     log_test "Step 1: Deploying UWM monitoring..."
@@ -477,6 +614,18 @@ main() {
     log_info "UWM Namespace: $UWM_NAMESPACE"
     log_info "Cleanup: $CLEANUP"
     log_info "Delete CRDs: $DELETE_CRDS (requires cluster-admin)"
+    if [[ -n "$EIP_MONITOR_IMAGE" ]]; then
+        log_info "EIP Monitor Image: $EIP_MONITOR_IMAGE"
+    else
+        # Try to auto-detect before showing message
+        local detected_image=$(detect_latest_pre_release_image)
+        if [[ -n "$detected_image" ]]; then
+            log_info "EIP Monitor Image: (auto-detected from pre-release tag: $detected_image)"
+        else
+            log_info "EIP Monitor Image: (not specified - will use existing deployment if present)"
+            log_info "  Using default QUAY_REPOSITORY: ${QUAY_REPOSITORY} for auto-detection"
+        fi
+    fi
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
