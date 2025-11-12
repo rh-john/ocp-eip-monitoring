@@ -111,6 +111,7 @@ jobs:
         run: echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
       
       - name: Build and push container image
+        id: build
         run: |
           IMAGE_NAME="eip-monitor"
           REGISTRY="quay.io/${{ secrets.QUAY_REPOSITORY }}"
@@ -128,6 +129,11 @@ jobs:
           docker push ${REGISTRY}/${IMAGE_NAME}:v${VERSION}-rc${RC}
           docker push ${REGISTRY}/${IMAGE_NAME}:staging-${DATE}
           docker push ${REGISTRY}/${IMAGE_NAME}:sha-${SHA}
+          
+          # Export image name for use in subsequent steps
+          echo "image=${REGISTRY}/${IMAGE_NAME}:v${VERSION}-rc${RC}" >> $GITHUB_OUTPUT
+          echo "image_staging=${REGISTRY}/${IMAGE_NAME}:staging-${DATE}" >> $GITHUB_OUTPUT
+          echo "image_sha=${REGISTRY}/${IMAGE_NAME}:sha-${SHA}" >> $GITHUB_OUTPUT
       
       - name: Run integration tests
         continue-on-error: true
@@ -135,7 +141,11 @@ jobs:
           echo "Running integration tests..."
           # Placeholder for integration test execution
           # Would require OpenShift cluster access
+          # Note: Cluster is not publicly accessible, so tests must be run manually
           echo "Integration tests would run here if configured"
+          echo ""
+          echo "To run e2e tests manually, use:"
+          echo "  EIP_MONITOR_IMAGE=\"${{ steps.build.outputs.image }}\" MONITORING_TYPE=coo ./tests/e2e/test-monitoring-e2e.sh"
       
       - name: Generate test report
         if: always()
@@ -144,4 +154,36 @@ jobs:
           echo "- Version: ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- Pre-release tag: v${{ steps.version.outputs.version }}-rc${{ steps.rc.outputs.rc }}" >> $GITHUB_STEP_SUMMARY
           echo "- Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Container Images Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following container images have been built and pushed to quay.io:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Primary Image**: \`${{ steps.build.outputs.image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Staging Tag**: \`${{ steps.build.outputs.image_staging }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA Tag**: \`${{ steps.build.outputs.image_sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Manual Deployment and Testing" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Since the OpenShift cluster is not publicly accessible, deployment and e2e tests must be run manually:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Connect to your OpenShift cluster:**" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   oc login --token=<token> --server=<server>" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Deploy the eip-monitor application:**" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   ./scripts/deploy-eip.sh deploy --quay-image \"${{ steps.build.outputs.image }}\"" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Run e2e tests:**" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   EIP_MONITOR_IMAGE=\"${{ steps.build.outputs.image }}\" MONITORING_TYPE=coo ./tests/e2e/test-monitoring-e2e.sh" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "   Or for UWM monitoring:" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "   EIP_MONITOR_IMAGE=\"${{ steps.build.outputs.image }}\" MONITORING_TYPE=uwm ./tests/e2e/test-monitoring-e2e.sh" >> $GITHUB_STEP_SUMMARY
+          echo "   \`\`\`" >> $GITHUB_STEP_SUMMARY
 
