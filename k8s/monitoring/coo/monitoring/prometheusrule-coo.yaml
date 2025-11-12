@@ -13,10 +13,10 @@ metadata:
     role: alert-rules
 spec:
   groups:
-  - name: eip-monitoring
+  # Core EIP Alerts
+  - name: eip-core
     interval: 30s
     rules:
-    # Core EIP Alerts
     - alert: EIPNotAssigned
       expr: (eips_configured_total - eips_assigned_total) > 0 and eips_configured_total > 0
       for: 5m
@@ -86,8 +86,11 @@ spec:
       annotations:
         summary: "EIP capacity is fully utilized"
         description: "All configured EIPs are assigned. This is normal for fully deployed environments."
-    
-    # CPIC Health Alerts
+  
+  # CPIC Health Alerts
+  - name: cpic-health
+    interval: 30s
+    rules:
     - alert: CPICErrors
       expr: cpic_error_total > 0
       for: 2m
@@ -117,8 +120,11 @@ spec:
       annotations:
         summary: "CPIC resources stuck in pending state"
         description: "{{ $value }} CloudPrivateIPConfig resources have been pending for more than 30 minutes. Manual intervention required."
-    
-    # Distribution and Fairness Alerts
+  
+  # Distribution and Fairness Alerts
+  - name: eip-distribution
+    interval: 30s
+    rules:
     - alert: EIPDistributionUnfair
       expr: eip_distribution_gini_coefficient > 0.4
       for: 10m
@@ -158,8 +164,11 @@ spec:
       annotations:
         summary: "Node EIP capacity critical"
         description: "Node {{ $labels.node }} EIP utilization is {{ $value }}%. Immediate action required."
-    
-    # Cluster Health Alerts
+  
+  # Cluster Health Alerts
+  - name: cluster-health
+    interval: 30s
+    rules:
     - alert: ClusterEIPHealthLow
       expr: cluster_eip_health_score < 70 and eips_configured_total > 0
       for: 10m
@@ -189,8 +198,11 @@ spec:
       annotations:
         summary: "EIP cluster is unstable"
         description: "EIP stability score is {{ $value }}/100 due to frequent changes. Check for configuration issues."
-    
-    # Performance and API Alerts
+  
+  # Performance and API Alerts
+  - name: api-performance
+    interval: 30s
+    rules:
     - alert: APIResponseTimeSlow
       expr: api_response_time_seconds > 10
       for: 5m
@@ -230,8 +242,11 @@ spec:
       annotations:
         summary: "API success rate is critically low"
         description: "{{ $labels.operation }} API success rate is {{ $value }}%. Major connectivity issues."
-    
-    # Node-specific Alerts
+  
+  # Node-specific Alerts
+  - name: node-health
+    interval: 30s
+    rules:
     - alert: EIPNodesWithErrors
       expr: eip_nodes_with_errors_total > 0
       for: 5m
@@ -251,8 +266,11 @@ spec:
       annotations:
         summary: "No EIP-enabled nodes available"
         description: "No EIP-enabled nodes are currently available. Check node labels and cluster state."
-    
-    # Historical Trend Alerts
+  
+  # Historical Trend Alerts
+  - name: trends
+    interval: 30s
+    rules:
     - alert: HighEIPChangeRate
       expr: eip_changes_last_hour > 50
       for: 10m
@@ -272,8 +290,11 @@ spec:
       annotations:
         summary: "Frequent CPIC error recoveries"
         description: "{{ $value }} CPIC recoveries in the last hour. Investigate root cause of errors."
-    
-    # Duration-based Alerts
+  
+  # Duration-based Alerts
+  - name: duration-based
+    interval: 30s
+    rules:
     - alert: CPICPendingTooLongSpecific
       expr: cpic_pending_duration_seconds > 1800  # 30 minutes
       for: 5m
@@ -293,8 +314,11 @@ spec:
       annotations:
         summary: "CPIC resource in error state for too long"
         description: "CPIC resource {{ $labels.resource_name }} has been in error state for {{ $value }}s (>1hr)."
-    
-    # Monitoring System Alerts
+  
+  # Monitoring System Alerts
+  - name: monitoring-system
+    interval: 30s
+    rules:
     - alert: EIPMetricsScrapeErrors
       expr: increase(eip_scrape_errors_total[5m]) > 3
       for: 1m
@@ -334,8 +358,11 @@ spec:
       annotations:
         summary: "EIP metrics collection is slow"
         description: "Metrics collection is taking {{ $value }}s. Check cluster API performance and resource limits."
-    
-    # Stale CPIC Detection Alert
+  
+  # Stale CPIC Detection Alert
+  - name: cpic-stale-detection
+    interval: 30s
+    rules:
     - alert: StaleCPICDetected
       expr: (cpic_success_total + cpic_pending_total + cpic_error_total) != eips_assigned_total
       for: 5m
@@ -345,8 +372,11 @@ spec:
       annotations:
         summary: "Stale CPIC detected - CPIC count doesn't match assigned EIPs"
         description: "The total number of CPIC resources does not match the number of assigned EIPs. This may indicate stale or orphaned CPIC resources that need cleanup."
-    
-    # Health Status Alerts (New Metrics)
+  
+  # Health Status Alerts (New Metrics)
+  - name: health-status
+    interval: 30s
+    rules:
     - alert: EIPMalfunctioningResources
       expr: malfunctioning_eip_objects_count > 0
       for: 5m

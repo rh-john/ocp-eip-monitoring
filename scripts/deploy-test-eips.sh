@@ -432,7 +432,7 @@ main() {
             # Define namespace templates with different characteristics
             # This array provides diverse labels for up to 200 namespaces
             local namespace_templates=(
-                "test-ns-1:environment=production tier=database"
+                "test-ns-1:environment=sandbox tier=database"
         "test-ns-2:environment=development"
         "test-ns-3:app=api-gateway"
         "test-ns-4:app=monitoring tier=observability"
@@ -549,7 +549,7 @@ main() {
         "test-ns-115:app=quality tier=management"
         "test-ns-116:app=testing tier=ci-cd"
         "test-ns-117:app=staging tier=ci-cd"
-        "test-ns-118:app=production tier=ci-cd"
+        "test-ns-118:app=sandbox tier=ci-cd"
         "test-ns-119:app=rollback tier=ci-cd"
         "test-ns-120:app=canary tier=ci-cd"
         "test-ns-121:app=blue-green tier=ci-cd"
@@ -631,7 +631,7 @@ main() {
         "test-ns-197:app=test-signoff tier=testing"
         "test-ns-198:app=test-release tier=testing"
         "test-ns-199:app=test-deployment tier=testing"
-            "test-ns-200:app=test-production tier=testing"
+            "test-ns-200:app=test-sandbox tier=testing"
         )
         
             # Build batch YAML for new namespaces only (starting from existing_count)

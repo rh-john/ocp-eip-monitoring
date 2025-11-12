@@ -17,7 +17,7 @@ MONITORING_TYPE="${MONITORING_TYPE:-}"  # No default - must be explicitly specif
 REMOVE_MONITORING="${REMOVE_MONITORING:-false}"
 VERBOSE="${VERBOSE:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete COO CRDs during cleanup (requires cluster-admin)
-PERSISTENT_STORAGE="${PERSISTENT_STORAGE:-false}"  # Enable persistent storage for Prometheus
+PERSISTENT_STORAGE="${PERSISTENT_STORAGE:-true}"  # Enable persistent storage for Prometheus (default: true)
 SHOW_STATUS="${SHOW_STATUS:-false}"  # Show monitoring status
 TEST_MONITORING="${TEST_MONITORING:-false}"  # Test monitoring infrastructure
 
@@ -50,7 +50,8 @@ Environment Variables:
   MONITORING_TYPE           Monitoring type: coo or uwm (required)
   REMOVE_MONITORING         Set to true to remove monitoring (default: false)
   VERBOSE                   Set to true to show verbose output (default: false)
-  PERSISTENT_STORAGE        Set to true to enable persistent storage (default: false)
+  PERSISTENT_STORAGE        Set to true to enable persistent storage (default: true)
+                            Set to false to use ephemeral storage
 
 Examples:
   $0 --monitoring-type uwm

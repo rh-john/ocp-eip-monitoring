@@ -16,7 +16,27 @@ spec:
   resourceSelector:
     matchLabels:
       app: eip-monitor
+  # Resource limits for Prometheus and Alertmanager pods
+  # Prevents resource exhaustion and ensures predictable performance
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
   prometheusConfig:
+    # High availability: Use 2 replicas for redundancy
+    # Provides redundancy and better query performance
+    replicas: 2
+    # External labels for multi-cluster scenarios and federation
+    # Helps identify metrics source in federated or multi-cluster setups
+    # Note: Update these values to match your cluster/environment
+    externalLabels:
+      cluster: "local"  # Update with actual cluster name
+      environment: "sandbox"  # Update with actual environment (sandbox/dev/test)
+      monitoring_type: "coo"
+      app: "eip-monitor"
     # Persistent storage for Prometheus data
     # This ensures metrics are retained across pod restarts
     persistentVolumeClaim:

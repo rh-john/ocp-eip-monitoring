@@ -602,7 +602,7 @@ class EIPMetricsCollector:
             # Get total counts for each operation from prometheus counter
             for operation in ['eip_get', 'cpic_get', 'nodes_get']:
                 try:
-                    # This is a simplified calculation - in production you'd want to track this more precisely
+                    # This is a simplified calculation - for more precise tracking, consider additional metrics
                     success_metric = api_calls_total.labels(operation=operation, status='success')
                     error_metric = api_calls_total.labels(operation=operation, status='error')
                     
