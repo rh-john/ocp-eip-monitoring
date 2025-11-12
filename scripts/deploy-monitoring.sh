@@ -950,37 +950,43 @@ configure_coo_monitoring_stack() {
         return 1
     }
     
-    # Configure persistent storage if requested
+    # Configure persistent storage if explicitly requested
     if [[ "${PERSISTENT_STORAGE:-false}" == "true" ]]; then
         log_info "Configuring persistent storage for COO Prometheus..."
-        # Patch MonitoringStack to enable persistent storage
-        # Default: 50Gi storage, ReadWriteOnce access mode
-        oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
-            -p '{
-                "spec": {
-                    "prometheusConfig": {
-                        "persistentVolumeClaim": {
-                            "accessModes": ["ReadWriteOnce"],
-                            "resources": {
-                                "requests": {
-                                    "storage": "50Gi"
+        # Check if persistent storage is already configured
+        local existing_pvc=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.spec.prometheusConfig.persistentVolumeClaim}' 2>/dev/null || echo "")
+        if [[ -n "$existing_pvc" ]] && [[ "$existing_pvc" != "null" ]]; then
+            log_info "Persistent storage already configured for COO Prometheus"
+        else
+            # Patch MonitoringStack to enable persistent storage
+            # Default: 50Gi storage, ReadWriteOnce access mode
+            oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type merge \
+                -p '{
+                    "spec": {
+                        "prometheusConfig": {
+                            "persistentVolumeClaim": {
+                                "accessModes": ["ReadWriteOnce"],
+                                "resources": {
+                                    "requests": {
+                                        "storage": "50Gi"
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            }' || {
-            log_warn "Failed to configure persistent storage for COO MonitoringStack"
-        }
-        log_success "Persistent storage configured for COO Prometheus (50Gi)"
+                }' || {
+                log_warn "Failed to configure persistent storage for COO MonitoringStack"
+            }
+            log_success "Persistent storage configured for COO Prometheus (50Gi)"
+        fi
     else
-        # Remove persistent storage if it exists (disable it)
-        log_info "Disabling persistent storage for COO Prometheus (using ephemeral storage)..."
-        oc_cmd_silent patch monitoringstack eip-monitoring-stack -n "$NAMESPACE" --type json \
-            -p '[{"op": "remove", "path": "/spec/prometheusConfig/persistentVolumeClaim"}]' 2>/dev/null || {
-            # If patch fails, it might be because persistentVolumeClaim doesn't exist (which is fine)
-            log_info "Persistent storage not configured (using default ephemeral storage)"
-        }
+        # Don't modify existing persistent storage configuration - leave it as-is (idempotent)
+        local existing_pvc=$(oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" -o jsonpath='{.spec.prometheusConfig.persistentVolumeClaim}' 2>/dev/null || echo "")
+        if [[ -n "$existing_pvc" ]] && [[ "$existing_pvc" != "null" ]]; then
+            log_info "Persistent storage is already configured (leaving as-is)"
+        else
+            log_info "Using default ephemeral storage (persistent storage not configured)"
+        fi
     fi
     
     # Ensure MonitoringStack has the required label for ThanosQuerier discovery
@@ -2077,6 +2083,15 @@ show_monitoring_status() {
 
 # Test monitoring infrastructure
 test_monitoring() {
+    # Save current error handling state and disable exit on error to ensure all tests run to completion
+    local original_set_e
+    if [[ $- == *e* ]]; then
+        original_set_e=1
+    else
+        original_set_e=0
+    fi
+    set +e
+    
     log_info "Testing monitoring infrastructure..."
     echo ""
     
@@ -2093,7 +2108,11 @@ test_monitoring() {
         local test_command="$2"
         ((total_tests++))
         
-        if eval "$test_command" &>/dev/null; then
+        # Run test command, capturing exit code
+        eval "$test_command" &>/dev/null
+        local test_exit=$?
+        
+        if [[ $test_exit -eq 0 ]]; then
             log_success "$test_name"
             ((tests_passed++))
             return 0
@@ -2107,12 +2126,14 @@ test_monitoring() {
     # Detect monitoring type if not specified
     local test_type="${MONITORING_TYPE:-}"
     if [[ -z "$test_type" ]]; then
-        test_type=$(detect_current_monitoring_type)
+        test_type=$(detect_current_monitoring_type || echo "none")
         if [[ "$test_type" == "none" ]]; then
             log_error "No monitoring infrastructure detected"
-            return 1
+            # Continue with tests anyway - they will fail but we'll get a complete picture
+            log_warn "Continuing with tests to show what's missing..."
+        else
+            log_info "Testing detected monitoring type: $test_type"
         fi
-        log_info "Testing detected monitoring type: $test_type"
     fi
     
     # Test COO if applicable
@@ -2198,6 +2219,103 @@ test_monitoring() {
             fi
         fi
         
+        # Test UI Plugins (cluster-scoped resources)
+        log_test "Step 1b: COO UI Plugins Tests"
+        run_test "Monitoring UI Plugin exists" "oc get uiplugin monitoring &>/dev/null"
+        
+        # Troubleshooting UI Plugin is Technology Preview and may not be available
+        if oc get uiplugin troubleshooting &>/dev/null; then
+            log_success "Troubleshooting UI Plugin exists"
+            ((tests_passed++))
+        else
+            log_warn "Troubleshooting UI Plugin not found (Technology Preview - may not be available)"
+            # Don't count as failure since it's optional/Technology Preview
+            ((tests_passed++))
+        fi
+        ((total_tests++))
+        
+        # Test Perses configuration (deployed in openshift-operators namespace)
+        log_test "Step 1c: COO Perses Configuration Tests"
+        local perses_namespace="openshift-operators"
+        
+        # Check PersesDatasource
+        run_test "PersesDatasource prometheus-coo exists" "oc get persesdatasource prometheus-coo -n \"$perses_namespace\" &>/dev/null"
+        
+        # Check PersesDashboards - verify they are loaded and have no errors
+        local actual_dashboards=$(oc get persesdashboard -n "$perses_namespace" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]' || echo "0")
+        if [[ "$actual_dashboards" -gt 0 ]]; then
+            log_success "PersesDashboards loaded ($actual_dashboards found)"
+            ((tests_passed++))
+            
+            # Check for errors in dashboard status/conditions
+            local dashboards_with_errors=0
+            local dashboard_list=$(oc get persesdashboard -n "$perses_namespace" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+            if [[ -n "$dashboard_list" ]]; then
+                for db_name in $dashboard_list; do
+                    # Try to get the full dashboard resource - if this fails, there's an error
+                    local dashboard_json=$(oc get persesdashboard "$db_name" -n "$perses_namespace" -o json 2>/dev/null || echo "")
+                    if [[ -z "$dashboard_json" ]]; then
+                        ((dashboards_with_errors++))
+                        if [[ "$dashboards_with_errors" -eq 1 ]]; then
+                            log_info "  Dashboard with error: $db_name (cannot retrieve resource)"
+                        fi
+                        continue
+                    fi
+                    
+                    # Check status.conditions for any error conditions
+                    local error_condition=$(echo "$dashboard_json" | jq -r '.status.conditions[]? | select(.type=="Error" or .type=="Failed") | .status' 2>/dev/null | head -1 || echo "")
+                    local error_message=$(echo "$dashboard_json" | jq -r '.status.conditions[]? | select(.type=="Error" or .type=="Failed") | .message' 2>/dev/null | head -1 || echo "")
+                    local error_reason=$(echo "$dashboard_json" | jq -r '.status.conditions[]? | select(.type=="Error" or .type=="Failed") | .reason' 2>/dev/null | head -1 || echo "")
+                    
+                    # Check if there are any error conditions
+                    if [[ "$error_condition" == "True" ]] || [[ -n "$error_message" ]] || [[ -n "$error_reason" ]]; then
+                        ((dashboards_with_errors++))
+                        if [[ "$dashboards_with_errors" -eq 1 ]]; then
+                            log_info "  Dashboard with error: $db_name"
+                            if [[ -n "$error_message" ]]; then
+                                log_info "    Error: $error_message"
+                            fi
+                            if [[ -n "$error_reason" ]]; then
+                                log_info "    Reason: $error_reason"
+                            fi
+                        fi
+                    fi
+                done
+            fi
+            
+            if [[ "$dashboards_with_errors" -eq 0 ]]; then
+                log_success "PersesDashboards have no errors"
+                ((tests_passed++))
+            else
+                log_error "PersesDashboards have errors ($dashboards_with_errors dashboard(s) with errors)"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
+        else
+            log_error "No PersesDashboards found"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
+        # Check if Perses instance exists (may be auto-created by UIPlugin)
+        # Note: Perses instance might be in openshift-operators or the monitoring namespace
+        local perses_instance_found=false
+        if oc get perses -n "$perses_namespace" --no-headers 2>/dev/null | grep -q .; then
+            perses_instance_found=true
+        elif oc get perses -n "$NAMESPACE" --no-headers 2>/dev/null | grep -q .; then
+            perses_instance_found=true
+        fi
+        if [[ "$perses_instance_found" == "true" ]]; then
+            log_success "Perses instance exists"
+            ((tests_passed++))
+        else
+            log_error "Perses instance not found"
+            log_info "  Expected in namespace: $perses_namespace or $NAMESPACE"
+            log_info "  Perses instance should be auto-created by UIPlugin when Monitoring UI Plugin is installed"
+            ((tests_failed++))
+        fi
+        ((total_tests++))
+        
         echo ""
     fi
     
@@ -2272,6 +2390,11 @@ test_monitoring() {
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Test Summary: $tests_passed/$total_tests passed"
     log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    
+    # Restore original error handling state
+    if [[ $original_set_e -eq 1 ]]; then
+        set -e
+    fi
     
     if [[ $tests_failed -eq 0 ]]; then
         log_success "All tests passed!"
