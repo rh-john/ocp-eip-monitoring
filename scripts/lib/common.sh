@@ -25,24 +25,34 @@ BLUE='\033[1;36m'  # Light blue (cyan)
 NC='\033[0m' # No Color
 
 # Logging functions
+
+# Log info message
+# Usage: log_info <message>
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
 
+# Log success message
+# Usage: log_success <message>
 log_success() {
     echo -e "${GREEN}[✓]${NC} $1"
 }
 
+# Log warning message
+# Usage: log_warn <message>
 log_warn() {
     echo -e "${YELLOW}[⚠]${NC} $1"
 }
 
+# Log error message
+# Usage: log_error <message>
 log_error() {
     echo -e "${RED}[✗]${NC} $1"
 }
 
 # Wait for resource to be ready
 # Usage: wait_for_resource <resource_type> <resource_name> <namespace> [timeout]
+# Returns: 0 if resource is ready, 1 on timeout
 wait_for_resource() {
     local resource_type=$1
     local resource_name=$2
@@ -74,6 +84,7 @@ wait_for_resource() {
 
 # Wait for pods to be running
 # Usage: wait_for_pods <namespace> <selector> [expected_count] [timeout]
+# Returns: 0 if expected pods are running, 1 on timeout
 wait_for_pods() {
     local namespace=$1
     local selector=$2
@@ -104,6 +115,7 @@ wait_for_pods() {
 
 # Check prerequisites
 # Usage: check_prerequisites
+# Returns: 0 if all prerequisites are met, 1 if any are missing
 check_prerequisites() {
     local missing_tools=()
     
@@ -274,6 +286,7 @@ find_query_pod() {
 # Usage: oc_cmd <oc-args...>
 #   If VERBOSE environment variable is "true", shows full output
 #   Otherwise, suppresses stderr
+# Returns: exit code from oc command
 oc_cmd() {
     if [[ "${VERBOSE:-false}" == "true" ]]; then
         oc "$@"
@@ -286,6 +299,7 @@ oc_cmd() {
 # Usage: oc_cmd_silent <oc-args...>
 #   If VERBOSE environment variable is "true", shows full output
 #   Otherwise, suppresses both stdout and stderr
+# Returns: exit code from oc command
 oc_cmd_silent() {
     if [[ "${VERBOSE:-false}" == "true" ]]; then
         oc "$@"
@@ -576,6 +590,7 @@ wait_for_operator_csv() {
 #   deployment_name: Name of the deployment (e.g., "eip-monitor")
 #   pod_selector: Label selector for pods (e.g., "app=eip-monitor") - optional, defaults to app=<deployment_name>
 #   pod_name: Specific pod name for detailed diagnostics - optional, will auto-detect if not provided
+# Returns: 0 on success, 1 on error
 show_deployment_diagnostics() {
     local namespace=$1
     local deployment_name=$2
@@ -620,6 +635,7 @@ show_deployment_diagnostics() {
 #   deployment_name: Name of the deployment
 #   pod_selector: Label selector for pods (optional, defaults to app=<deployment_name>)
 #   service_name: Name of the service (optional, defaults to <deployment_name>)
+# Returns: 0 if deployment is running, 1 if not found or no running pods
 show_deployment_status() {
     local namespace=$1
     local deployment_name=$2

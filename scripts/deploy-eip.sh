@@ -1646,12 +1646,16 @@ restart_deployment() {
 }
 
 # Show deployment status
+# Usage: show_status
+# Returns: 0 if deployment is running, 1 if not found
 show_status() {
     log_info "Checking EIP Monitor deployment status..."
     show_deployment_status "$NAMESPACE" "eip-monitor" "app=eip-monitor" "eip-monitor"
 }
 
 # Show logs
+# Usage: show_logs
+# Returns: exit code from oc logs command
 show_logs() {
     if ! oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
         log_error "Deployment not found"
