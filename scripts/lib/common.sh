@@ -110,6 +110,94 @@ wait_for_pods() {
     done
     
     log_error "Pods with selector '$selector' failed to become running within ${timeout}s"
+    
+    # Show diagnostics to help debug the issue
+    echo ""
+    log_info "=== Pod Diagnostics ==="
+    
+    # Check if any pods exist with this selector (even if not running)
+    local all_pods=$(oc get pods -n "$namespace" -l "$selector" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+    if [[ "$all_pods" =~ ^[0-9]+$ ]] && [[ "$all_pods" -gt 0 ]]; then
+        log_info "Found $all_pods pod(s) with selector '$selector' (but not all are running):"
+        oc get pods -n "$namespace" -l "$selector" 2>&1 || true
+        echo ""
+        
+        # Get the first pod for detailed diagnostics
+        local pod_name=$(oc get pods -n "$namespace" -l "$selector" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+        if [[ -n "$pod_name" ]]; then
+            log_info "=== Pod Status: $pod_name ==="
+            oc get pod "$pod_name" -n "$namespace" -o wide 2>&1 || true
+            echo ""
+            log_info "=== Pod Events: $pod_name ==="
+            oc get events -n "$namespace" --field-selector involvedObject.name="$pod_name" --sort-by='.lastTimestamp' 2>&1 | tail -10 || true
+            echo ""
+            log_info "=== Pod Description: $pod_name ==="
+            oc describe pod "$pod_name" -n "$namespace" 2>&1 | tail -50 || true
+            echo ""
+            log_info "=== Pod Logs: $pod_name ==="
+            oc logs "$pod_name" -n "$namespace" --tail=50 2>&1 || true
+            echo ""
+        fi
+    else
+        log_warn "No pods found with selector '$selector'"
+        log_info "Checking if deployment exists..."
+        
+        # Try to infer deployment name from selector
+        local deployment_name=""
+        if echo "$selector" | grep -q "app="; then
+            deployment_name=$(echo "$selector" | sed -n 's/.*app=\([^,]*\).*/\1/p')
+        fi
+        
+        if [[ -n "$deployment_name" ]] && oc get deployment "$deployment_name" -n "$namespace" &>/dev/null; then
+            log_info "Deployment '$deployment_name' exists:"
+            oc get deployment "$deployment_name" -n "$namespace" 2>&1 || true
+            echo ""
+            log_info "Deployment description:"
+            oc describe deployment "$deployment_name" -n "$namespace" 2>&1 | tail -30 || true
+            echo ""
+        else
+            log_warn "No deployment found matching selector '$selector'"
+            log_info "Available deployments in namespace:"
+            oc get deployments -n "$namespace" 2>&1 | head -10 || true
+            echo ""
+        fi
+        
+        log_info "All pods in namespace:"
+        oc get pods -n "$namespace" 2>&1 | head -20 || true
+        echo ""
+        
+        # Check for pods with similar labels (common fallback scenarios)
+        log_info "Checking for pods with similar labels..."
+        if echo "$selector" | grep -q "app="; then
+            local app_value=$(echo "$selector" | sed -n 's/.*app=\([^,]*\).*/\1/p')
+            # Check for generic eip-monitor label
+            if [[ "$app_value" != "eip-monitor" ]]; then
+                local generic_pods=$(oc get pods -n "$namespace" -l "app=eip-monitor" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+                if [[ "$generic_pods" =~ ^[0-9]+$ ]] && [[ "$generic_pods" -gt 0 ]]; then
+                    log_info "Found $generic_pods pod(s) with label 'app=eip-monitor' (generic label):"
+                    oc get pods -n "$namespace" -l "app=eip-monitor" 2>&1 || true
+                    echo ""
+                fi
+            fi
+            # Check for other monitoring type labels
+            if [[ "$app_value" == "eip-monitor-coo" ]]; then
+                local uwm_pods=$(oc get pods -n "$namespace" -l "app=eip-monitor-uwm" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+                if [[ "$uwm_pods" =~ ^[0-9]+$ ]] && [[ "$uwm_pods" -gt 0 ]]; then
+                    log_info "Found $uwm_pods pod(s) with label 'app=eip-monitor-uwm' (UWM label):"
+                    oc get pods -n "$namespace" -l "app=eip-monitor-uwm" 2>&1 || true
+                    echo ""
+                fi
+            elif [[ "$app_value" == "eip-monitor-uwm" ]]; then
+                local coo_pods=$(oc get pods -n "$namespace" -l "app=eip-monitor-coo" --no-headers 2>/dev/null | wc -l | tr -d ' \n' || echo "0")
+                if [[ "$coo_pods" =~ ^[0-9]+$ ]] && [[ "$coo_pods" -gt 0 ]]; then
+                    log_info "Found $coo_pods pod(s) with label 'app=eip-monitor-coo' (COO label):"
+                    oc get pods -n "$namespace" -l "app=eip-monitor-coo" 2>&1 || true
+                    echo ""
+                fi
+            fi
+        fi
+    fi
+    
     return 1
 }
 
