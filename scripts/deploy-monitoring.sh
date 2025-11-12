@@ -1732,16 +1732,146 @@ deploy_monitoring() {
         # Install COO UI plugins (for OpenShift console integration)
         log_info "Installing COO UI plugins..."
         if [[ -d "${project_root}/k8s/monitoring/coo/ui-plugins" ]]; then
+            # Get OpenShift version for troubleshooting plugin check
+            local ocp_version=$(oc get clusterversion version -o jsonpath='{.status.desired.version}' 2>/dev/null || echo "")
+            local ocp_major_minor=""
+            if [[ -n "$ocp_version" ]]; then
+                # Extract major.minor version (e.g., "4.19" from "4.19.0")
+                ocp_major_minor=$(echo "$ocp_version" | cut -d. -f1,2)
+            fi
+            
             for ui_plugin in "${project_root}"/k8s/monitoring/coo/ui-plugins/*.yaml; do
                 if [[ -f "$ui_plugin" ]]; then
                     local plugin_name=$(basename "$ui_plugin" .yaml)
-                    if [[ "$VERBOSE" == "true" ]]; then
-                        oc apply -f "$ui_plugin" && log_success "  ✓ Installed UI plugin: $plugin_name"
-                    else
-                        if oc apply -f "$ui_plugin" &>/dev/null; then
-                            log_success "  ✓ Installed UI plugin: $plugin_name"
+                    local is_troubleshooting=false
+                    if [[ "$plugin_name" == "troubleshooting-ui-plugin" ]] || [[ "$plugin_name" == "troubleshooting" ]]; then
+                        is_troubleshooting=true
+                    fi
+                    
+                    # Check if troubleshooting plugin requires OCP 4.19+
+                    if [[ "$is_troubleshooting" == "true" ]]; then
+                        if [[ -z "$ocp_major_minor" ]]; then
+                            log_warn "  ⚠ Cannot determine OpenShift version, attempting to install troubleshooting plugin anyway"
+                            log_info "    Troubleshooting UI Plugin requires OpenShift 4.19 or newer"
                         else
-                            log_warn "  ✗ Failed to install UI plugin: $plugin_name"
+                            # Compare versions: 4.19+ required
+                            # Extract major and minor for comparison
+                            local ocp_major=$(echo "$ocp_major_minor" | cut -d. -f1)
+                            local ocp_minor=$(echo "$ocp_major_minor" | cut -d. -f2)
+                            local min_major=4
+                            local min_minor=19
+                            
+                            # Check if version is >= 4.19
+                            local version_ok=false
+                            if [[ $ocp_major -gt $min_major ]]; then
+                                version_ok=true
+                            elif [[ $ocp_major -eq $min_major ]] && [[ $ocp_minor -ge $min_minor ]]; then
+                                version_ok=true
+                            fi
+                            
+                            if [[ "$version_ok" == "false" ]]; then
+                                log_warn "  ⚠ Skipping troubleshooting plugin (requires OCP 4.19+, cluster is $ocp_version)"
+                                continue
+                            fi
+                            log_info "  Installing troubleshooting UI plugin (OCP $ocp_version detected, 4.19+ required)"
+                        fi
+                    fi
+                    
+                    # Try to install the plugin
+                    local apply_output
+                    local apply_exit
+                    apply_output=$(oc apply -f "$ui_plugin" 2>&1)
+                    apply_exit=$?
+                    
+                    if [[ $apply_exit -eq 0 ]]; then
+                        # Verify the resource actually exists (oc apply can succeed but resource might not be created)
+                        # Extract the resource name from the YAML file
+                        local resource_name=$(grep -E "^  name:" "$ui_plugin" | head -1 | awk '{print $2}' | tr -d '"' || echo "")
+                        if [[ -z "$resource_name" ]]; then
+                            # Fallback: use plugin_name without -ui-plugin suffix
+                            resource_name="$plugin_name"
+                            if [[ "$resource_name" == "troubleshooting-ui-plugin" ]]; then
+                                resource_name="troubleshooting-panel"
+                            elif [[ "$resource_name" == "monitoring-ui-plugin" ]]; then
+                                resource_name="monitoring"
+                            fi
+                        fi
+                        
+                        # Wait a moment for the resource to be created, then verify it exists
+                        sleep 2
+                        if oc get uiplugin "$resource_name" &>/dev/null; then
+                            log_success "  ✓ Installed UI plugin: $plugin_name (verified)"
+                            
+                            # Enable troubleshooting-panel in Console operator immediately after successful installation
+                            # Note: UIPlugin creates a ConsolePlugin resource named "troubleshooting-panel-console-plugin"
+                            if [[ "$is_troubleshooting" == "true" ]]; then
+                                local console_plugins=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins[*]}' 2>/dev/null || echo "")
+                                # The ConsolePlugin resource created by UIPlugin is named "troubleshooting-panel-console-plugin"
+                                local console_plugin_name="troubleshooting-panel-console-plugin"
+                                
+                                # Check if plugin is already in the list
+                                if echo "$console_plugins" | grep -qE "\b${console_plugin_name}\b"; then
+                                    log_info "  ✓ Troubleshooting plugin already enabled in Console operator"
+                                else
+                                    log_info "  Enabling troubleshooting-panel-console-plugin in Console operator..."
+                                    # Get current plugins and add troubleshooting-panel-console-plugin if not present
+                                    local current_plugins_json=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}' 2>/dev/null || echo "[]")
+                                    # Add troubleshooting-panel-console-plugin to the plugins list using jq if available, otherwise use patch
+                                    if command -v jq &>/dev/null; then
+                                        local updated_plugins=$(echo "$current_plugins_json" | jq '. + ["troubleshooting-panel-console-plugin"] | unique' 2>/dev/null || echo "")
+                                        if [[ -n "$updated_plugins" ]]; then
+                                            if oc patch console.operator.openshift.io cluster --type=json \
+                                                -p "[{\"op\": \"replace\", \"path\": \"/spec/plugins\", \"value\": $updated_plugins}]" &>/dev/null; then
+                                                log_success "  ✓ Enabled troubleshooting-panel-console-plugin in Console operator"
+                                                log_info "  Note: Troubleshooting panel appears when viewing alerts (Observe > Alerting > select alert)"
+                                                log_info "  Console pods will restart automatically to load the plugin"
+                                                log_info "  If troubleshooting panel shows 'Request Failed', check:"
+                                                log_info "    - Browser console for detailed error messages"
+                                                log_info "    - Korrel8r pod logs: oc logs -n openshift-operators -l app.kubernetes.io/instance=korrel8r"
+                                                log_info "    - Console pod logs: oc logs -n openshift-console -l app=console | grep -i korrel"
+                                            else
+                                                log_warn "  ⚠ Failed to enable troubleshooting-panel-console-plugin in Console operator (may require cluster-admin)"
+                                            fi
+                                        fi
+                                    else
+                                        # Fallback: use simple patch to add the plugin
+                                        if oc patch console.operator.openshift.io cluster --type=json \
+                                            -p '[{"op": "add", "path": "/spec/plugins/-", "value": "troubleshooting-panel-console-plugin"}]' &>/dev/null; then
+                                            log_success "  ✓ Enabled troubleshooting-panel-console-plugin in Console operator"
+                                            log_info "  Note: Troubleshooting panel appears when viewing alerts (Observe > Alerting > select alert)"
+                                            log_info "  Console pods will restart automatically to load the plugin"
+                                        else
+                                            log_warn "  ⚠ Failed to enable troubleshooting-panel-console-plugin in Console operator (may require cluster-admin)"
+                                        fi
+                                    fi
+                                fi
+                            fi
+                        else
+                            log_warn "  ⚠ Applied UI plugin: $plugin_name but resource not found (may still be creating)"
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                log_info "    Apply output: $apply_output"
+                            fi
+                            if [[ "$is_troubleshooting" == "true" ]]; then
+                                log_info "    Troubleshooting plugin may require:"
+                                log_info "    - OpenShift 4.19 or newer (detected: ${ocp_version:-unknown})"
+                                log_info "    - Cluster Observability Operator installed"
+                                log_info "    - Cluster-admin permissions"
+                                log_info "    Check status: oc get uiplugin $resource_name"
+                            fi
+                        fi
+                    else
+                        log_error "  ✗ Failed to install UI plugin: $plugin_name"
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            log_info "    Error output: $apply_output"
+                        else
+                            # Show first line of error even in non-verbose mode
+                            log_info "    Error: $(echo "$apply_output" | head -1)"
+                        fi
+                        if [[ "$is_troubleshooting" == "true" ]]; then
+                            log_info "    Troubleshooting plugin requires:"
+                            log_info "    - OpenShift 4.19 or newer (detected: ${ocp_version:-unknown})"
+                            log_info "    - Cluster Observability Operator installed"
+                            log_info "    - Cluster-admin permissions"
                         fi
                     fi
                 fi
@@ -2224,9 +2354,37 @@ test_monitoring() {
         run_test "Monitoring UI Plugin exists" "oc get uiplugin monitoring &>/dev/null"
         
         # Troubleshooting UI Plugin is Technology Preview and may not be available
-        if oc get uiplugin troubleshooting &>/dev/null; then
+        # Check for both possible names: troubleshooting and troubleshooting-panel
+        local troubleshooting_found=false
+        local troubleshooting_resource_name=""
+        if oc get uiplugin troubleshooting-panel &>/dev/null; then
+            troubleshooting_found=true
+            troubleshooting_resource_name="troubleshooting-panel"
+        elif oc get uiplugin troubleshooting &>/dev/null; then
+            troubleshooting_found=true
+            troubleshooting_resource_name="troubleshooting"
+        fi
+        
+        if [[ "$troubleshooting_found" == "true" ]]; then
             log_success "Troubleshooting UI Plugin exists"
             ((tests_passed++))
+            
+            # Verify it's enabled in Console operator
+            # Note: UIPlugin creates a ConsolePlugin resource named "troubleshooting-panel-console-plugin"
+            local console_plugins=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins[*]}' 2>/dev/null || echo "")
+            local console_plugin_name="troubleshooting-panel-console-plugin"
+            
+            if echo "$console_plugins" | grep -qE "\b${console_plugin_name}\b"; then
+                log_success "Troubleshooting UI Plugin enabled in Console operator"
+                ((tests_passed++))
+            else
+                log_error "Troubleshooting UI Plugin installed but not enabled in Console operator"
+                log_info "  Plugin should be in Console operator spec.plugins list"
+                log_info "  Current plugins: $console_plugins"
+                log_info "  Expected: troubleshooting-panel-console-plugin (ConsolePlugin resource name)"
+                ((tests_failed++))
+            fi
+            ((total_tests++))
         else
             log_warn "Troubleshooting UI Plugin not found (Technology Preview - may not be available)"
             # Don't count as failure since it's optional/Technology Preview
