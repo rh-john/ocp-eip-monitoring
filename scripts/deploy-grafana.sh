@@ -371,26 +371,25 @@ deploy_grafana() {
     log_info "Plugins are configured in the Grafana instance manifest and will be installed automatically by the operator"
     # Deploy Grafana Dashboards (optimized: batch apply for better performance)
     log_info "Deploying Grafana Dashboards..."
-    local dashboard_files=(
-        # Original dashboards
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-distribution.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cpic-health.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-performance.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-eip-timeline.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-cluster-health.yaml"
-        # Event correlation dashboard (node/cluster metrics with EIP metrics)
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-event-correlation.yaml"
-        # New advanced plugin dashboards
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-state-visualization.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-enhanced-tables.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-architecture-diagram.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-custom-gauges.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-timeline-events.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-node-health-grid.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-network-topology.yaml"
-        "${project_root}/k8s/grafana/dashboards/grafana-dashboard-interactive-drilldown.yaml"
-    )
+    
+    # Automatically discover all dashboard files instead of hardcoding
+    local dashboard_dir="${project_root}/k8s/grafana/dashboards"
+    local dashboard_files=()
+    
+    if [[ -d "$dashboard_dir" ]]; then
+        # Find all .yaml files in the dashboards directory
+        while IFS= read -r -d '' file; do
+            dashboard_files+=("$file")
+        done < <(find "$dashboard_dir" -maxdepth 1 -name "*.yaml" -type f -print0 | sort -z)
+    else
+        log_error "Dashboard directory not found: $dashboard_dir"
+        return 1
+    fi
+    
+    if [[ ${#dashboard_files[@]} -eq 0 ]]; then
+        log_warn "No dashboard files found in $dashboard_dir"
+        return 0
+    fi
     
     # Batch apply all dashboards at once (more efficient than sequential applies)
     log_info "Applying ${#dashboard_files[@]} dashboards..."
@@ -1010,6 +1009,14 @@ show_grafana_status() {
             oc get grafanadatasource "$datasource_name" -n "$NAMESPACE" -o custom-columns="NAME:.metadata.name,NAMESPACE:.metadata.namespace,AGE:.metadata.creationTimestamp"
         else
             log_warn "DataSource '$datasource_name' not found"
+            # List all datasources that do exist for debugging
+            local existing_datasources=$(oc get grafanadatasource -n "$NAMESPACE" --no-headers 2>/dev/null | awk '{print $1}' || echo "")
+            if [[ -n "$existing_datasources" ]]; then
+                log_info "  Found DataSource(s): $existing_datasources"
+            else
+                log_info "  No DataSources found in namespace $NAMESPACE"
+            fi
+            log_info "  To deploy: ./scripts/deploy-grafana.sh --monitoring-type $MONITORING_TYPE"
         fi
     else
         # List all datasources
