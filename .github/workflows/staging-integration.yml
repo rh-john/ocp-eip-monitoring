@@ -59,7 +59,9 @@ jobs:
           
           export BUMP_TYPE
           if [[ -f scripts/bump-version.sh ]]; then
-            NEW_VERSION=$(./scripts/bump-version.sh)
+            # Capture only stdout (version number), log messages go to stderr
+            # Use grep to extract only the version pattern, ignoring any ANSI codes
+            NEW_VERSION=$(./scripts/bump-version.sh 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           else
             # Fallback: manual version bump
             if [[ ! -f .version ]]; then
@@ -74,6 +76,13 @@ jobs:
             esac
             echo "$NEW_VERSION" > .version
           fi
+          
+          # Validate version format
+          if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "ERROR: Invalid version format: '$NEW_VERSION'"
+            exit 1
+          fi
+          
           echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "bump_type=${BUMP_TYPE}" >> $GITHUB_OUTPUT
           

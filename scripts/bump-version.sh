@@ -55,6 +55,9 @@ new_version="${major}.${minor}.${patch}"
 # Write new version
 echo "$new_version" > "$VERSION_FILE"
 
-log_success "Version bumped to $new_version"
+# Log to stderr so it doesn't interfere with version output on stdout
+log_success "Version bumped to $new_version" >&2
+
+# Output only the version to stdout (for CI/CD to capture)
 echo "$new_version"
 
