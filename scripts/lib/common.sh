@@ -243,7 +243,9 @@ find_query_pod() {
         if [[ -z "$query_pod" ]]; then
             local prom_pod=$(find_prometheus_pod "$namespace" "true")
             if [[ -n "$prom_pod" ]]; then
-                local prom_phase=$(oc get pod "$prom_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                # Optimized: get pod phase in same call as pod lookup (if we have pod name, get JSON once)
+                local prom_json=$(oc get pod "$prom_pod" -n "$namespace" -o json 2>/dev/null || echo '{}')
+                local prom_phase=$(echo "$prom_json" | jq -r '.status.phase // ""' 2>/dev/null || echo "")
                 if [[ "$prom_phase" == "Running" ]]; then
                     query_pod="$prom_pod"
                     query_port="9090"  # Prometheus uses port 9090
@@ -254,7 +256,9 @@ find_query_pod() {
         # Try Prometheus first
         local prom_pod=$(find_prometheus_pod "$namespace" "false")
         if [[ -n "$prom_pod" ]]; then
-            local prom_phase=$(oc get pod "$prom_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            # Optimized: get pod phase in same call as pod lookup
+            local prom_json=$(oc get pod "$prom_pod" -n "$namespace" -o json 2>/dev/null || echo '{}')
+            local prom_phase=$(echo "$prom_json" | jq -r '.status.phase // ""' 2>/dev/null || echo "")
             if [[ "$prom_phase" == "Running" ]]; then
                 query_pod="$prom_pod"
                 query_port="9090"
@@ -265,7 +269,9 @@ find_query_pod() {
         if [[ -z "$query_pod" ]]; then
             local thanos_pod=$(find_thanosquerier_pod "$namespace")
             if [[ -n "$thanos_pod" ]]; then
-                local thanos_phase=$(oc get pod "$thanos_pod" -n "$namespace" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+                # Optimized: get pod phase in same call as pod lookup
+                local thanos_json=$(oc get pod "$thanos_pod" -n "$namespace" -o json 2>/dev/null || echo '{}')
+                local thanos_phase=$(echo "$thanos_json" | jq -r '.status.phase // ""' 2>/dev/null || echo "")
                 if [[ "$thanos_phase" == "Running" ]]; then
                     query_pod="$thanos_pod"
                     query_port="10902"

@@ -953,18 +953,25 @@ deploy() {
         sleep 5
         elapsed=$((elapsed + 5))
         
-        # Get current status
-        local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-        local pod_status=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "unknown")
-        local ready_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-        local desired_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
-        local available_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.status.availableReplicas}' 2>/dev/null || echo "0")
+        # Get current status (optimized: combine multiple oc get calls)
+        # Get pod info in single call
+        local pod_json=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o json 2>/dev/null || echo '{"items":[]}')
+        local pod_name=$(echo "$pod_json" | jq -r '.items[0].metadata.name // ""' 2>/dev/null || echo "")
+        local pod_status=$(echo "$pod_json" | jq -r '.items[0].status.phase // "unknown"' 2>/dev/null || echo "unknown")
+        
+        # Get deployment info in single call
+        local deployment_json=$(oc get deployment eip-monitor -n "$NAMESPACE" -o json 2>/dev/null || echo '{}')
+        local ready_replicas=$(echo "$deployment_json" | jq -r '.status.readyReplicas // 0' 2>/dev/null || echo "0")
+        local desired_replicas=$(echo "$deployment_json" | jq -r '.spec.replicas // 1' 2>/dev/null || echo "1")
+        local available_replicas=$(echo "$deployment_json" | jq -r '.status.availableReplicas // 0' 2>/dev/null || echo "0")
         
         # Check for error states in container statuses
         if [[ -n "$pod_name" ]]; then
-            # Get container waiting states (ImagePullBackOff, ErrImagePull, CrashLoopBackOff, etc.)
-            local waiting_reason=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].state.waiting.reason}' 2>/dev/null || echo "")
-            local last_state_reason=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason}' 2>/dev/null || echo "")
+            # Get container status info in single call (combines waiting_reason, last_state_reason, restart_count)
+            local container_status=$(echo "$pod_json" | jq -r '.items[0].status.containerStatuses[0] // {}' 2>/dev/null || echo '{}')
+            local waiting_reason=$(echo "$container_status" | jq -r '.state.waiting.reason // ""' 2>/dev/null || echo "")
+            local last_state_reason=$(echo "$container_status" | jq -r '.lastState.terminated.reason // ""' 2>/dev/null || echo "")
+            local restart_count=$(echo "$container_status" | jq -r '.restartCount // 0' 2>/dev/null || echo "0")
             
             # Check for fatal error states
             if [[ -n "$waiting_reason" ]]; then
@@ -989,7 +996,7 @@ deploy() {
                 case "$last_state_reason" in
                     Error|CrashLoopBackOff)
                         # Only treat as error if we've seen it multiple times (not just initial crash)
-                        local restart_count=$(oc get pod "$pod_name" -n "$NAMESPACE" -o jsonpath='{.status.containerStatuses[0].restartCount}' 2>/dev/null || echo "0")
+                        # restart_count already extracted from pod_json above
                         if [[ "$restart_count" -gt 2 ]]; then
                             log_error "Fatal error detected: Container crashed multiple times (restart count: $restart_count)"
                             error_detected=true
@@ -1152,9 +1159,10 @@ test_deployment() {
     run_test "Deployment exists" "oc get deployment eip-monitor -n \"$NAMESPACE\" &>/dev/null"
     run_test "Service exists" "oc get service eip-monitor -n \"$NAMESPACE\" &>/dev/null"
     
-    # Check pod status
-    local pod_status=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
-    local pod_name=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    # Check pod status (optimized: single oc get call)
+    local pod_json=$(oc get pods -n "$NAMESPACE" -l app=eip-monitor -o json 2>/dev/null || echo '{"items":[]}')
+    local pod_status=$(echo "$pod_json" | jq -r '.items[0].status.phase // "NotFound"' 2>/dev/null || echo "NotFound")
+    local pod_name=$(echo "$pod_json" | jq -r '.items[0].metadata.name // ""' 2>/dev/null || echo "")
     
     if [[ "$pod_status" != "Running" ]]; then
         log_error "Pod is not running. Status: $pod_status"
@@ -1165,9 +1173,10 @@ test_deployment() {
     
     run_test "Pod is running" "[[ \"$pod_status\" == \"Running\" ]]"
     
-    # Check pod readiness
-    local ready_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-    local desired_replicas=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+    # Check pod readiness (optimized: single oc get call)
+    local deployment_json=$(oc get deployment eip-monitor -n "$NAMESPACE" -o json 2>/dev/null || echo '{}')
+    local ready_replicas=$(echo "$deployment_json" | jq -r '.status.readyReplicas // 0' 2>/dev/null || echo "0")
+    local desired_replicas=$(echo "$deployment_json" | jq -r '.spec.replicas // 1' 2>/dev/null || echo "1")
     run_test "Pod is ready" "[[ \"$ready_replicas\" -eq \"$desired_replicas\" ]]"
     
     # Check service endpoints

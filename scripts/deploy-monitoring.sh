@@ -1979,36 +1979,46 @@ show_monitoring_status() {
         fi
         
         # Check ServiceMonitor (try both COO API group and standard API group)
-        local sm_found=false
-        if oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
-            log_info ""
-            log_info "ServiceMonitor (COO API):"
-            oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE"
-            sm_found=true
-        elif oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
-            log_info ""
-            log_info "ServiceMonitor:"
-            oc get servicemonitor eip-monitor-coo -n "$NAMESPACE"
-            sm_found=true
+        # Optimized: store result of first check to avoid duplicate calls
+        local sm_output=""
+        local sm_api_group=""
+        if sm_output=$(oc get servicemonitor.monitoring.rhobs eip-monitor-coo -n "$NAMESPACE" 2>/dev/null); then
+            sm_api_group="COO API"
+        elif sm_output=$(oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null); then
+            sm_api_group="standard"
         fi
-        if [[ "$sm_found" == "false" ]]; then
+        
+        if [[ -n "$sm_output" ]]; then
+            log_info ""
+            if [[ "$sm_api_group" == "COO API" ]]; then
+                log_info "ServiceMonitor (COO API):"
+            else
+                log_info "ServiceMonitor:"
+            fi
+            echo "$sm_output"
+        else
             log_warn "ServiceMonitor not found"
         fi
         
         # Check PrometheusRule (try both COO API group and standard API group)
-        local pr_found=false
-        if oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
-            log_info ""
-            log_info "PrometheusRule (COO API):"
-            oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE"
-            pr_found=true
-        elif oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
-            log_info ""
-            log_info "PrometheusRule:"
-            oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE"
-            pr_found=true
+        # Optimized: store result of first check to avoid duplicate calls
+        local pr_output=""
+        local pr_api_group=""
+        if pr_output=$(oc get prometheusrule.monitoring.rhobs eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null); then
+            pr_api_group="COO API"
+        elif pr_output=$(oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null); then
+            pr_api_group="standard"
         fi
-        if [[ "$pr_found" == "false" ]]; then
+        
+        if [[ -n "$pr_output" ]]; then
+            log_info ""
+            if [[ "$pr_api_group" == "COO API" ]]; then
+                log_info "PrometheusRule (COO API):"
+            else
+                log_info "PrometheusRule:"
+            fi
+            echo "$pr_output"
+        else
             log_warn "PrometheusRule not found"
         fi
         
