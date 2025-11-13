@@ -149,6 +149,9 @@ generate_test_ips() {
     local base_ip=$(echo "$network" | cut -d. -f1-3)
     local last_octet=$(echo "$network" | cut -d. -f4)
     
+    # Calculate max IPs in CIDR for loop limit
+    local max_ips_in_cidr=$((2 ** (32 - prefix)))
+    
     # Generate IP addresses (starting from .1 to check all IPs, excluding node IPs)
     local start_ip=1
     local generated=0
@@ -162,7 +165,8 @@ generate_test_ips() {
         grep -Fxq "$ip" "$excluded_ips_file_path" 2>/dev/null
     }
     
-    for i in $(seq $start_ip $((start_ip + count + 200))); do
+    # Loop through all possible IPs in the CIDR (up to max_ips_in_cidr)
+    for i in $(seq $start_ip $max_ips_in_cidr); do
         local candidate_ip=""
         
         if [ "$prefix" -eq 24 ]; then
@@ -231,6 +235,54 @@ get_all_eip_cidrs() {
     done
 }
 
+# Calculate actual available EIP capacity based on CIDR and exclusions
+calculate_available_eip_capacity() {
+    local cidr="$1"
+    
+    if [ -z "$cidr" ]; then
+        echo "0"
+        return 1
+    fi
+    
+    # Calculate total capacity from CIDR (subtract network and broadcast)
+    local prefix=$(echo "$cidr" | cut -d/ -f2)
+    local total_capacity=$((2 ** (32 - prefix) - 2))
+    
+    # Get existing EgressIP allocations
+    local used_ips=$(oc get egressip -o json 2>/dev/null | jq -r '.items[].spec.egressIPs[]' 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
+    
+    # Get excluded IPs (node IPs and LoadBalancer IPs in same CIDR)
+    local excluded_count=0
+    
+    # Count node IPs in the CIDR
+    local node_ips=$(get_node_internal_ips)
+    if [ -n "$node_ips" ]; then
+        while IFS= read -r ip; do
+            [ -z "$ip" ] && continue
+            if ip_in_cidr "$ip" "$cidr"; then
+                excluded_count=$((excluded_count + 1))
+            fi
+        done <<< "$node_ips"
+    fi
+    
+    # Count LoadBalancer IPs in the CIDR
+    local lb_ips=$(get_loadbalancer_ips_in_cidr "$cidr")
+    if [ -n "$lb_ips" ]; then
+        local lb_count=$(echo "$lb_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        excluded_count=$((excluded_count + lb_count))
+    fi
+    
+    # Calculate available capacity
+    local available=$((total_capacity - used_ips - excluded_count))
+    
+    # Ensure non-negative
+    if [ $available -lt 0 ]; then
+        available=0
+    fi
+    
+    echo "$available"
+}
+
 # Validate that a CIDR has available capacity
 check_eip_capacity() {
     local cidr="$1"
@@ -260,9 +312,9 @@ main() {
     local namespace_count="${2:-4}" # Default to 4 namespaces if not specified
     local eips_per_namespace="${3:-0}" # Default to 0 (auto-distribute) if not specified
     
-    # Validate IP count
-    if ! [[ "$ip_count" =~ ^[0-9]+$ ]] || [ "$ip_count" -lt 1 ] || [ "$ip_count" -gt 210 ]; then
-        log_error "IP count must be a number between 1 and 210"
+    # Validate IP count (basic validation - actual capacity check happens after CIDR discovery)
+    if ! [[ "$ip_count" =~ ^[0-9]+$ ]] || [ "$ip_count" -lt 1 ]; then
+        log_error "IP count must be a positive number"
         exit 1
     fi
     
@@ -315,7 +367,31 @@ main() {
     
     log_success "Found EgressIP CIDR: $CIDR"
     
-    # Validate we have enough capacity
+    # Calculate actual available capacity
+    log_info "Calculating available EIP capacity based on CIDR and exclusions..."
+    local max_available=$(calculate_available_eip_capacity "$CIDR")
+    
+    if [ "$max_available" -eq 0 ]; then
+        log_error "No available IPs in CIDR $CIDR (all IPs are used or excluded)"
+        exit 1
+    fi
+    
+    log_info "Maximum available EIP capacity: $max_available IPs"
+    
+    # Validate IP count against actual capacity
+    if [ "$ip_count" -gt "$max_available" ]; then
+        log_error "Requested $ip_count IPs exceeds available capacity of $max_available IPs"
+        log_error "Please reduce the IP count or use a larger CIDR range"
+        exit 1
+    fi
+    
+    # Validate EIPs per namespace against capacity
+    if [ "$eips_per_namespace" -gt 0 ] && [ $((namespace_count * eips_per_namespace)) -gt "$max_available" ]; then
+        log_error "Requested distribution ($namespace_count namespaces × $eips_per_namespace IPs = $((namespace_count * eips_per_namespace)) IPs) exceeds available capacity of $max_available IPs"
+        exit 1
+    fi
+    
+    # Validate we have enough capacity (redundant check, but good for logging)
     if ! check_eip_capacity "$CIDR" "$ip_count"; then
         log_warn "Limited IP capacity available - proceeding with available IPs"
     fi
