@@ -2710,12 +2710,28 @@ JQ_EOF
         done
         
         if [ $is_error_node -eq 0 ]; then
-            log_info "Patching $cpic_name -> $target_node"
+            log_info "Redistributing $cpic_name -> $target_node"
             
-            if oc patch cloudprivateipconfig "$cpic_name" -p "{\"spec\":{\"node\": \"$target_node\"}}" --type=merge &>/dev/null; then
+            # Get current CPIC to preserve metadata (annotations, labels, etc.)
+            local current_cpic=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_name\")" 2>/dev/null)
+            if [ -z "$current_cpic" ]; then
+                log_warn "CPIC $cpic_name not found, skipping"
+                failed=$((failed + 1))
+                continue
+            fi
+            
+            # Extract existing metadata to preserve it
+            local existing_annotations=$(echo "$current_cpic" | jq -c '.metadata.annotations // {}' 2>/dev/null || echo '{}')
+            local existing_labels=$(echo "$current_cpic" | jq -c '.metadata.labels // {}' 2>/dev/null || echo '{}')
+            
+            # Use oc apply with full spec to update last-applied-configuration annotation
+            # This prevents old values from being restored if someone uses oc apply later
+            local full_cpic_json="{\"apiVersion\":\"cloud.network.openshift.io/v1\",\"kind\":\"CloudPrivateIPConfig\",\"metadata\":{\"name\":\"$cpic_name\",\"annotations\":$existing_annotations,\"labels\":$existing_labels},\"spec\":{\"node\":\"$target_node\"}}"
+            
+            if echo "$full_cpic_json" | oc apply -f - &>/dev/null; then
                 redistributed=$((redistributed + 1))
             else
-                log_warn "Failed to patch $cpic_name"
+                log_warn "Failed to redistribute $cpic_name"
                 failed=$((failed + 1))
             fi
         fi
