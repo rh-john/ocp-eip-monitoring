@@ -1022,11 +1022,23 @@ main() {
         
         # Collect all currently assigned IPs to avoid reassigning them
         # Initialize as empty array to avoid unbound variable errors
+        # IMPORTANT: Only include VALID IPs (filter out invalid IPs from old bug)
         local assigned_ips=()
         local existing_ips=$(echo "$existing_eip_json" | jq -r '.items[].spec.egressIPs[]?' 2>/dev/null)
         if [ -n "$existing_ips" ]; then
             while IFS= read -r ip; do
-                [ -n "$ip" ] && assigned_ips+=("$ip")
+                [ -z "$ip" ] && continue
+                # Validate IP before adding to assigned_ips (skip invalid IPs like 10.0.2.356)
+                if python3 -c "import ipaddress; ipaddress.ip_address('$ip')" &>/dev/null; then
+                    # Also check if it's within the CIDR range
+                    if python3 -c "import ipaddress; ipaddress.ip_address('$ip') in ipaddress.ip_network('$CIDR', strict=False)" &>/dev/null; then
+                        assigned_ips+=("$ip")
+                    else
+                        log_warn "Skipping invalid IP $ip from assigned_ips (outside CIDR $CIDR)"
+                    fi
+                else
+                    log_warn "Skipping invalid IP $ip from assigned_ips (not a valid IPv4 address)"
+                fi
             done <<< "$existing_ips"
         fi
         
@@ -1052,14 +1064,54 @@ main() {
             local existing_eip=$(echo "$existing_eip_json" | jq -r ".items[] | select(.metadata.name == \"$egressip_name\")" 2>/dev/null)
             
             if [ -n "$existing_eip" ]; then
-                # Existing EgressIP - get current IPs
+                # Existing EgressIP - get current IPs and labels
                 local current_ips_array=($(echo "$existing_eip" | jq -r '.spec.egressIPs[]?' 2>/dev/null))
                 local current_count=${#current_ips_array[@]}
+                # Get existing labels to preserve them
+                local existing_labels=$(echo "$existing_eip" | jq -c '.metadata.labels // {}' 2>/dev/null || echo '{}')
                 
-                # If we need more IPs, append to existing (preserve existing assignments)
+                # Validate and filter out invalid IPs (e.g., >255 in last octet from old bug)
+                local valid_ips_array=()
+                local invalid_ips_found=0
+                if [ ${#current_ips_array[@]} -gt 0 ]; then
+                    for ip in "${current_ips_array[@]}"; do
+                    # Check if IP is valid using Python
+                    if python3 -c "import ipaddress; ipaddress.ip_address('$ip')" &>/dev/null; then
+                        # Also check if it's within the CIDR range
+                        if python3 -c "import ipaddress; ipaddress.ip_address('$ip') in ipaddress.ip_network('$CIDR', strict=False)" &>/dev/null; then
+                            valid_ips_array+=("$ip")
+                        else
+                            log_warn "Removing invalid IP $ip from $egressip_name (outside CIDR $CIDR)"
+                            invalid_ips_found=$((invalid_ips_found + 1))
+                        fi
+                    else
+                        log_warn "Removing invalid IP $ip from $egressip_name (not a valid IPv4 address)"
+                        invalid_ips_found=$((invalid_ips_found + 1))
+                    fi
+                    done
+                fi
+                
+                if [ $invalid_ips_found -gt 0 ]; then
+                    log_warn "Found $invalid_ips_found invalid IP(s) in $egressip_name, will replace with valid ones"
+                    # Safely copy valid IPs array (handle empty array case)
+                    current_ips_array=()
+                    if [ ${#valid_ips_array[@]} -gt 0 ]; then
+                        for valid_ip in "${valid_ips_array[@]}"; do
+                            current_ips_array+=("$valid_ip")
+                        done
+                    fi
+                    current_count=${#current_ips_array[@]}
+                fi
+                
+                # If we need more IPs, append to existing (preserve existing valid assignments)
                 if [ "$ips_for_this_namespace" -gt "$current_count" ]; then
-                    # Keep all existing IPs and add new ones from the pool
-                    local merged_ips=("${current_ips_array[@]}")
+                    # Keep all valid existing IPs and add new ones from the pool
+                    local merged_ips=()
+                    if [ ${#current_ips_array[@]} -gt 0 ]; then
+                        for ip in "${current_ips_array[@]}"; do
+                            merged_ips+=("$ip")
+                        done
+                    fi
                     local needed=$((ips_for_this_namespace - current_count))
                     
                     # Find unused IPs from TEST_IPS pool
@@ -1081,12 +1133,14 @@ main() {
                         fi
                         
                         # Also check if it's already in this EgressIP
-                        for current_ip in "${current_ips_array[@]}"; do
-                            if [ "$test_ip" = "$current_ip" ]; then
-                                already_assigned=1
-                                break
-                            fi
-                        done
+                        if [ ${#current_ips_array[@]} -gt 0 ]; then
+                            for current_ip in "${current_ips_array[@]}"; do
+                                if [ "$test_ip" = "$current_ip" ]; then
+                                    already_assigned=1
+                                    break
+                                fi
+                            done
+                        fi
                         
                         if [ $already_assigned -eq 0 ]; then
                             merged_ips+=("$test_ip")
@@ -1104,15 +1158,19 @@ main() {
                         done
                         ips_json+="]"
                         
-                        log_info "Updating $egressip_name: adding $added new IP(s) (preserving existing ${#current_ips_array[@]} IPs)"
-                        if oc patch egressip "$egressip_name" -p "{\"spec\":{\"egressIPs\":$ips_json}}" --type=merge &>/dev/null; then
+                        local existing_valid_count=${#current_ips_array[@]}
+                        log_info "Updating $egressip_name: adding $added new IP(s) (preserving existing $existing_valid_count IPs)"
+                        # Use oc apply instead of patch to update the last-applied-configuration annotation
+                        # This prevents old invalid IPs from being restored from the annotation
+                        local full_spec_json="{\"apiVersion\":\"k8s.ovn.org/v1\",\"kind\":\"EgressIP\",\"metadata\":{\"name\":\"$egressip_name\",\"labels\":$existing_labels},\"spec\":{\"egressIPs\":$ips_json,\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"$namespace\"}}}}"
+                        if echo "$full_spec_json" | oc apply -f - &>/dev/null; then
                             updated_count=$((updated_count + 1))
                             # Small delay to avoid overwhelming the system
                             sleep 0.1
                         fi
                     fi
                 elif [ "$ips_for_this_namespace" -lt "$current_count" ]; then
-                    # If we need fewer IPs, keep first N IPs (preserve as many as possible)
+                    # If we need fewer IPs, keep first N valid IPs (preserve as many as possible)
                     local merged_ips=()
                     for ((i=0; i<ips_for_this_namespace && i<current_count; i++)); do
                         merged_ips+=("${current_ips_array[$i]}")
@@ -1126,14 +1184,36 @@ main() {
                     ips_json+="]"
                     
                     log_info "Updating $egressip_name: reducing from $current_count to ${#merged_ips[@]} IP(s)"
-                    if oc patch egressip "$egressip_name" -p "{\"spec\":{\"egressIPs\":$ips_json}}" --type=merge &>/dev/null; then
+                    # Use oc apply instead of patch to update the last-applied-configuration annotation
+                    local full_spec_json="{\"apiVersion\":\"k8s.ovn.org/v1\",\"kind\":\"EgressIP\",\"metadata\":{\"name\":\"$egressip_name\",\"labels\":$existing_labels},\"spec\":{\"egressIPs\":$ips_json,\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"$namespace\"}}}}"
+                    if echo "$full_spec_json" | oc apply -f - &>/dev/null; then
                         updated_count=$((updated_count + 1))
                         # Small delay to avoid overwhelming the system
                         sleep 0.1
                     fi
                 else
-                    # Same count - no changes needed
-                    skipped_count=$((skipped_count + 1))
+                    # Same count - but check if we had invalid IPs that were removed
+                    if [ $invalid_ips_found -gt 0 ]; then
+                        # Need to update to remove invalid IPs
+                        local ips_json="["
+                        for ip in "${current_ips_array[@]}"; do
+                            [ "$ips_json" != "[" ] && ips_json+=","
+                            ips_json+="\"$ip\""
+                        done
+                        ips_json+="]"
+                        
+                        log_info "Updating $egressip_name: removing $invalid_ips_found invalid IP(s)"
+                        # Use oc apply instead of patch to update the last-applied-configuration annotation
+                        # This prevents old invalid IPs from being restored from the annotation
+                        local full_spec_json="{\"apiVersion\":\"k8s.ovn.org/v1\",\"kind\":\"EgressIP\",\"metadata\":{\"name\":\"$egressip_name\",\"labels\":$existing_labels},\"spec\":{\"egressIPs\":$ips_json,\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"$namespace\"}}}}"
+                        if echo "$full_spec_json" | oc apply -f - &>/dev/null; then
+                            updated_count=$((updated_count + 1))
+                            sleep 0.1
+                        fi
+                    else
+                        # Same count - no changes needed
+                        skipped_count=$((skipped_count + 1))
+                    fi
                 fi
             else
                 # New EgressIP - create it with IPs from the pool
@@ -1788,16 +1868,20 @@ cleanup_malfunctioning_eips() {
         
         # Remove duplicates
         local unique_eips=()
-        for eip in "${malfunctioning_eips[@]}"; do
-            local is_duplicate=0
-            for existing in "${unique_eips[@]}"; do
-                if [ "$eip" = "$existing" ]; then
-                    is_duplicate=1
-                    break
+        if [ ${#malfunctioning_eips[@]} -gt 0 ]; then
+            for eip in "${malfunctioning_eips[@]}"; do
+                local is_duplicate=0
+                if [ ${#unique_eips[@]} -gt 0 ]; then
+                    for existing in "${unique_eips[@]}"; do
+                        if [ "$eip" = "$existing" ]; then
+                            is_duplicate=1
+                            break
+                        fi
+                    done
                 fi
+                [ $is_duplicate -eq 0 ] && unique_eips+=("$eip")
             done
-            [ $is_duplicate -eq 0 ] && unique_eips+=("$eip")
-        done
+        fi
         
         # Filter by node if specified
         if [ -n "$node_name" ] && [ ${#unique_eips[@]} -gt 0 ]; then
