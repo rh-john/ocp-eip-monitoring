@@ -232,4 +232,3 @@ spec:
             height: 6
             content:
               $ref: "#/spec/panels/assignment-rate-trend"
-

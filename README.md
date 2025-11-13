@@ -9,7 +9,7 @@ Monitoring solution for OpenShift Egress IP (EIP) and CloudPrivateIPConfig (CPIC
 ## Prerequisites
 
 - OpenShift 4.18+
-- User Workload Monitoring enabled
+- Monitoring infrastructure: Either **Cluster Observability Operator (COO)** or **User Workload Monitoring (UWM)** enabled
 - EgressIP feature enabled
 
 ## Quick Start
@@ -24,7 +24,7 @@ oc apply -f k8s/deployment/k8s-manifests.yaml
 
 ## Architecture
 
-Integrates with OpenShift User Workload Monitoring to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources.
+Integrates with OpenShift monitoring infrastructure (COO or UWM) to collect metrics and generate alerts for EgressIP and CloudPrivateIPConfig resources. Supports both **Cluster Observability Operator (COO)** and **User Workload Monitoring (UWM)** monitoring stacks, and can run both simultaneously.
 
 ```mermaid
 graph TB
@@ -53,10 +53,12 @@ graph TB
         end
     end
     
-    subgraph "User Workload Monitoring"
-        PROM[Prometheus<br/>Scrapes Metrics]
-        AM[AlertManager<br/>Fires Alerts]
-        RULES[PrometheusRule<br/>Alert Definitions]
+    subgraph "Monitoring Infrastructure"
+        subgraph "COO or UWM"
+            PROM[Prometheus<br/>Scrapes Metrics]
+            AM[AlertManager<br/>Fires Alerts]
+            RULES[PrometheusRule<br/>Alert Definitions]
+        end
     end
     
     subgraph "External"
@@ -100,15 +102,40 @@ graph TB
 ### Component Overview
 
 - **eip-monitor**: Python Flask application that queries the OpenShift API for EgressIP and CPIC resources and exposes Prometheus metrics
-- **ServiceMonitor**: Configures Prometheus to scrape metrics from the eip-monitor service
+- **ServiceMonitor**: Configures Prometheus to scrape metrics from the eip-monitor service (supports both COO and UWM)
 - **PrometheusRule**: Defines alert rules for EIP utilization, assignment status, CPIC errors, and cluster health
-- **Prometheus**: Collects and stores metrics, evaluates alert rules
+- **Prometheus**: Collects and stores metrics, evaluates alert rules (COO or UWM)
 - **AlertManager**: Handles alert routing and notifications
 
-## User Workload Monitoring Setup
+## Monitoring Infrastructure Setup
 
-**Required**: Enable User Workload Monitoring in OpenShift:
+The EIP monitoring solution supports two monitoring stack options:
 
+### Option 1: Cluster Observability Operator (COO)
+
+COO provides a dedicated monitoring stack in your namespace with full control over Prometheus configuration.
+
+**Deploy COO monitoring:**
+```bash
+# Install COO operator (if not already installed)
+oc apply -f k8s/monitoring/coo/operator/coo-operator-subscription.yaml
+
+# Deploy COO monitoring infrastructure
+./scripts/deploy-monitoring.sh coo
+```
+
+**Benefits:**
+- Dedicated Prometheus instance in your namespace
+- Full control over Prometheus configuration
+- High availability with multiple replicas
+- Persistent storage support
+- Ideal for sandbox and development environments
+
+### Option 2: User Workload Monitoring (UWM)
+
+UWM uses the cluster's shared monitoring infrastructure for user workloads.
+
+**Enable UWM (requires cluster-admin):**
 ```bash
 # Enable user workload monitoring
 oc -n openshift-monitoring edit configmap cluster-monitoring-config
@@ -136,6 +163,29 @@ data:
       enableAlertmanagerConfig: true
 EOF
 ```
+
+**Deploy UWM monitoring:**
+```bash
+./scripts/deploy-monitoring.sh uwm
+```
+
+**Benefits:**
+- Uses cluster-managed monitoring infrastructure
+- No additional operator installation required
+- Shared Prometheus for multiple workloads
+- Ideal for production environments
+
+### Option 3: Both COO and UWM (Simultaneous)
+
+You can run both monitoring stacks simultaneously for redundancy and comparison:
+
+```bash
+# Deploy both stacks
+./scripts/deploy-monitoring.sh coo
+./scripts/deploy-monitoring.sh uwm
+```
+
+See [Deploying Both COO and UWM](docs/DEPLOY_BOTH_MONITORING.md) for detailed instructions.
 
 ## Installation
 
@@ -239,7 +289,11 @@ oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:808
 
 **No metrics appearing:**
 ```bash
-# Check user workload monitoring
+# Check monitoring infrastructure (COO or UWM)
+# For COO:
+oc get pods -n eip-monitoring -l app.kubernetes.io/name=prometheus
+
+# For UWM:
 oc get pods -n openshift-user-workload-monitoring
 
 # Test metrics endpoint
@@ -249,10 +303,18 @@ oc exec deployment/eip-monitor -n eip-monitoring -- curl -s http://localhost:808
 **Alerts not firing:**
 ```bash
 # Check AlertManager is running
+# For COO:
+oc get pods -n eip-monitoring -l app.kubernetes.io/name=alertmanager
+
+# For UWM:
 oc get pods -n openshift-user-workload-monitoring | grep alertmanager
 
 # Verify PrometheusRule
-oc get prometheusrule eip-monitor-alerts -n eip-monitoring
+# For COO:
+oc get prometheusrule -n eip-monitoring -l coo=eip-monitoring
+
+# For UWM:
+oc get prometheusrule eip-monitor-alerts-uwm -n eip-monitoring
 ```
 
 ## Project Structure

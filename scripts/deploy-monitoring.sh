@@ -1018,120 +1018,543 @@ configure_coo_monitoring_stack() {
     done
 }
 
+# Generic function to clean up all resources owned by a parent resource using ownerReferences
+# Usage: cleanup_owned_resources <parent_kind> <parent_name> [parent_namespace] [target_namespace]
+#   parent_kind: Kubernetes kind of the parent resource (e.g., "MonitoringStack", "UIPlugin")
+#   parent_name: Name of the parent resource
+#   parent_namespace: Namespace of the parent resource (optional, for namespace-scoped parents)
+#   target_namespace: Namespace to search for owned resources (optional, defaults to parent_namespace or all namespaces)
+# Returns: Number of resources cleaned up
+cleanup_owned_resources() {
+    local parent_kind="$1"
+    local parent_name="$2"
+    local parent_namespace="${3:-}"
+    local target_namespace="${4:-${parent_namespace}}"
+    
+    if [[ -z "$parent_kind" ]] || [[ -z "$parent_name" ]]; then
+        log_warn "cleanup_owned_resources: parent_kind and parent_name are required"
+        return 0
+    fi
+    
+    # Get the parent resource UID
+    local parent_uid=""
+    if [[ -n "$parent_namespace" ]]; then
+        parent_uid=$(oc get "$parent_kind" "$parent_name" -n "$parent_namespace" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
+    else
+        parent_uid=$(oc get "$parent_kind" "$parent_name" -o jsonpath='{.metadata.uid}' 2>/dev/null || echo "")
+    fi
+    
+    if [[ -z "$parent_uid" ]]; then
+        # Parent resource doesn't exist or couldn't be retrieved
+        return 0
+    fi
+    
+    local resources_cleaned=0
+    
+    # Comprehensive list of resource types to check
+    local ns_resource_types=(
+        "deployment" "service" "pod" "configmap" "secret" "serviceaccount" 
+        "role" "rolebinding" "replicaset" "daemonset" "statefulset"
+        "ingress" "route" "networkpolicy" "persistentvolumeclaim"
+        "servicemonitor" "prometheusrule" "scrapeconfig" "alertmanagerconfig"
+    )
+    
+    local cluster_resource_types=(
+        "clusterrole" "clusterrolebinding"
+    )
+    
+    # Check namespace-scoped resources
+    # Only search namespaces if target_namespace is specified or parent is namespace-scoped
+    # For cluster-scoped parents without target_namespace, skip namespace search (too slow and usually unnecessary)
+    if [[ -n "$target_namespace" ]] || [[ -n "$parent_namespace" ]]; then
+        local search_namespaces=()
+        if [[ -n "$target_namespace" ]]; then
+            search_namespaces=("$target_namespace")
+        elif [[ -n "$parent_namespace" ]]; then
+            # If parent is namespace-scoped, search in parent's namespace
+            search_namespaces=("$parent_namespace")
+        fi
+        
+        for resource_type in "${ns_resource_types[@]}"; do
+            for ns in "${search_namespaces[@]}"; do
+                local resources=$(oc get "$resource_type" -n "$ns" -o json 2>/dev/null || echo "{}")
+                
+                if command -v jq &>/dev/null && [[ "$resources" != "{}" ]]; then
+                    local owned_resources=$(echo "$resources" | jq -r --arg uid "$parent_uid" --arg kind "$parent_kind" --arg name "$parent_name" \
+                        '.items[] | select(.metadata.ownerReferences[]? | .uid == $uid and .kind == $kind and .name == $name) | .metadata.name' 2>/dev/null || echo "")
+                    
+                    if [[ -n "$owned_resources" ]]; then
+                        for resource_name in $owned_resources; do
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                log_info "  Deleting $resource_type/$resource_name in namespace $ns (owned by $parent_kind $parent_name)..."
+                            fi
+                            
+                            # Actually delete and check if it succeeded
+                            local delete_output
+                            local delete_exit
+                            if [[ "$VERBOSE" == "true" ]]; then
+                                delete_output=$(oc delete "$resource_type" "$resource_name" -n "$ns" --wait=false --timeout=10s --cascade=background 2>&1)
+                                delete_exit=$?
+                            else
+                                delete_output=$(oc delete "$resource_type" "$resource_name" -n "$ns" --wait=false --timeout=10s --cascade=background 2>&1)
+                                delete_exit=$?
+                            fi
+                            
+                            # Check if deletion succeeded (exit code 0 and no error messages)
+                            if [[ $delete_exit -eq 0 ]] && ! echo "$delete_output" | grep -qE "(Error|error|not found|No resources found)"; then
+                                ((resources_cleaned++))
+                                if [[ "$VERBOSE" == "true" ]]; then
+                                    log_info "    ✓ Deleted $resource_type/$resource_name"
+                                fi
+                            else
+                                # Show error in verbose mode
+                                if [[ "$VERBOSE" == "true" ]]; then
+                                    log_warn "    ⚠ Failed to delete $resource_type/$resource_name: $(echo "$delete_output" | head -1)"
+                                fi
+                            fi
+                        done
+                    fi
+                fi
+            done
+        done
+    fi
+    
+    # Check cluster-scoped resources
+    for resource_type in "${cluster_resource_types[@]}"; do
+        local resources=$(oc get "$resource_type" -o json 2>/dev/null || echo "{}")
+        
+        if command -v jq &>/dev/null && [[ "$resources" != "{}" ]]; then
+            local owned_resources=$(echo "$resources" | jq -r --arg uid "$parent_uid" --arg kind "$parent_kind" --arg name "$parent_name" \
+                '.items[] | select(.metadata.ownerReferences[]? | .uid == $uid and .kind == $kind and .name == $name) | .metadata.name' 2>/dev/null || echo "")
+            
+            if [[ -n "$owned_resources" ]]; then
+                for resource_name in $owned_resources; do
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        log_info "  Deleting $resource_type/$resource_name (owned by $parent_kind $parent_name)..."
+                    fi
+                    
+                    # Actually delete and check if it succeeded
+                    local delete_output
+                    local delete_exit
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        delete_output=$(oc delete "$resource_type" "$resource_name" --wait=false --timeout=10s --cascade=background 2>&1)
+                        delete_exit=$?
+                    else
+                        delete_output=$(oc delete "$resource_type" "$resource_name" --wait=false --timeout=10s --cascade=background 2>&1)
+                        delete_exit=$?
+                    fi
+                    
+                    # Check if deletion succeeded (exit code 0 and no error messages)
+                    if [[ $delete_exit -eq 0 ]] && ! echo "$delete_output" | grep -qE "(Error|error|not found|No resources found)"; then
+                        ((resources_cleaned++))
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            log_info "    ✓ Deleted $resource_type/$resource_name"
+                        fi
+                    else
+                        # Show error in verbose mode
+                        if [[ "$VERBOSE" == "true" ]]; then
+                            log_warn "    ⚠ Failed to delete $resource_type/$resource_name: $(echo "$delete_output" | head -1)"
+                        fi
+                    fi
+                done
+            fi
+        fi
+    done
+    
+    echo "$resources_cleaned"
+}
+
 # Remove COO monitoring
+# COO Dependency Tree (deletion order):
+# 1. Console operator spec.plugins (remove references)
+# 2. ConsolePlugin (created by UIPlugin, referenced by Console operator)
+# 3. UIPlugin (managed by COO operator, creates ConsolePlugin, Perses, korrel8r)
+# 4. Perses resources (created by UIPlugin, may not have ownerReferences)
+# 5. MonitoringStack (managed by COO operator, creates Prometheus, Alertmanager)
+# 6. ThanosQuerier (depends on MonitoringStack's Prometheus)
+# 7. AlertmanagerConfig (used by MonitoringStack)
+# 8. ScrapeConfig (used by MonitoringStack)
+# 9. ServiceMonitor, PrometheusRule, NetworkPolicy (user-created, used by MonitoringStack)
+# 10. Federation resources (secrets, RBAC)
+# 11. COO operator subscription (deletes CSV and operator, which manages all above)
+# 12. Orphaned CSVs
+# 13. CRDs (optional, after all resources deleted)
 remove_coo_monitoring() {
     log_info "Removing COO monitoring infrastructure..."
+    log_info "Following COO dependency tree for proper deletion order..."
     
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
     
-    # Delete MonitoringStack
-    if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO MonitoringStack..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true || log_warn "Failed to delete MonitoringStack"
+    # ============================================================================
+    # STEP 1: Remove from Console operator spec.plugins
+    # ============================================================================
+    # This must happen FIRST so ConsolePlugin can be deleted
+    # ConsolePlugin is referenced by Console operator, so we need to remove the reference first
+    log_info "Step 1: Removing ConsolePlugin references from Console operator..."
+    local console_plugin_names=(
+        "troubleshooting-panel-console-plugin"
+        "monitoring-console-plugin"
+    )
+    
+    if oc get console.operator.openshift.io cluster &>/dev/null; then
+        local plugins_removed=false
+        
+        # Remove plugins from Console operator spec.plugins
+        if command -v jq &>/dev/null; then
+            local console_json=$(oc get console.operator.openshift.io cluster -o json 2>/dev/null || echo "")
+            if [[ -n "$console_json" ]]; then
+                # Remove each plugin one by one
+                for console_plugin_name in "${console_plugin_names[@]}"; do
+                    # Check if plugin exists in spec.plugins
+                    if echo "$console_json" | jq -e ".spec.plugins[]? | select(. == \"${console_plugin_name}\")" &>/dev/null; then
+                        log_info "Removing $console_plugin_name from Console operator spec.plugins..."
+                        # Remove the plugin from the array using jq
+                        local updated_plugins=$(echo "$console_json" | jq --arg plugin "$console_plugin_name" \
+                            '.spec.plugins // [] | map(select(. != $plugin))' 2>/dev/null)
+                        
+                        if [[ -n "$updated_plugins" ]]; then
+                            if oc patch console.operator.openshift.io cluster --type=json \
+                                -p "[{\"op\": \"replace\", \"path\": \"/spec/plugins\", \"value\": $updated_plugins}]" &>/dev/null; then
+                                log_success "  ✓ Removed $console_plugin_name from Console operator"
+                                plugins_removed=true
+                                # Update console_json for next iteration
+                                console_json=$(oc get console.operator.openshift.io cluster -o json 2>/dev/null || echo "")
+                            else
+                                log_warn "  ⚠ Failed to remove $console_plugin_name from Console operator (may require cluster-admin)"
+                            fi
+                        fi
+                    fi
+                done
+            fi
         else
-            oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true &>/dev/null || log_warn "Failed to delete MonitoringStack"
+            # Fallback: remove plugins one by one using JSON patch remove operation
+            for console_plugin_name in "${console_plugin_names[@]}"; do
+                # Check if plugin exists in spec.plugins
+                local plugin_index=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins[?(@=="'${console_plugin_name}'")]}' 2>/dev/null | wc -l | tr -d '[:space:]')
+                if [[ "$plugin_index" -gt 0 ]]; then
+                    log_info "Removing $console_plugin_name from Console operator spec.plugins..."
+                    # Find the index of the plugin in the array
+                    local idx=0
+                    local found_idx=""
+                    local plugins_array=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins[*]}' 2>/dev/null || echo "")
+                    for plugin in $plugins_array; do
+                        if [[ "$plugin" == "$console_plugin_name" ]]; then
+                            found_idx=$idx
+                            break
+                        fi
+                        ((idx++))
+                    done
+                    
+                    if [[ -n "$found_idx" ]]; then
+                        # Use JSON patch to remove by index
+                        if oc patch console.operator.openshift.io cluster --type=json \
+                            -p "[{\"op\": \"remove\", \"path\": \"/spec/plugins/$found_idx\"}]" &>/dev/null; then
+                            log_success "  ✓ Removed $console_plugin_name from Console operator"
+                            plugins_removed=true
+                        else
+                            log_warn "  ⚠ Failed to remove $console_plugin_name from Console operator (may require cluster-admin)"
+                        fi
+                    fi
+                fi
+            done
         fi
-    fi
-    
-    # Delete COO manifests using label selector (safer - only deletes COO resources)
-    log_info "Removing COO manifests (using label selector: monitoring-type=coo)..."
-    
-    # Use label selector to ensure we only delete COO resources
-    # This prevents accidental deletion of UWM resources if both are deployed
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo || true
+        
+        if [[ "$plugins_removed" == "true" ]]; then
+            log_info "Waiting for Console operator to process plugin removal..."
+            sleep 5
+        fi
     else
-        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo &>/dev/null || true
+        log_info "Console operator resource not found, skipping plugin removal from spec.plugins"
     fi
     
-    # Also delete by name as fallback (in case labels weren't applied)
-    log_info "Removing COO manifests (by name, as fallback)..."
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    # ============================================================================
+    # STEP 2: Delete ConsolePlugin resources
+    # ============================================================================
+    # ConsolePlugin is created by UIPlugin, but must be deleted before UIPlugin
+    # because Console operator may have references to it
+    log_info "Step 2: Deleting ConsolePlugin resources..."
+    local console_plugin_deleted=0
+    
+    for console_plugin_name in "${console_plugin_names[@]}"; do
+        if oc get consoleplugin "$console_plugin_name" &>/dev/null; then
+            # Clean up resources owned by ConsolePlugin
+            log_info "Cleaning up resources owned by ConsolePlugin $console_plugin_name..."
+            local plugin_owned_count=$(cleanup_owned_resources "ConsolePlugin" "$console_plugin_name" "" "")
+            if [[ $plugin_owned_count -gt 0 ]]; then
+                log_success "Cleaned up $plugin_owned_count resource(s) owned by ConsolePlugin $console_plugin_name"
+            fi
+            
+            log_info "Deleting ConsolePlugin: $console_plugin_name..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                if oc delete consoleplugin "$console_plugin_name" --wait=false --timeout=10s --cascade=background 2>&1 | grep -vE "(not found|No resources found|Error from server)"; then
+                    ((console_plugin_deleted++))
+                fi
+            else
+                if oc delete consoleplugin "$console_plugin_name" --wait=false --timeout=10s --cascade=background &>/dev/null 2>&1; then
+                    ((console_plugin_deleted++))
+                fi
+            fi
+        fi
+    done
+    
+    # Also try to find and delete any ConsolePlugin resources that might exist
+    local all_console_plugins=$(oc get consoleplugin -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    if [[ -n "$all_console_plugins" ]]; then
+        for plugin in $all_console_plugins; do
+            # Check if it's one of our COO plugins (contains "monitoring" or "troubleshooting")
+            if echo "$plugin" | grep -qE "(monitoring|troubleshooting)"; then
+                local plugin_owned_count=$(cleanup_owned_resources "ConsolePlugin" "$plugin" "" "")
+                if [[ $plugin_owned_count -gt 0 ]]; then
+                    log_success "Cleaned up $plugin_owned_count resource(s) owned by ConsolePlugin $plugin"
+                fi
+                
+                if [[ "$VERBOSE" == "true" ]]; then
+                    log_info "Deleting ConsolePlugin: $plugin..."
+                    oc delete consoleplugin "$plugin" --wait=false --timeout=10s --cascade=background 2>&1 | grep -vE "(not found|No resources found|Error from server)" || true
+                else
+                    oc delete consoleplugin "$plugin" --wait=false --timeout=10s --cascade=background &>/dev/null 2>&1 || true
+                fi
+            fi
+        done
+    fi
+    
+    if [[ $console_plugin_deleted -gt 0 ]]; then
+        log_success "Removed $console_plugin_deleted ConsolePlugin resource(s)"
     else
-        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        log_info "No ConsolePlugin resources found to remove (or already removed)"
     fi
     
-    # Delete ThanosQuerier
-    if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO ThanosQuerier..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" || true
-        else
-            oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" 2>/dev/null || true
-        fi
+    # ============================================================================
+    # STEP 3: Delete UIPlugin resources
+    # ============================================================================
+    # UIPlugin is managed by COO operator and creates ConsolePlugin, Perses, korrel8r
+    # Delete UIPlugin to cascade delete owned resources, but handle finalizers
+    # If deletion fails, the operator subscription deletion (Step 11) will clean it up
+    log_info "Step 3: Deleting UIPlugin resources..."
+    
+    # First, find all existing UIPlugin resources (dynamically)
+    local ui_plugin_list=$(oc get uiplugin -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    local ui_plugin_names=()
+    
+    if [[ -n "$ui_plugin_list" ]]; then
+        # Add found plugins to the list
+        for plugin in $ui_plugin_list; do
+            ui_plugin_names+=("$plugin")
+        done
     fi
     
-    # Delete ThanosQuerier Route
-    if oc get route thanos-querier-coo -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO ThanosQuerier route..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete route thanos-querier-coo -n "$NAMESPACE" || true
-        else
-            oc delete route thanos-querier-coo -n "$NAMESPACE" 2>/dev/null || true
+    # Also check for common plugin names (in case they exist but weren't found above)
+    local common_plugin_names=(
+        "monitoring"
+        "troubleshooting-panel"
+        "troubleshooting"
+    )
+    for plugin_name in "${common_plugin_names[@]}"; do
+        if oc get uiplugin "$plugin_name" &>/dev/null; then
+            # Add if not already in the list
+            # Use safe array access to avoid unbound variable error with set -u
+            local already_in_list=false
+            if [[ ${#ui_plugin_names[@]} -gt 0 ]]; then
+                for existing_plugin in "${ui_plugin_names[@]}"; do
+                    if [[ "$existing_plugin" == "$plugin_name" ]]; then
+                        already_in_list=true
+                        break
+                    fi
+                done
+            fi
+            if [[ "$already_in_list" == "false" ]]; then
+                ui_plugin_names+=("$plugin_name")
+            fi
         fi
+    done
+    
+    # Delete UIPlugin resources - this will cascade delete all owned resources
+    log_info "Deleting UIPlugin resources (this will cascade delete all owned resources)..."
+    local deleted_count=0
+    # Use safe array access to avoid unbound variable error with set -u
+    if [[ ${#ui_plugin_names[@]} -eq 0 ]]; then
+        log_info "No UIPlugin resources found to delete"
+    else
+        for plugin_name in "${ui_plugin_names[@]}"; do
+            if oc get uiplugin "$plugin_name" &>/dev/null; then
+                log_info "Deleting UIPlugin: $plugin_name (will cascade delete owned resources)..."
+                
+                # Check for finalizers that might prevent deletion
+                local finalizers=$(oc get uiplugin "$plugin_name" -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
+                if [[ -n "$finalizers" ]]; then
+                    log_info "  UIPlugin has finalizers: $finalizers"
+                    log_info "  Attempting to remove finalizers to allow deletion..."
+                    local patch_output=""
+                    local patch_exit=0
+                    # Use set +e to prevent exit on error, then restore
+                    set +e
+                    patch_output=$(oc patch uiplugin "$plugin_name" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>&1)
+                    patch_exit=$?
+                    set -e
+                    
+                    if [[ $patch_exit -eq 0 ]]; then
+                        if [[ "$VERBOSE" == "true" ]] && [[ -n "$patch_output" ]]; then
+                            echo "$patch_output" | grep -vE "(not found|No resources found)" || true
+                        fi
+                        log_info "  ✓ Finalizers removed successfully"
+                    else
+                        log_warn "  ⚠ Failed to remove finalizers (exit code: $patch_exit)"
+                        if [[ "$VERBOSE" == "true" ]] && [[ -n "$patch_output" ]]; then
+                            log_warn "  Patch output: $patch_output"
+                        fi
+                    fi
+                    log_info "  Waiting for finalizer removal to take effect..."
+                    sleep 3
+                fi
+            
+            local delete_output
+            local delete_exit
+            log_info "  Attempting to delete UIPlugin: $plugin_name..."
+            if [[ "$VERBOSE" == "true" ]]; then
+                delete_output=$(oc delete uiplugin "$plugin_name" --wait=false --timeout=30s --cascade=background 2>&1)
+                delete_exit=$?
+            else
+                delete_output=$(oc delete uiplugin "$plugin_name" --wait=false --timeout=30s --cascade=background 2>&1)
+                delete_exit=$?
+            fi
+            
+            # Check if deletion succeeded or if resource is being deleted
+            if [[ $delete_exit -eq 0 ]]; then
+                # Check if the resource was actually deleted or is being deleted
+                if echo "$delete_output" | grep -qE "(deleted|marked for deletion)"; then
+                    log_success "  ✓ Deleted UIPlugin $plugin_name"
+                    ((deleted_count++))
+                else
+                    log_info "  UIPlugin deletion command succeeded, checking status..."
+                fi
+            else
+                # Check if it's stuck in deletion (has deletionTimestamp)
+                local deletion_timestamp=$(oc get uiplugin "$plugin_name" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || echo "")
+                if [[ -n "$deletion_timestamp" ]]; then
+                    log_warn "  ⚠ UIPlugin $plugin_name is stuck in deletion (deletionTimestamp: $deletion_timestamp)"
+                    log_info "  Removing finalizers to force deletion..."
+                    local force_patch_output
+                    force_patch_output=$(oc patch uiplugin "$plugin_name" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>&1) || true
+                    if [[ "$VERBOSE" == "true" ]] && [[ -n "$force_patch_output" ]]; then
+                        echo "$force_patch_output" | grep -vE "(not found|No resources found)" || true
+                    fi
+                    sleep 2
+                    # Try deleting again
+                    local force_delete_output
+                    force_delete_output=$(oc delete uiplugin "$plugin_name" --wait=false --timeout=10s --force --grace-period=0 2>&1) || true
+                    if echo "$force_delete_output" | grep -qE "(deleted|marked for deletion)"; then
+                        log_success "  ✓ Force deleted UIPlugin $plugin_name"
+                        ((deleted_count++))
+                    elif [[ "$VERBOSE" == "true" ]]; then
+                        log_warn "  ⚠ Force delete output: $(echo "$force_delete_output" | head -1)"
+                    fi
+                else
+                    if [[ "$VERBOSE" == "true" ]]; then
+                        log_warn "  ⚠ Failed to delete UIPlugin $plugin_name: $(echo "$delete_output" | head -1)"
+                    else
+                        log_warn "  ⚠ Failed to delete UIPlugin $plugin_name (use --verbose for details)"
+                    fi
+                    # If deletion failed and COO operator subscription exists, suggest deleting it first
+                    if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
+                        log_warn "  ⚠ UIPlugin deletion failed. The COO operator may be preventing deletion."
+                        log_info "  Tip: The COO operator subscription will be deleted later in the cleanup process."
+                        log_info "  If UIPlugin still exists after operator deletion, it should be cleaned up automatically."
+                    fi
+                fi
+            fi
+            fi
+        done
     fi
     
-    # Delete ScrapeConfig (federation)
-    if oc get scrapeconfig platform-monitoring-federation -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO federation ScrapeConfig..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete scrapeconfig platform-monitoring-federation -n "$NAMESPACE" || true
-        else
-            oc delete scrapeconfig platform-monitoring-federation -n "$NAMESPACE" 2>/dev/null || true
-        fi
+    # Wait a moment for cascade deletion to start
+    if [[ $deleted_count -gt 0 ]]; then
+        log_info "Waiting for cascade deletion to process (5 seconds)..."
+        sleep 5
     fi
     
-    # Delete AlertmanagerConfig
-    # COO uses monitoring.rhobs API group
-    if oc get alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting COO AlertmanagerConfig..."
-        # Delete all AlertmanagerConfigs in namespace (COO typically has one)
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" --all || true
-        else
-            oc delete alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" --all 2>/dev/null || true
-        fi
-    fi
-    # Also check standard API group as fallback
-    if oc get alertmanagerconfig -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting AlertmanagerConfig (standard API group)..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete alertmanagerconfig -n "$NAMESPACE" --all || true
-        else
-            oc delete alertmanagerconfig -n "$NAMESPACE" --all 2>/dev/null || true
-        fi
+    # Now clean up any remaining resources that might not have been cascade deleted
+    # This handles cases where ownerReferences might not be set correctly
+    local total_resources_cleaned=0
+    # Use safe array access to avoid unbound variable error with set -u
+    if [[ ${#ui_plugin_names[@]} -gt 0 ]]; then
+        for plugin_name in "${ui_plugin_names[@]}"; do
+            # Only check if UIPlugin was deleted (if it still exists, resources might be recreated)
+            if ! oc get uiplugin "$plugin_name" &>/dev/null; then
+                log_info "Cleaning up any remaining resources for UIPlugin: $plugin_name"
+                
+                # Use the reusable function to clean up all owned resources
+                # UIPlugin is cluster-scoped (no namespace), but we search in openshift-operators namespace
+                local plugin_resources_cleaned=$(cleanup_owned_resources "UIPlugin" "$plugin_name" "" "openshift-operators")
+                total_resources_cleaned=$((total_resources_cleaned + plugin_resources_cleaned))
+                
+                # Fallback: Check for resources that might be created by the COO operator for UIPlugins
+                # These might not have ownerReferences but could be related (e.g., korrel8r for troubleshooting plugin)
+                if [[ "$plugin_name" == *"troubleshooting"* ]]; then
+                    # Troubleshooting plugin creates korrel8r resources
+                    local related_labels=("app.kubernetes.io/instance=korrel8r" "app=korrel8r")
+                    for label in "${related_labels[@]}"; do
+                        for resource_type in "deployment" "service" "pod" "replicaset"; do
+                            if oc get "$resource_type" -n openshift-operators -l "$label" &>/dev/null; then
+                                if [[ "$VERBOSE" == "true" ]]; then
+                                    log_info "  Deleting $resource_type with label $label (related to troubleshooting plugin, no ownerReference)..."
+                                fi
+                                
+                                # Actually delete and check if it succeeded
+                                local delete_output
+                                local delete_exit
+                                delete_output=$(oc delete "$resource_type" -n openshift-operators -l "$label" --wait=false --timeout=10s --cascade=background 2>&1)
+                                delete_exit=$?
+                                
+                                # Check if deletion succeeded
+                                if [[ $delete_exit -eq 0 ]] && ! echo "$delete_output" | grep -qE "(Error|error|not found|No resources found)"; then
+                                    ((plugin_resources_cleaned++))
+                                    ((total_resources_cleaned++))
+                                    if [[ "$VERBOSE" == "true" ]]; then
+                                        log_info "    ✓ Deleted $resource_type with label $label"
+                                    fi
+                                else
+                                    if [[ "$VERBOSE" == "true" ]]; then
+                                        log_warn "    ⚠ Failed to delete $resource_type with label $label: $(echo "$delete_output" | head -1)"
+                                    fi
+                                fi
+                            fi
+                        done
+                    done
+                fi
+                
+                if [[ $plugin_resources_cleaned -gt 0 ]]; then
+                    log_success "  Cleaned up $plugin_resources_cleaned remaining resource(s) for UIPlugin $plugin_name"
+                fi
+            fi
+        done
     fi
     
-    # Delete federation token secret if it exists
-    if oc get secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" &>/dev/null; then
-        log_info "Deleting federation token secret..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" || true
-        else
-            oc delete secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" 2>/dev/null || true
-        fi
+    # Also try label-based deletion (non-blocking) for any remaining plugins
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s --cascade=background 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
+        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s --cascade=background 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
+    else
+        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s --cascade=background &>/dev/null 2>&1 || true
+        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s --cascade=background &>/dev/null 2>&1 || true
     fi
     
-    # Delete federation RBAC ClusterRoleBinding
-    if oc get clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null; then
-        log_info "Deleting federation RBAC ClusterRoleBinding..."
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation || true
-        else
-            oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null || true
-        fi
+    if [[ $deleted_count -gt 0 ]]; then
+        log_success "Removed $deleted_count UI plugin(s)"
+    else
+        log_info "No UI plugins found to remove (or already removed)"
     fi
     
-    # Delete Perses dashboards and datasources (deployed in openshift-operators namespace)
-    log_info "Removing Perses dashboards and datasources..."
-    # Check if Perses CRDs exist before attempting deletion
+    if [[ $total_resources_cleaned -gt 0 ]]; then
+        log_success "Cleaned up $total_resources_cleaned total resource(s) created by UI plugins"
+    fi
+    
+    # ============================================================================
+    # STEP 4: Delete Perses resources
+    # ============================================================================
+    # Perses resources are created by UIPlugin, but may not have ownerReferences
+    # Delete them explicitly after UIPlugin is deleted
+    log_info "Step 4: Deleting Perses dashboards and datasources..."
     if oc get crd persesdashboards.perses.dev &>/dev/null && oc get crd persesdatasources.perses.dev &>/dev/null; then
         # Delete by label selector (safer - only deletes COO Perses resources)
         if [[ "$VERBOSE" == "true" ]]; then
@@ -1143,7 +1566,6 @@ remove_coo_monitoring() {
         fi
         
         # Also delete by name as fallback (in case labels weren't applied)
-        # Delete datasource
         if oc get persesdatasource prometheus-coo -n openshift-operators &>/dev/null; then
             if [[ "$VERBOSE" == "true" ]]; then
                 oc delete persesdatasource prometheus-coo -n openshift-operators || true
@@ -1178,43 +1600,156 @@ remove_coo_monitoring() {
         log_info "Perses CRDs not found, skipping Perses resource cleanup"
     fi
     
-    # Delete COO UI plugins (cluster-scoped resources, no namespace)
-    log_info "Removing COO UI plugins..."
-    # Note: UIPlugin is cluster-scoped (observability.openshift.io/v1alpha1), not namespace-scoped
-    # Try to delete by name directly (skip CRD check to avoid hanging)
-    # Common UI plugin names (from k8s/monitoring/coo/ui-plugins/)
-    local ui_plugin_names=(
-        "monitoring"
-        "troubleshooting"
-    )
-    local deleted_count=0
-    for plugin_name in "${ui_plugin_names[@]}"; do
-        # Try to delete directly with timeout and non-blocking flags
-        # Use --wait=false and --timeout to prevent hanging
-        if [[ "$VERBOSE" == "true" ]]; then
-            if oc delete uiplugin "$plugin_name" --wait=false --timeout=5s 2>&1 | grep -vE "(not found|No resources found|Error from server)"; then
-                ((deleted_count++))
-            fi
-        else
-            if oc delete uiplugin "$plugin_name" --wait=false --timeout=5s &>/dev/null 2>&1; then
-                ((deleted_count++))
-            fi
+    # ============================================================================
+    # STEP 5: Delete MonitoringStack
+    # ============================================================================
+    # MonitoringStack is managed by COO operator and creates Prometheus, Alertmanager, etc.
+    # This must be deleted before ThanosQuerier (which depends on it)
+    log_info "Step 5: Deleting MonitoringStack and all resources it owns..."
+    if oc get monitoringstack eip-monitoring-stack -n "$NAMESPACE" &>/dev/null; then
+        log_info "Cleaning up resources owned by MonitoringStack eip-monitoring-stack..."
+        local owned_count=$(cleanup_owned_resources "MonitoringStack" "eip-monitoring-stack" "$NAMESPACE" "$NAMESPACE")
+        if [[ $owned_count -gt 0 ]]; then
+            log_success "Cleaned up $owned_count resource(s) owned by MonitoringStack"
         fi
-    done
-    
-    # Also try label-based deletion (non-blocking)
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
-        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s 2>&1 | grep -vE "(No resources found|not found|Error from server)" || true
-    else
-        oc delete uiplugin -l monitoring=coo --wait=false --timeout=5s &>/dev/null 2>&1 || true
-        oc delete uiplugin -l coo=eip-monitoring --wait=false --timeout=5s &>/dev/null 2>&1 || true
+        
+        log_info "Deleting COO MonitoringStack..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true --cascade=background || log_warn "Failed to delete MonitoringStack"
+        else
+            oc delete monitoringstack eip-monitoring-stack -n "$NAMESPACE" --wait=true --cascade=background &>/dev/null || log_warn "Failed to delete MonitoringStack"
+        fi
     fi
     
-    if [[ $deleted_count -gt 0 ]]; then
-        log_success "Removed $deleted_count UI plugin(s)"
+    # ============================================================================
+    # STEP 6: Delete ThanosQuerier
+    # ============================================================================
+    # ThanosQuerier depends on MonitoringStack's Prometheus, so delete it after MonitoringStack
+    log_info "Step 6: Deleting ThanosQuerier and all resources it owns..."
+    if oc get thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Cleaning up resources owned by ThanosQuerier eip-monitoring-stack-querier-coo..."
+        local querier_owned_count=$(cleanup_owned_resources "ThanosQuerier" "eip-monitoring-stack-querier-coo" "$NAMESPACE" "$NAMESPACE")
+        if [[ $querier_owned_count -gt 0 ]]; then
+            log_success "Cleaned up $querier_owned_count resource(s) owned by ThanosQuerier"
+        fi
+        
+        log_info "Deleting COO ThanosQuerier..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" --cascade=background || true
+        else
+            oc delete thanosquerier eip-monitoring-stack-querier-coo -n "$NAMESPACE" --cascade=background 2>/dev/null || true
+        fi
+    fi
+    
+    # Delete ThanosQuerier Route (may be owned by ThanosQuerier, but delete explicitly as fallback)
+    if oc get route thanos-querier-coo -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO ThanosQuerier route..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete route thanos-querier-coo -n "$NAMESPACE" --cascade=background || true
+        else
+            oc delete route thanos-querier-coo -n "$NAMESPACE" --cascade=background 2>/dev/null || true
+        fi
+    fi
+    
+    # ============================================================================
+    # STEP 7: Delete AlertmanagerConfig
+    # ============================================================================
+    # AlertmanagerConfig is used by MonitoringStack, delete after MonitoringStack
+    log_info "Step 7: Deleting AlertmanagerConfig resources..."
+    local alertmanager_configs=$(oc get alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    if [[ -n "$alertmanager_configs" ]]; then
+        log_info "Cleaning up AlertmanagerConfig resources (monitoring.rhobs) and their owned resources..."
+        for config_name in $alertmanager_configs; do
+            local config_owned_count=$(cleanup_owned_resources "AlertmanagerConfig" "$config_name" "$NAMESPACE" "$NAMESPACE")
+            if [[ $config_owned_count -gt 0 ]]; then
+                log_success "Cleaned up $config_owned_count resource(s) owned by AlertmanagerConfig $config_name"
+            fi
+        done
+        
+        log_info "Deleting COO AlertmanagerConfig (monitoring.rhobs)..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" --all --cascade=background || true
+        else
+            oc delete alertmanagerconfig.monitoring.rhobs -n "$NAMESPACE" --all --cascade=background 2>/dev/null || true
+        fi
+    fi
+    # Also check standard API group as fallback
+    local alertmanager_configs_std=$(oc get alertmanagerconfig -n "$NAMESPACE" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+    if [[ -n "$alertmanager_configs_std" ]]; then
+        log_info "Cleaning up AlertmanagerConfig resources (standard API group) and their owned resources..."
+        for config_name in $alertmanager_configs_std; do
+            local config_owned_count=$(cleanup_owned_resources "AlertmanagerConfig" "$config_name" "$NAMESPACE" "$NAMESPACE")
+            if [[ $config_owned_count -gt 0 ]]; then
+                log_success "Cleaned up $config_owned_count resource(s) owned by AlertmanagerConfig $config_name"
+            fi
+        done
+        
+        log_info "Deleting AlertmanagerConfig (standard API group)..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete alertmanagerconfig -n "$NAMESPACE" --all --cascade=background || true
+        else
+            oc delete alertmanagerconfig -n "$NAMESPACE" --all --cascade=background 2>/dev/null || true
+        fi
+    fi
+    
+    # ============================================================================
+    # STEP 8: Delete ScrapeConfig
+    # ============================================================================
+    # ScrapeConfig is used by MonitoringStack, delete after MonitoringStack
+    log_info "Step 8: Deleting ScrapeConfig (federation)..."
+    if oc get scrapeconfig platform-monitoring-federation -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting COO federation ScrapeConfig..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete scrapeconfig platform-monitoring-federation -n "$NAMESPACE" --cascade=background || true
+        else
+            oc delete scrapeconfig platform-monitoring-federation -n "$NAMESPACE" --cascade=background 2>/dev/null || true
+        fi
+    fi
+    
+    # ============================================================================
+    # STEP 9: Delete ServiceMonitor, PrometheusRule, NetworkPolicy
+    # ============================================================================
+    # User-created resources used by MonitoringStack, delete after MonitoringStack
+    log_info "Step 9: Deleting ServiceMonitor, PrometheusRule, and NetworkPolicy resources..."
+    # Delete COO manifests using label selector (safer - only deletes COO resources)
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo || true
     else
-        log_info "No UI plugins found to remove (or already removed)"
+        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo &>/dev/null || true
+    fi
+    
+    # Also delete by name as fallback (in case labels weren't applied)
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    else
+        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
+        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    fi
+    
+    # ============================================================================
+    # STEP 10: Delete federation resources
+    # ============================================================================
+    # Federation secrets and RBAC used by MonitoringStack
+    log_info "Step 10: Deleting federation resources (secrets, RBAC)..."
+    if oc get secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" &>/dev/null; then
+        log_info "Deleting federation token secret..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" || true
+        else
+            oc delete secret eip-monitoring-stack-prometheus-token -n "$NAMESPACE" 2>/dev/null || true
+        fi
+    fi
+    
+    if oc get clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null; then
+        log_info "Deleting federation RBAC ClusterRoleBinding..."
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation || true
+        else
+            oc delete clusterrolebinding eip-monitoring-stack-prometheus-federation &>/dev/null || true
+        fi
     fi
     
     # Remove individual NetworkPolicies (if they exist)
@@ -1244,9 +1779,13 @@ remove_coo_monitoring() {
         fi
     fi
     
-    # Delete COO operator subscription (after all resources are deleted)
+    # ============================================================================
+    # STEP 11: Delete COO operator subscription
+    # ============================================================================
+    # This deletes CSV and operator, which manages all above resources
+    # Must be deleted AFTER all resources are deleted
+    log_info "Step 11: Deleting COO operator subscription..."
     if oc get subscription cluster-observability-operator -n openshift-operators &>/dev/null; then
-        log_info "Deleting COO operator subscription..."
         if [[ "$VERBOSE" == "true" ]]; then
             oc delete subscription cluster-observability-operator -n openshift-operators || log_warn "Failed to delete COO operator subscription"
         else
@@ -1258,9 +1797,11 @@ remove_coo_monitoring() {
         sleep 10
     fi
     
-    # Delete orphaned CSVs (CSVs not owned by a subscription)
-    # Orphaned CSVs can block new installations
-    log_info "Checking for orphaned COO CSVs..."
+    # ============================================================================
+    # STEP 12: Delete orphaned CSVs
+    # ============================================================================
+    # Orphaned CSVs can block new installations, delete after subscription
+    log_info "Step 12: Checking for orphaned COO CSVs..."
     local csv_list=$(oc get csv -n openshift-operators -o json 2>/dev/null | jq -r '.items[] | select(.metadata.name | contains("cluster-observability")) | "\(.metadata.name)|\(if .metadata.ownerReferences then (.metadata.ownerReferences[0].kind // "none") else "none" end)"' 2>/dev/null || echo "")
     
     if [[ -n "$csv_list" ]]; then
@@ -1294,13 +1835,16 @@ remove_coo_monitoring() {
         done
     fi
     
+    # ============================================================================
+    # STEP 13: Delete CRDs (optional)
+    # ============================================================================
+    # CRDs must be deleted AFTER all resources using them are deleted
     # Wait a bit for operator to clean up CRDs automatically
-    log_info "Waiting for operator to clean up CRDs (if supported)..."
+    log_info "Step 13: Waiting for operator to clean up CRDs (if supported)..."
     sleep 5
     
     # Optionally delete COO CRDs if they still exist (requires cluster-admin)
     # Note: CRDs are typically cleaned up by the operator, but may remain if operator cleanup fails
-    # CRDs must be deleted AFTER all resources using them are deleted
     if [[ "${DELETE_CRDS:-false}" == "true" ]]; then
         log_info "Deleting COO CRDs (requires cluster-admin permissions)..."
         local coo_crds=(
@@ -1338,8 +1882,14 @@ remove_coo_monitoring() {
 }
 
 # Remove UWM monitoring
+# UWM Dependency Tree (deletion order):
+# 1. ServiceMonitor, PrometheusRule (used by UWM Prometheus, delete before Prometheus is removed)
+# 2. NetworkPolicy (user-created, used by ServiceMonitor)
+# 3. user-workload-monitoring-config (configures UWM Prometheus, delete before disabling UWM)
+# 4. Disable UWM in cluster-monitoring-config (disables UWM operator, must be LAST)
 remove_uwm_monitoring() {
     log_info "Removing UWM monitoring infrastructure..."
+    log_info "Following UWM dependency tree for proper deletion order..."
     
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local project_root="$(dirname "$script_dir")"
@@ -1357,31 +1907,56 @@ remove_uwm_monitoring() {
         return 0
     fi
     
+    # ============================================================================
+    # STEP 1: Delete ServiceMonitor and PrometheusRule
+    # ============================================================================
+    # These are used by UWM Prometheus, must be deleted before Prometheus is removed
+    log_info "Step 1: Deleting ServiceMonitor and PrometheusRule resources..."
     # Delete UWM manifests using label selector (safer - only deletes UWM resources)
-    log_info "Removing UWM manifests (using label selector: monitoring-type=uwm)..."
-    
-    # Use label selector to ensure we only delete UWM resources
-    # This prevents accidental deletion of COO resources if both are deployed
     if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm || true
+        oc delete servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm || true
     else
-        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
+        oc delete servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
     fi
     
     # Also delete by name as fallback (in case labels weren't applied)
-    log_info "Removing UWM manifests (by name, as fallback)..."
     if [[ "$VERBOSE" == "true" ]]; then
         oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
         oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
     else
         oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
         oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" 2>/dev/null || true
+    fi
+    
+    # ============================================================================
+    # STEP 2: Delete NetworkPolicy
+    # ============================================================================
+    # User-created NetworkPolicy, used by ServiceMonitor
+    log_info "Step 2: Deleting NetworkPolicy resources..."
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm || true
+        oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
+    else
+        oc delete networkpolicy -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
         oc delete networkpolicy eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
     fi
     
-    # Disable UWM in cluster-monitoring-config
-    log_info "Disabling User Workload Monitoring..."
+    # ============================================================================
+    # STEP 3: Delete user-workload-monitoring-config
+    # ============================================================================
+    # This configures UWM Prometheus, must be deleted before disabling UWM
+    log_info "Step 3: Deleting user-workload-monitoring-config..."
+    if [[ "$VERBOSE" == "true" ]]; then
+        oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring || true
+    else
+        oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring &>/dev/null || true
+    fi
+    
+    # ============================================================================
+    # STEP 4: Disable UWM in cluster-monitoring-config
+    # ============================================================================
+    # This disables the UWM operator, must be LAST
+    log_info "Step 4: Disabling User Workload Monitoring in cluster-monitoring-config..."
     local cluster_config=$(oc get configmap cluster-monitoring-config -n openshift-monitoring -o jsonpath='{.data.config\.yaml}' 2>/dev/null || echo "")
     
     if [[ -n "$cluster_config" ]] && echo "$cluster_config" | grep -qE "enableUserWorkload:\s*true"; then
@@ -1407,13 +1982,6 @@ remove_uwm_monitoring() {
             }
         fi
         rm -f "$temp_config"
-    fi
-    
-    # Delete user-workload-monitoring-config
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring || true
-    else
-        oc delete configmap user-workload-monitoring-config -n openshift-user-workload-monitoring &>/dev/null || true
     fi
     
     # Remove individual NetworkPolicies (if they exist)

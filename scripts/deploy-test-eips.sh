@@ -60,67 +60,174 @@ get_eip_ranges() {
     done
 }
 
-generate_test_ips() {
-    local cidr="$1"
-    local count="$2"
+# Get all node InternalIP addresses to exclude from EIP generation
+get_node_internal_ips() {
+    oc get nodes -o json 2>/dev/null | \
+    jq -r '.items[] | .status.addresses[]? | select(.type == "InternalIP") | .address' 2>/dev/null | \
+    grep -v '^$' || echo ""
+}
+
+# Check if an IP address is within a CIDR range
+ip_in_cidr() {
+    local ip="$1"
+    local cidr="$2"
     
-    if [ -z "$cidr" ] || [ -z "$count" ]; then
-        echo "Usage: generate_test_ips <cidr> <count>" >&2
+    if [ -z "$ip" ] || [ -z "$cidr" ]; then
         return 1
     fi
     
-    # Extract network and prefix
-    local network=$(echo "$cidr" | cut -d/ -f1)
-    local prefix=$(echo "$cidr" | cut -d/ -f2)
+    # Use Python for reliable CIDR checking (available in most environments)
+    python3 -c "
+import ipaddress
+import sys
+try:
+    ip = ipaddress.ip_address('$ip')
+    network = ipaddress.ip_network('$cidr', strict=False)
+    sys.exit(0 if ip in network else 1)
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null && return 0 || return 1
+}
+
+# Get Azure reserved IPs for a CIDR (first 4 and last IP)
+# Azure reserves the first 4 IPs and the last IP in each subnet
+get_azure_reserved_ips() {
+    local cidr="$1"
     
-    # Calculate network base (this is a simplified approach for /23, /24 networks)
-    local base_ip=$(echo "$network" | cut -d. -f1-3)
-    local last_octet=$(echo "$network" | cut -d. -f4)
+    if [ -z "$cidr" ]; then
+        return 1
+    fi
     
-    # Generate IP addresses (starting from .20 to avoid common reserved IPs)
-    local start_ip=20
-    local generated=0
+    # Use Python to calculate reserved IPs
+    python3 -c "
+import ipaddress
+import sys
+
+try:
+    network = ipaddress.ip_network('$cidr', strict=False)
     
-    for i in $(seq $start_ip $((start_ip + count + 50))); do
-        if [ "$prefix" -eq 24 ]; then
-            # /24 network - single subnet
-            if [ $i -lt 255 ]; then
-                echo "${base_ip}.$i"
-                generated=$((generated + 1))
-            fi
-        elif [ "$prefix" -eq 23 ]; then
-            # /23 network - spans two /24 subnets
-            if [ $i -lt 256 ]; then
-                echo "${base_ip}.$i"
-                generated=$((generated + 1))
+    # Get first 4 IPs (network address + 3 more)
+    first_ips = []
+    for i in range(4):
+        if i < network.num_addresses:
+            first_ips.append(str(network[i]))
+    
+    # Get last IP (broadcast address)
+    if network.num_addresses > 0:
+        last_ip = str(network[network.num_addresses - 1])
+    
+    # Output all reserved IPs
+    for ip in first_ips:
+        print(ip)
+    if network.num_addresses > 0:
+        print(last_ip)
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null || echo ""
+}
+
+# Get LoadBalancer service IPs that are in the same CIDR as the EIP range
+get_loadbalancer_ips_in_cidr() {
+    local cidr="$1"
+    
+    if [ -z "$cidr" ]; then
+        return 1
+    fi
+    
+    # Get all LoadBalancer services and extract their external IPs
+    local lb_ips=$(oc get svc --all-namespaces -o json 2>/dev/null | \
+        jq -r '.items[] | 
+            select(.spec.type == "LoadBalancer") | 
+            .status.loadBalancer.ingress[]? | 
+            .ip // empty' 2>/dev/null | \
+        grep -v '^$' || echo "")
+    
+    if [ -z "$lb_ips" ]; then
+        return 0
+    fi
+    
+    # Filter to only IPs in the same CIDR
+    local filtered_ips=""
+    while IFS= read -r ip; do
+        [ -z "$ip" ] && continue
+        if ip_in_cidr "$ip" "$cidr"; then
+            if [ -z "$filtered_ips" ]; then
+                filtered_ips="$ip"
             else
-                local third_octet=$(echo "$base_ip" | cut -d. -f3)
-                local next_third_octet=$((third_octet + 1))
-                local final_octet=$((i - 256))
-                if [ $final_octet -lt 255 ]; then
-                    echo "$(echo "$base_ip" | cut -d. -f1-2).${next_third_octet}.$final_octet"
-                    generated=$((generated + 1))
-                fi
+                filtered_ips="$filtered_ips"$'\n'"$ip"
             fi
-        elif [ "$prefix" -eq 22 ]; then
-            # /22 network - spans four /24 subnets
-            local subnet_offset=$((i / 256))
-            local host_offset=$((i % 256))
-            local third_octet=$(echo "$base_ip" | cut -d. -f3)
-            local target_third_octet=$((third_octet + subnet_offset))
-            
-            if [ $subnet_offset -lt 4 ] && [ $host_offset -lt 255 ]; then
-                echo "$(echo "$base_ip" | cut -d. -f1-2).${target_third_octet}.$host_offset"
-                generated=$((generated + 1))
-            fi
-        else
-            # Fallback for other network sizes
-            echo "${base_ip}.$i"
-            generated=$((generated + 1))
         fi
+    done <<< "$lb_ips"
+    
+    echo "$filtered_ips"
+}
+
+generate_test_ips() {
+    local cidr="$1"
+    local count="$2"
+    local excluded_ips_file="$3"  # Optional: file containing IPs to exclude (one per line)
+    
+    if [ -z "$cidr" ] || [ -z "$count" ]; then
+        echo "Usage: generate_test_ips <cidr> <count> [excluded_ips_file]" >&2
+        return 1
+    fi
+    
+    # Build exclusion set from file if provided
+    local excluded_ips_file_path=""
+    if [ -n "$excluded_ips_file" ] && [ -f "$excluded_ips_file" ]; then
+        excluded_ips_file_path="$excluded_ips_file"
+    fi
+    
+    # Use Python for reliable IP generation that handles all CIDR sizes correctly
+    python3 <<EOF
+import ipaddress
+import sys
+
+cidr = "$cidr"
+count = int("$count")
+excluded_file = "$excluded_ips_file_path" if "$excluded_ips_file_path" else None
+
+# Load excluded IPs
+excluded_ips = set()
+if excluded_file:
+    try:
+        with open(excluded_file, 'r') as f:
+            for line in f:
+                ip = line.strip()
+                if ip:
+                    excluded_ips.add(ip)
+    except:
+        pass
+
+# Generate IPs from CIDR
+try:
+    network = ipaddress.ip_network(cidr, strict=False)
+    generated = 0
+    
+    # Iterate through all hosts in the network (excludes network and broadcast)
+    for ip in network.hosts():
+        ip_str = str(ip)
         
-        [ $generated -eq $count ] && break
-    done
+        # Skip if excluded
+        if ip_str in excluded_ips:
+            continue
+        
+        # Output valid IP
+        print(ip_str)
+        generated += 1
+        
+        if generated >= count:
+            break
+    
+    # If we need more IPs but exhausted the network, exit with error
+    if generated < count:
+        sys.stderr.write(f"Error: Only generated {generated} IPs, need {count}\n")
+        sys.exit(1)
+        
+except Exception as e:
+    sys.stderr.write(f"Error generating IPs: {e}\n")
+    sys.exit(1)
+EOF
 }
 
 # Get the first available EgressIP CIDR
@@ -139,6 +246,131 @@ get_all_eip_cidrs() {
     while read -r config; do
         echo "$config" | tr -d "'" | jq -r '.[].ifaddr.ipv4' 2>/dev/null
     done
+}
+
+# Calculate actual available EIP capacity based on CIDR and exclusions
+calculate_available_eip_capacity() {
+    local cidr="$1"
+    
+    if [ -z "$cidr" ]; then
+        echo "0"
+        return 1
+    fi
+    
+    # Calculate total capacity from CIDR
+    # Azure reserves: first 4 IPs + last IP = 5 total
+    # Network (.0) and broadcast (last) are already subtracted in the -2 calculation
+    # So we need to subtract 3 more (the 3 additional first IPs: .1, .2, .3)
+    local prefix=$(echo "$cidr" | cut -d/ -f2)
+    local total_ips=$((2 ** (32 - prefix)))
+    # Azure reserves 5 IPs total: first 4 + last
+    # Network and broadcast are already in the -2, so subtract 3 more
+    local total_capacity=$((total_ips - 2 - 3))
+    
+    # Get existing EgressIP allocations
+    local used_ips=$(oc get egressip -o json 2>/dev/null | jq -r '.items[].spec.egressIPs[]' 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
+    
+    # Get excluded IPs (node IPs and LoadBalancer IPs in same CIDR)
+    # Note: Azure reserved IPs are already accounted for in total_capacity
+    local excluded_count=0
+    
+    # Count node IPs in the CIDR
+    local node_ips=$(get_node_internal_ips)
+    if [ -n "$node_ips" ]; then
+        while IFS= read -r ip; do
+            [ -z "$ip" ] && continue
+            if ip_in_cidr "$ip" "$cidr"; then
+                excluded_count=$((excluded_count + 1))
+            fi
+        done <<< "$node_ips"
+    fi
+    
+    # Count LoadBalancer IPs in the CIDR
+    local lb_ips=$(get_loadbalancer_ips_in_cidr "$cidr")
+    if [ -n "$lb_ips" ]; then
+        local lb_count=$(echo "$lb_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        excluded_count=$((excluded_count + lb_count))
+    fi
+    
+    # Calculate available capacity
+    local available=$((total_capacity - used_ips - excluded_count))
+    
+    # Ensure non-negative
+    if [ $available -lt 0 ]; then
+        available=0
+    fi
+    
+    echo "$available"
+}
+
+# Parse --node argument from command line
+# Usage: node_name=$(parse_node_arg "$@" 2>/dev/null) || { handle_error; }
+# Returns: node name or empty string on stdout, returns 1 if unknown option found
+parse_node_arg() {
+    local node_name=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --node|-n)
+                if [ -z "$2" ]; then
+                    log_error "Missing value for --node option" >&2
+                    return 1
+                fi
+                node_name="$2"
+                shift 2
+                ;;
+            *)
+                log_error "Unknown option: $1" >&2
+                return 1
+                ;;
+        esac
+    done
+    echo "$node_name"
+}
+
+# Collect all IPs to exclude and write to file
+# Returns: total count of excluded IPs (to stdout only)
+collect_excluded_ips() {
+    local cidr="$1"
+    local output_file="$2"
+    
+    > "$output_file"  # Clear file
+    
+    local total_count=0
+    
+    # Node IPs
+    log_info "Retrieving node IPs to exclude from EIP generation..." >&2
+    local node_ips=$(get_node_internal_ips)
+    if [ -n "$node_ips" ]; then
+        echo "$node_ips" >> "$output_file"
+        local node_ip_count=$(echo "$node_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $node_ip_count node InternalIP address(es) from EIP generation" >&2
+        total_count=$((total_count + node_ip_count))
+    else
+        log_warn "Could not retrieve node IPs - proceeding without node IP exclusions" >&2
+    fi
+    
+    # Azure reserved IPs (first 4 and last IP)
+    log_info "Retrieving Azure reserved IPs (first 4 + last) to exclude..." >&2
+    local azure_reserved=$(get_azure_reserved_ips "$cidr")
+    if [ -n "$azure_reserved" ]; then
+        echo "$azure_reserved" >> "$output_file"
+        local reserved_count=$(echo "$azure_reserved" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $reserved_count Azure reserved IP address(es) (first 4 + last) from EIP generation" >&2
+        total_count=$((total_count + reserved_count))
+    fi
+    
+    # LoadBalancer service IPs in the same CIDR
+    log_info "Retrieving LoadBalancer service IPs in CIDR $cidr to exclude..." >&2
+    local lb_ips=$(get_loadbalancer_ips_in_cidr "$cidr")
+    if [ -n "$lb_ips" ]; then
+        echo "$lb_ips" >> "$output_file"
+        local lb_ip_count=$(echo "$lb_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $lb_ip_count LoadBalancer IP address(es) in the same CIDR from EIP generation" >&2
+        total_count=$((total_count + lb_ip_count))
+    fi
+    
+    # Output only the count to stdout (for capture)
+    echo "$total_count"
 }
 
 # Validate that a CIDR has available capacity
@@ -170,9 +402,9 @@ main() {
     local namespace_count="${2:-4}" # Default to 4 namespaces if not specified
     local eips_per_namespace="${3:-0}" # Default to 0 (auto-distribute) if not specified
     
-    # Validate IP count
-    if ! [[ "$ip_count" =~ ^[0-9]+$ ]] || [ "$ip_count" -lt 1 ] || [ "$ip_count" -gt 210 ]; then
-        log_error "IP count must be a number between 1 and 210"
+    # Validate IP count (basic validation - actual capacity check happens after CIDR discovery)
+    if ! [[ "$ip_count" =~ ^[0-9]+$ ]] || [ "$ip_count" -lt 1 ]; then
+        log_error "IP count must be a positive number"
         exit 1
     fi
     
@@ -225,7 +457,31 @@ main() {
     
     log_success "Found EgressIP CIDR: $CIDR"
     
-    # Validate we have enough capacity
+    # Calculate actual available capacity
+    log_info "Calculating available EIP capacity based on CIDR and exclusions..."
+    local max_available=$(calculate_available_eip_capacity "$CIDR")
+    
+    if [ "$max_available" -eq 0 ]; then
+        log_error "No available IPs in CIDR $CIDR (all IPs are used or excluded)"
+        exit 1
+    fi
+    
+    log_info "Maximum available EIP capacity: $max_available IPs"
+    
+    # Validate IP count against actual capacity
+    if [ "$ip_count" -gt "$max_available" ]; then
+        log_error "Requested $ip_count IPs exceeds available capacity of $max_available IPs"
+        log_error "Please reduce the IP count or use a larger CIDR range"
+        exit 1
+    fi
+    
+    # Validate EIPs per namespace against capacity
+    if [ "$eips_per_namespace" -gt 0 ] && [ $((namespace_count * eips_per_namespace)) -gt "$max_available" ]; then
+        log_error "Requested distribution ($namespace_count namespaces × $eips_per_namespace IPs = $((namespace_count * eips_per_namespace)) IPs) exceeds available capacity of $max_available IPs"
+        exit 1
+    fi
+    
+    # Validate we have enough capacity (redundant check, but good for logging)
     if ! check_eip_capacity "$CIDR" "$ip_count"; then
         log_warn "Limited IP capacity available - proceeding with available IPs"
     fi
@@ -233,14 +489,21 @@ main() {
     # Generate test IP addresses
     log_info "Generating $ip_count test IP addresses..."
     
+    # Collect all excluded IPs (node IPs, Azure reserved IPs, LoadBalancer IPs)
+    local excluded_ips_file=$(mktemp)
+    local excluded_count=$(collect_excluded_ips "$CIDR" "$excluded_ips_file")
+    if [ "$excluded_count" -gt 0 ]; then
+        log_info "Total excluded IPs: $excluded_count"
+    fi
+    
     # Use portable method instead of readarray (not available in all bash versions)
     TEST_IPS=()
     local temp_ips_file=$(mktemp)
-    generate_test_ips "$CIDR" "$ip_count" > "$temp_ips_file"
+    generate_test_ips "$CIDR" "$ip_count" "$excluded_ips_file" > "$temp_ips_file"
     while IFS= read -r line; do
         TEST_IPS+=("$line")
     done < "$temp_ips_file"
-    rm -f "$temp_ips_file"
+    rm -f "$temp_ips_file" "$excluded_ips_file"
     
     if [ ${#TEST_IPS[@]} -lt $ip_count ]; then
         log_error "Could not generate enough IP addresses from CIDR $CIDR"
@@ -635,13 +898,27 @@ main() {
         )
         
             # Build batch YAML for new namespaces only (starting from existing_count)
+            # Find the highest existing namespace number to avoid gaps and conflicts
+            local highest_ns_num=0
+            # Re-query to get current namespace list (in case existing_ns_list is not accessible)
+            local current_ns_list=($(echo "$ns_json" | jq -r '.items[] | select(.metadata.name | test("^test-ns-[0-9]+$")) | .metadata.name' 2>/dev/null | sort -V))
+            if [ ${#current_ns_list[@]} -gt 0 ]; then
+                for ns in "${current_ns_list[@]}"; do
+                    local ns_num=$(echo "$ns" | sed 's/test-ns-//' | tr -d '\n')
+                    if [[ "$ns_num" =~ ^[0-9]+$ ]] && [ "$ns_num" -gt "$highest_ns_num" ]; then
+                        highest_ns_num=$ns_num
+                    fi
+                done
+            fi
+            
             for ((i=$existing_count; i<$namespace_count; i++)); do
                 local template_index=$((i % ${#namespace_templates[@]}))
                 local template="${namespace_templates[$template_index]}"
                 local labels=$(echo "$template" | cut -d: -f2-)
                 
-                # Create generic namespace name with number
-                local name="test-ns-$((i + 1))"
+                # Create generic namespace name with number (start from highest + 1 to avoid conflicts)
+                highest_ns_num=$((highest_ns_num + 1))
+                local name="test-ns-$highest_ns_num"
                 created_namespaces+=("$name")
                 
                 # Build namespace YAML
@@ -672,6 +949,12 @@ main() {
             # Only show output for newly created namespaces, suppress "configured" messages
             if [ -n "$namespace_yaml" ]; then
                 local created_count=$(echo -e "$namespace_yaml" | oc apply -f - 2>&1 | grep -c "created" || echo "0")
+                # Ensure we have a clean integer (remove any newlines or extra whitespace)
+                created_count=$(echo "$created_count" | tr -d '\n\r ' | head -1)
+                # Default to 0 if empty or not a number
+                if ! [[ "$created_count" =~ ^[0-9]+$ ]]; then
+                    created_count=0
+                fi
                 if [ "$created_count" -gt 0 ]; then
                     log_success "Created $created_count new namespaces"
                 fi
@@ -738,13 +1021,33 @@ main() {
         local existing_eip_json=$(oc get egressip -l test-suite=eip-monitoring -o json 2>/dev/null || echo '{"items":[]}')
         
         # Collect all currently assigned IPs to avoid reassigning them
-        local assigned_ips=($(echo "$existing_eip_json" | jq -r '.items[].spec.egressIPs[]?' 2>/dev/null))
+        # Initialize as empty array to avoid unbound variable errors
+        # IMPORTANT: Only include VALID IPs (filter out invalid IPs from old bug)
+        local assigned_ips=()
+        local existing_ips=$(echo "$existing_eip_json" | jq -r '.items[].spec.egressIPs[]?' 2>/dev/null)
+        if [ -n "$existing_ips" ]; then
+            while IFS= read -r ip; do
+                [ -z "$ip" ] && continue
+                # Validate IP before adding to assigned_ips (skip invalid IPs like 10.0.2.356)
+                if python3 -c "import ipaddress; ipaddress.ip_address('$ip')" &>/dev/null; then
+                    # Also check if it's within the CIDR range
+                    if python3 -c "import ipaddress; ipaddress.ip_address('$ip') in ipaddress.ip_network('$CIDR', strict=False)" &>/dev/null; then
+                        assigned_ips+=("$ip")
+                    else
+                        log_warn "Skipping invalid IP $ip from assigned_ips (outside CIDR $CIDR)"
+                    fi
+                else
+                    log_warn "Skipping invalid IP $ip from assigned_ips (not a valid IPv4 address)"
+                fi
+            done <<< "$existing_ips"
+        fi
         
         # Process each namespace: patch existing EgressIPs or create new ones
         local ip_index=0
         local created_count=0
         local updated_count=0
         local skipped_count=0
+        local create_pids=()  # For parallel EIP creation
         
         for ((ns_index=0; ns_index<namespace_count; ns_index++)); do
             local namespace="${created_namespaces[$ns_index]}"
@@ -761,14 +1064,54 @@ main() {
             local existing_eip=$(echo "$existing_eip_json" | jq -r ".items[] | select(.metadata.name == \"$egressip_name\")" 2>/dev/null)
             
             if [ -n "$existing_eip" ]; then
-                # Existing EgressIP - get current IPs
+                # Existing EgressIP - get current IPs and labels
                 local current_ips_array=($(echo "$existing_eip" | jq -r '.spec.egressIPs[]?' 2>/dev/null))
                 local current_count=${#current_ips_array[@]}
+                # Get existing labels to preserve them
+                local existing_labels=$(echo "$existing_eip" | jq -c '.metadata.labels // {}' 2>/dev/null || echo '{}')
                 
-                # If we need more IPs, append to existing (preserve existing assignments)
+                # Validate and filter out invalid IPs (e.g., >255 in last octet from old bug)
+                local valid_ips_array=()
+                local invalid_ips_found=0
+                if [ ${#current_ips_array[@]} -gt 0 ]; then
+                    for ip in "${current_ips_array[@]}"; do
+                    # Check if IP is valid using Python
+                    if python3 -c "import ipaddress; ipaddress.ip_address('$ip')" &>/dev/null; then
+                        # Also check if it's within the CIDR range
+                        if python3 -c "import ipaddress; ipaddress.ip_address('$ip') in ipaddress.ip_network('$CIDR', strict=False)" &>/dev/null; then
+                            valid_ips_array+=("$ip")
+                        else
+                            log_warn "Removing invalid IP $ip from $egressip_name (outside CIDR $CIDR)"
+                            invalid_ips_found=$((invalid_ips_found + 1))
+                        fi
+                    else
+                        log_warn "Removing invalid IP $ip from $egressip_name (not a valid IPv4 address)"
+                        invalid_ips_found=$((invalid_ips_found + 1))
+                    fi
+                    done
+                fi
+                
+                if [ $invalid_ips_found -gt 0 ]; then
+                    log_warn "Found $invalid_ips_found invalid IP(s) in $egressip_name, will replace with valid ones"
+                    # Safely copy valid IPs array (handle empty array case)
+                    current_ips_array=()
+                    if [ ${#valid_ips_array[@]} -gt 0 ]; then
+                        for valid_ip in "${valid_ips_array[@]}"; do
+                            current_ips_array+=("$valid_ip")
+                        done
+                    fi
+                    current_count=${#current_ips_array[@]}
+                fi
+                
+                # If we need more IPs, append to existing (preserve existing valid assignments)
                 if [ "$ips_for_this_namespace" -gt "$current_count" ]; then
-                    # Keep all existing IPs and add new ones from the pool
-                    local merged_ips=("${current_ips_array[@]}")
+                    # Keep all valid existing IPs and add new ones from the pool
+                    local merged_ips=()
+                    if [ ${#current_ips_array[@]} -gt 0 ]; then
+                        for ip in "${current_ips_array[@]}"; do
+                            merged_ips+=("$ip")
+                        done
+                    fi
                     local needed=$((ips_for_this_namespace - current_count))
                     
                     # Find unused IPs from TEST_IPS pool
@@ -780,20 +1123,24 @@ main() {
                         
                         # Check if this IP is already assigned to any EgressIP
                         local already_assigned=0
-                        for assigned_ip in "${assigned_ips[@]}"; do
-                            if [ "$test_ip" = "$assigned_ip" ]; then
-                                already_assigned=1
-                                break
-                            fi
-                        done
+                        if [ ${#assigned_ips[@]} -gt 0 ]; then
+                            for assigned_ip in "${assigned_ips[@]}"; do
+                                if [ "$test_ip" = "$assigned_ip" ]; then
+                                    already_assigned=1
+                                    break
+                                fi
+                            done
+                        fi
                         
                         # Also check if it's already in this EgressIP
-                        for current_ip in "${current_ips_array[@]}"; do
-                            if [ "$test_ip" = "$current_ip" ]; then
-                                already_assigned=1
-                                break
-                            fi
-                        done
+                        if [ ${#current_ips_array[@]} -gt 0 ]; then
+                            for current_ip in "${current_ips_array[@]}"; do
+                                if [ "$test_ip" = "$current_ip" ]; then
+                                    already_assigned=1
+                                    break
+                                fi
+                            done
+                        fi
                         
                         if [ $already_assigned -eq 0 ]; then
                             merged_ips+=("$test_ip")
@@ -811,15 +1158,19 @@ main() {
                         done
                         ips_json+="]"
                         
-                        log_info "Updating $egressip_name: adding $added new IP(s) (preserving existing ${#current_ips_array[@]} IPs)"
-                        if oc patch egressip "$egressip_name" -p "{\"spec\":{\"egressIPs\":$ips_json}}" --type=merge &>/dev/null; then
+                        local existing_valid_count=${#current_ips_array[@]}
+                        log_info "Updating $egressip_name: adding $added new IP(s) (preserving existing $existing_valid_count IPs)"
+                        # Use oc apply instead of patch to update the last-applied-configuration annotation
+                        # This prevents old invalid IPs from being restored from the annotation
+                        local full_spec_json="{\"apiVersion\":\"k8s.ovn.org/v1\",\"kind\":\"EgressIP\",\"metadata\":{\"name\":\"$egressip_name\",\"labels\":$existing_labels},\"spec\":{\"egressIPs\":$ips_json,\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"$namespace\"}}}}"
+                        if echo "$full_spec_json" | oc apply -f - &>/dev/null; then
                             updated_count=$((updated_count + 1))
                             # Small delay to avoid overwhelming the system
                             sleep 0.1
                         fi
                     fi
                 elif [ "$ips_for_this_namespace" -lt "$current_count" ]; then
-                    # If we need fewer IPs, keep first N IPs (preserve as many as possible)
+                    # If we need fewer IPs, keep first N valid IPs (preserve as many as possible)
                     local merged_ips=()
                     for ((i=0; i<ips_for_this_namespace && i<current_count; i++)); do
                         merged_ips+=("${current_ips_array[$i]}")
@@ -833,14 +1184,36 @@ main() {
                     ips_json+="]"
                     
                     log_info "Updating $egressip_name: reducing from $current_count to ${#merged_ips[@]} IP(s)"
-                    if oc patch egressip "$egressip_name" -p "{\"spec\":{\"egressIPs\":$ips_json}}" --type=merge &>/dev/null; then
+                    # Use oc apply instead of patch to update the last-applied-configuration annotation
+                    local full_spec_json="{\"apiVersion\":\"k8s.ovn.org/v1\",\"kind\":\"EgressIP\",\"metadata\":{\"name\":\"$egressip_name\",\"labels\":$existing_labels},\"spec\":{\"egressIPs\":$ips_json,\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"$namespace\"}}}}"
+                    if echo "$full_spec_json" | oc apply -f - &>/dev/null; then
                         updated_count=$((updated_count + 1))
                         # Small delay to avoid overwhelming the system
                         sleep 0.1
                     fi
                 else
-                    # Same count - no changes needed
-                    skipped_count=$((skipped_count + 1))
+                    # Same count - but check if we had invalid IPs that were removed
+                    if [ $invalid_ips_found -gt 0 ]; then
+                        # Need to update to remove invalid IPs
+                        local ips_json="["
+                        for ip in "${current_ips_array[@]}"; do
+                            [ "$ips_json" != "[" ] && ips_json+=","
+                            ips_json+="\"$ip\""
+                        done
+                        ips_json+="]"
+                        
+                        log_info "Updating $egressip_name: removing $invalid_ips_found invalid IP(s)"
+                        # Use oc apply instead of patch to update the last-applied-configuration annotation
+                        # This prevents old invalid IPs from being restored from the annotation
+                        local full_spec_json="{\"apiVersion\":\"k8s.ovn.org/v1\",\"kind\":\"EgressIP\",\"metadata\":{\"name\":\"$egressip_name\",\"labels\":$existing_labels},\"spec\":{\"egressIPs\":$ips_json,\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"$namespace\"}}}}"
+                        if echo "$full_spec_json" | oc apply -f - &>/dev/null; then
+                            updated_count=$((updated_count + 1))
+                            sleep 0.1
+                        fi
+                    else
+                        # Same count - no changes needed
+                        skipped_count=$((skipped_count + 1))
+                    fi
                 fi
             else
                 # New EgressIP - create it with IPs from the pool
@@ -855,12 +1228,14 @@ main() {
                     
                     # Check if this IP is already assigned
                     local already_assigned=0
-                    for assigned_ip in "${assigned_ips[@]}"; do
-                        if [ "$test_ip" = "$assigned_ip" ]; then
-                            already_assigned=1
-                            break
-                        fi
-                    done
+                    if [ ${#assigned_ips[@]} -gt 0 ]; then
+                        for assigned_ip in "${assigned_ips[@]}"; do
+                            if [ "$test_ip" = "$assigned_ip" ]; then
+                                already_assigned=1
+                                break
+                            fi
+                        done
+                    fi
                     
                     if [ $already_assigned -eq 0 ]; then
                         new_ips+=("$test_ip")
@@ -890,12 +1265,22 @@ main() {
                     yaml_content+="    matchLabels:\n"
                     yaml_content+="      kubernetes.io/metadata.name: $namespace\n"
                     
-                    if echo -e "$yaml_content" | oc apply -f - &>/dev/null; then
-                        created_count=$((created_count + 1))
-                    fi
+                    # Create EIP in background for parallel processing
+                    (
+                        echo -e "$yaml_content" | oc apply -f - &>/dev/null || true
+                    ) &
+                    create_pids+=($!)
+                    created_count=$((created_count + 1))
                 fi
             fi
         done
+        
+        # Wait for all EIP creations to complete
+        if [ ${#create_pids[@]} -gt 0 ]; then
+            for pid in "${create_pids[@]}"; do
+                wait "$pid" 2>/dev/null || true
+            done
+        fi
         
         # Report results
         if [ "$created_count" -gt 0 ]; then
@@ -1256,7 +1641,6 @@ JQ_EOF
                 oc delete cloudprivateipconfig "$cpic_name" --force --grace-period=0 &>/dev/null
                 
                 # Wait a moment for deletion to propagate
-                sleep 0.2
                 
                 # Verify deletion by checking if resource still exists
                 if ! oc get cloudprivateipconfig "$cpic_name" &>/dev/null; then
@@ -1484,16 +1868,20 @@ cleanup_malfunctioning_eips() {
         
         # Remove duplicates
         local unique_eips=()
-        for eip in "${malfunctioning_eips[@]}"; do
-            local is_duplicate=0
-            for existing in "${unique_eips[@]}"; do
-                if [ "$eip" = "$existing" ]; then
-                    is_duplicate=1
-                    break
+        if [ ${#malfunctioning_eips[@]} -gt 0 ]; then
+            for eip in "${malfunctioning_eips[@]}"; do
+                local is_duplicate=0
+                if [ ${#unique_eips[@]} -gt 0 ]; then
+                    for existing in "${unique_eips[@]}"; do
+                        if [ "$eip" = "$existing" ]; then
+                            is_duplicate=1
+                            break
+                        fi
+                    done
                 fi
+                [ $is_duplicate -eq 0 ] && unique_eips+=("$eip")
             done
-            [ $is_duplicate -eq 0 ] && unique_eips+=("$eip")
-        done
+        fi
         
         # Filter by node if specified
         if [ -n "$node_name" ] && [ ${#unique_eips[@]} -gt 0 ]; then
@@ -2322,12 +2710,28 @@ JQ_EOF
         done
         
         if [ $is_error_node -eq 0 ]; then
-            log_info "Patching $cpic_name -> $target_node"
+            log_info "Redistributing $cpic_name -> $target_node"
             
-            if oc patch cloudprivateipconfig "$cpic_name" -p "{\"spec\":{\"node\": \"$target_node\"}}" --type=merge &>/dev/null; then
+            # Get current CPIC to preserve metadata (annotations, labels, etc.)
+            local current_cpic=$(echo "$cpic_json" | jq -r ".items[] | select(.metadata.name == \"$cpic_name\")" 2>/dev/null)
+            if [ -z "$current_cpic" ]; then
+                log_warn "CPIC $cpic_name not found, skipping"
+                failed=$((failed + 1))
+                continue
+            fi
+            
+            # Extract existing metadata to preserve it
+            local existing_annotations=$(echo "$current_cpic" | jq -c '.metadata.annotations // {}' 2>/dev/null || echo '{}')
+            local existing_labels=$(echo "$current_cpic" | jq -c '.metadata.labels // {}' 2>/dev/null || echo '{}')
+            
+            # Use oc apply with full spec to update last-applied-configuration annotation
+            # This prevents old values from being restored if someone uses oc apply later
+            local full_cpic_json="{\"apiVersion\":\"cloud.network.openshift.io/v1\",\"kind\":\"CloudPrivateIPConfig\",\"metadata\":{\"name\":\"$cpic_name\",\"annotations\":$existing_annotations,\"labels\":$existing_labels},\"spec\":{\"node\":\"$target_node\"}}"
+            
+            if echo "$full_cpic_json" | oc apply -f - &>/dev/null; then
                 redistributed=$((redistributed + 1))
             else
-                log_warn "Failed to patch $cpic_name"
+                log_warn "Failed to redistribute $cpic_name"
                 failed=$((failed + 1))
             fi
         fi
@@ -2444,7 +2848,7 @@ case "${1:-deploy}" in
         elif [[ "$ip_count" =~ ^[0-9]+$ ]]; then
             main "$ip_count" "4" "0"
         else
-            main
+            main "15" "4" "0"
         fi
         ;;
     "cleanup")
@@ -2461,78 +2865,34 @@ case "${1:-deploy}" in
         ;;
     "cleanup-malfunctioning"|"malfunctioning")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 cleanup-malfunctioning [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 cleanup-malfunctioning [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_eips "false" "$node_name"
         ;;
     "list-malfunctioning")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 list-malfunctioning [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 list-malfunctioning [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_eips "true" "$node_name"
         ;;
     "cleanup-malfunctioning-cpic"|"malfunctioning-cpic")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 cleanup-malfunctioning-cpic [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 cleanup-malfunctioning-cpic [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_cpics "false" "$node_name"
         ;;
     "list-malfunctioning-cpic")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 list-malfunctioning-cpic [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 list-malfunctioning-cpic [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_cpics "true" "$node_name"
         ;;
     "--help"|"-h"|"help")

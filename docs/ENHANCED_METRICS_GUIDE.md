@@ -2,6 +2,16 @@
 
 Metrics and alert rules for OpenShift EIP and CPIC monitoring.
 
+## Monitoring Infrastructure
+
+The EIP monitoring solution supports both **Cluster Observability Operator (COO)** and **User Workload Monitoring (UWM)** monitoring stacks:
+
+- **COO**: Dedicated Prometheus instance in your namespace with full control
+- **UWM**: Uses cluster-managed monitoring infrastructure  
+- **Both**: Can run simultaneously for redundancy and comparison
+
+All metrics and alerts work identically with both monitoring stacks. See the [README](../README.md#monitoring-infrastructure-setup) for setup instructions.
+
 ## Metrics Catalog
 
 ### Core EIP Metrics
@@ -262,20 +272,59 @@ The capacity affects:
 
 ## Deployment
 
+### Deploy EIP Monitor Application
+
 ```bash
 # Automated deployment with registry
 ./scripts/deploy-eip.sh all -r quay.io/your-registry
 
 # Or for manifest updates only (keeps existing image)
 ./scripts/deploy-eip.sh deploy
+```
 
+### Deploy Monitoring Infrastructure
+
+**Option 1: Cluster Observability Operator (COO)**
+```bash
+# Install COO operator (if not already installed)
+oc apply -f k8s/monitoring/coo/operator/coo-operator-subscription.yaml
+
+# Deploy COO monitoring infrastructure
+./scripts/deploy-monitoring.sh coo
+```
+
+**Option 2: User Workload Monitoring (UWM)**
+```bash
+# Enable UWM first (requires cluster-admin)
+# See README.md for UWM setup instructions
+
+# Deploy UWM monitoring infrastructure
+./scripts/deploy-monitoring.sh uwm
+```
+
+**Option 3: Both COO and UWM (Simultaneous)**
+```bash
+# Deploy both stacks
+./scripts/deploy-monitoring.sh coo
+./scripts/deploy-monitoring.sh uwm
+```
+
+See [Deploying Both COO and UWM](DEPLOY_BOTH_MONITORING.md) for detailed instructions.
+
+### Create Test EgressIPs
+
+```bash
 # Create test EgressIPs for monitoring validation  
 ./scripts/deploy-test-eips.sh deploy
 
 # Create test EgressIPs with fixed distribution (3 EIPs per namespace)
 ./scripts/deploy-test-eips.sh deploy 20 5 3
+```
 
-# Verify metrics collection
+### Verify Metrics Collection
+
+```bash
+# Verify metrics endpoint
 curl http://eip-monitor:8080/metrics | grep eip_
 ```
 
