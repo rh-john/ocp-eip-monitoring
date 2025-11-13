@@ -89,6 +89,43 @@ except Exception as e:
 " 2>/dev/null && return 0 || return 1
 }
 
+# Get Azure reserved IPs for a CIDR (first 4 and last IP)
+# Azure reserves the first 4 IPs and the last IP in each subnet
+get_azure_reserved_ips() {
+    local cidr="$1"
+    
+    if [ -z "$cidr" ]; then
+        return 1
+    fi
+    
+    # Use Python to calculate reserved IPs
+    python3 -c "
+import ipaddress
+import sys
+
+try:
+    network = ipaddress.ip_network('$cidr', strict=False)
+    
+    # Get first 4 IPs (network address + 3 more)
+    first_ips = []
+    for i in range(4):
+        if i < network.num_addresses:
+            first_ips.append(str(network[i]))
+    
+    # Get last IP (broadcast address)
+    if network.num_addresses > 0:
+        last_ip = str(network[network.num_addresses - 1])
+    
+    # Output all reserved IPs
+    for ip in first_ips:
+        print(ip)
+    if network.num_addresses > 0:
+        print(last_ip)
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null || echo ""
+}
+
 # Get LoadBalancer service IPs that are in the same CIDR as the EIP range
 get_loadbalancer_ips_in_cidr() {
     local cidr="$1"
@@ -244,14 +281,21 @@ calculate_available_eip_capacity() {
         return 1
     fi
     
-    # Calculate total capacity from CIDR (subtract network and broadcast)
+    # Calculate total capacity from CIDR
+    # Azure reserves: first 4 IPs + last IP = 5 total
+    # Network (.0) and broadcast (last) are already subtracted in the -2 calculation
+    # So we need to subtract 3 more (the 3 additional first IPs: .1, .2, .3)
     local prefix=$(echo "$cidr" | cut -d/ -f2)
-    local total_capacity=$((2 ** (32 - prefix) - 2))
+    local total_ips=$((2 ** (32 - prefix)))
+    # Azure reserves 5 IPs total: first 4 + last
+    # Network and broadcast are already in the -2, so subtract 3 more
+    local total_capacity=$((total_ips - 2 - 3))
     
     # Get existing EgressIP allocations
     local used_ips=$(oc get egressip -o json 2>/dev/null | jq -r '.items[].spec.egressIPs[]' 2>/dev/null | grep -v '^$' | wc -l | tr -d ' ')
     
     # Get excluded IPs (node IPs and LoadBalancer IPs in same CIDR)
+    # Note: Azure reserved IPs are already accounted for in total_capacity
     local excluded_count=0
     
     # Count node IPs in the CIDR
@@ -281,6 +325,76 @@ calculate_available_eip_capacity() {
     fi
     
     echo "$available"
+}
+
+# Parse --node argument from command line
+# Usage: node_name=$(parse_node_arg "$@" 2>/dev/null) || { handle_error; }
+# Returns: node name or empty string on stdout, returns 1 if unknown option found
+parse_node_arg() {
+    local node_name=""
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --node|-n)
+                if [ -z "$2" ]; then
+                    log_error "Missing value for --node option" >&2
+                    return 1
+                fi
+                node_name="$2"
+                shift 2
+                ;;
+            *)
+                log_error "Unknown option: $1" >&2
+                return 1
+                ;;
+        esac
+    done
+    echo "$node_name"
+}
+
+# Collect all IPs to exclude and write to file
+# Returns: total count of excluded IPs (to stdout only)
+collect_excluded_ips() {
+    local cidr="$1"
+    local output_file="$2"
+    
+    > "$output_file"  # Clear file
+    
+    local total_count=0
+    
+    # Node IPs
+    log_info "Retrieving node IPs to exclude from EIP generation..." >&2
+    local node_ips=$(get_node_internal_ips)
+    if [ -n "$node_ips" ]; then
+        echo "$node_ips" >> "$output_file"
+        local node_ip_count=$(echo "$node_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $node_ip_count node InternalIP address(es) from EIP generation" >&2
+        total_count=$((total_count + node_ip_count))
+    else
+        log_warn "Could not retrieve node IPs - proceeding without node IP exclusions" >&2
+    fi
+    
+    # Azure reserved IPs (first 4 and last IP)
+    log_info "Retrieving Azure reserved IPs (first 4 + last) to exclude..." >&2
+    local azure_reserved=$(get_azure_reserved_ips "$cidr")
+    if [ -n "$azure_reserved" ]; then
+        echo "$azure_reserved" >> "$output_file"
+        local reserved_count=$(echo "$azure_reserved" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $reserved_count Azure reserved IP address(es) (first 4 + last) from EIP generation" >&2
+        total_count=$((total_count + reserved_count))
+    fi
+    
+    # LoadBalancer service IPs in the same CIDR
+    log_info "Retrieving LoadBalancer service IPs in CIDR $cidr to exclude..." >&2
+    local lb_ips=$(get_loadbalancer_ips_in_cidr "$cidr")
+    if [ -n "$lb_ips" ]; then
+        echo "$lb_ips" >> "$output_file"
+        local lb_ip_count=$(echo "$lb_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $lb_ip_count LoadBalancer IP address(es) in the same CIDR from EIP generation" >&2
+        total_count=$((total_count + lb_ip_count))
+    fi
+    
+    # Output only the count to stdout (for capture)
+    echo "$total_count"
 }
 
 # Validate that a CIDR has available capacity
@@ -399,26 +513,11 @@ main() {
     # Generate test IP addresses
     log_info "Generating $ip_count test IP addresses..."
     
-    # Get node InternalIP addresses to exclude
-    log_info "Retrieving node IPs to exclude from EIP generation..."
-    local node_ips=$(get_node_internal_ips)
+    # Collect all excluded IPs (node IPs, Azure reserved IPs, LoadBalancer IPs)
     local excluded_ips_file=$(mktemp)
-    if [ -n "$node_ips" ]; then
-        echo "$node_ips" > "$excluded_ips_file"
-        local node_ip_count=$(echo "$node_ips" | grep -v '^$' | wc -l | tr -d ' ')
-        log_info "Excluding $node_ip_count node InternalIP address(es) from EIP generation"
-    else
-        log_warn "Could not retrieve node IPs - proceeding without exclusions"
-        touch "$excluded_ips_file"
-    fi
-    
-    # Get LoadBalancer service IPs in the same CIDR to exclude
-    log_info "Retrieving LoadBalancer service IPs in CIDR $CIDR to exclude..."
-    local lb_ips=$(get_loadbalancer_ips_in_cidr "$CIDR")
-    if [ -n "$lb_ips" ]; then
-        echo "$lb_ips" >> "$excluded_ips_file"
-        local lb_ip_count=$(echo "$lb_ips" | grep -v '^$' | wc -l | tr -d ' ')
-        log_info "Excluding $lb_ip_count LoadBalancer IP address(es) in the same CIDR from EIP generation"
+    local excluded_count=$(collect_excluded_ips "$CIDR" "$excluded_ips_file")
+    if [ "$excluded_count" -gt 0 ]; then
+        log_info "Total excluded IPs: $excluded_count"
     fi
     
     # Use portable method instead of readarray (not available in all bash versions)
@@ -823,13 +922,27 @@ main() {
         )
         
             # Build batch YAML for new namespaces only (starting from existing_count)
+            # Find the highest existing namespace number to avoid gaps and conflicts
+            local highest_ns_num=0
+            # Re-query to get current namespace list (in case existing_ns_list is not accessible)
+            local current_ns_list=($(echo "$ns_json" | jq -r '.items[] | select(.metadata.name | test("^test-ns-[0-9]+$")) | .metadata.name' 2>/dev/null | sort -V))
+            if [ ${#current_ns_list[@]} -gt 0 ]; then
+                for ns in "${current_ns_list[@]}"; do
+                    local ns_num=$(echo "$ns" | sed 's/test-ns-//' | tr -d '\n')
+                    if [[ "$ns_num" =~ ^[0-9]+$ ]] && [ "$ns_num" -gt "$highest_ns_num" ]; then
+                        highest_ns_num=$ns_num
+                    fi
+                done
+            fi
+            
             for ((i=$existing_count; i<$namespace_count; i++)); do
                 local template_index=$((i % ${#namespace_templates[@]}))
                 local template="${namespace_templates[$template_index]}"
                 local labels=$(echo "$template" | cut -d: -f2-)
                 
-                # Create generic namespace name with number
-                local name="test-ns-$((i + 1))"
+                # Create generic namespace name with number (start from highest + 1 to avoid conflicts)
+                highest_ns_num=$((highest_ns_num + 1))
+                local name="test-ns-$highest_ns_num"
                 created_namespaces+=("$name")
                 
                 # Build namespace YAML
@@ -860,6 +973,12 @@ main() {
             # Only show output for newly created namespaces, suppress "configured" messages
             if [ -n "$namespace_yaml" ]; then
                 local created_count=$(echo -e "$namespace_yaml" | oc apply -f - 2>&1 | grep -c "created" || echo "0")
+                # Ensure we have a clean integer (remove any newlines or extra whitespace)
+                created_count=$(echo "$created_count" | tr -d '\n\r ' | head -1)
+                # Default to 0 if empty or not a number
+                if ! [[ "$created_count" =~ ^[0-9]+$ ]]; then
+                    created_count=0
+                fi
                 if [ "$created_count" -gt 0 ]; then
                     log_success "Created $created_count new namespaces"
                 fi
@@ -2649,78 +2768,34 @@ case "${1:-deploy}" in
         ;;
     "cleanup-malfunctioning"|"malfunctioning")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 cleanup-malfunctioning [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 cleanup-malfunctioning [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_eips "false" "$node_name"
         ;;
     "list-malfunctioning")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 list-malfunctioning [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 list-malfunctioning [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_eips "true" "$node_name"
         ;;
     "cleanup-malfunctioning-cpic"|"malfunctioning-cpic")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 cleanup-malfunctioning-cpic [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 cleanup-malfunctioning-cpic [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_cpics "false" "$node_name"
         ;;
     "list-malfunctioning-cpic")
         shift  # Remove command from arguments
-        node_name=""
-        # Parse --node argument if provided
-        while [[ $# -gt 0 ]]; do
-            case $1 in
-                --node|-n)
-                    node_name="$2"
-                    shift 2
-                    ;;
-                *)
-                    log_error "Unknown option: $1"
-                    echo "Usage: $0 list-malfunctioning-cpic [--node NODE_NAME]"
-                    exit 1
-                    ;;
-            esac
-        done
+        node_name=$(parse_node_arg "$@" 2>/dev/null) || {
+            echo "Usage: $0 list-malfunctioning-cpic [--node NODE_NAME]"
+            exit 1
+        }
         cleanup_malfunctioning_cpics "true" "$node_name"
         ;;
     "--help"|"-h"|"help")
