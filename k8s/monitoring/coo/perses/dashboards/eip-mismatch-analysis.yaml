@@ -222,4 +222,3 @@ spec:
             height: 8
             content:
               $ref: "#/spec/panels/mismatch-breakdown"
-
