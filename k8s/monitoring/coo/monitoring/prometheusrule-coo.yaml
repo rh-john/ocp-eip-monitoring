@@ -436,3 +436,57 @@ spec:
       annotations:
         summary: "Multiple EIP-CPIC mismatches detected"
         description: "{{ $value }} mismatch(es) detected. This indicates widespread assignment issues. Investigate immediately."
+  
+  # Machine-EIP-CPIC Correlation Alerts
+  - name: machine-correlation
+    interval: 30s
+    rules:
+    - alert: MachineMissingForNode
+      expr: machine_missing_for_node > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: machine
+      annotations:
+        summary: "Machine object missing for EIP-enabled node"
+        description: "Node {{ $labels.node }} is EIP-enabled but has no corresponding machine object. This may indicate infrastructure issues."
+    
+    - alert: MachineEIPCPICMismatch
+      expr: machine_eip_cpic_mismatch_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: machine
+      annotations:
+        summary: "Machine IP configuration inconsistent with EIP/CPIC assignments"
+        description: "Machine {{ $labels.machine }} (node {{ $labels.node }}) has {{ $value }} IP assignment(s) that are inconsistent with machine state."
+    
+    - alert: MachineEIPCPICMismatchCritical
+      expr: machine_eip_cpic_mismatch_total > 3
+      for: 10m
+      labels:
+        severity: critical
+        component: machine
+      annotations:
+        summary: "Multiple machine IP configuration inconsistencies"
+        description: "Machine {{ $labels.machine }} (node {{ $labels.node }}) has {{ $value }} IP assignment inconsistencies. Machine may be in unhealthy state."
+    
+    - alert: MachineIPEIPMismatch
+      expr: machine_ip_eip_mismatch_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: machine
+      annotations:
+        summary: "EIP assigned to node with unhealthy machine"
+        description: "EIP {{ $labels.ip }} is assigned to node {{ $labels.node }}, but machine {{ $labels.machine }} is not in Running state."
+    
+    - alert: MachineIPCPICMismatch
+      expr: machine_ip_cpic_mismatch_total > 0
+      for: 5m
+      labels:
+        severity: warning
+        component: machine
+      annotations:
+        summary: "CPIC assigned to node with unhealthy machine"
+        description: "CPIC {{ $labels.ip }} is assigned to node {{ $labels.node }}, but machine {{ $labels.machine }} is not in Running state."
