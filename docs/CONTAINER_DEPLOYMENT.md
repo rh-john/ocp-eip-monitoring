@@ -193,10 +193,52 @@ oc logs -f deployment/eip-monitor -n eip-monitoring
 
 ### Step 4: Set up Prometheus Monitoring
 
-```bash
-# Apply ServiceMonitor (if using Prometheus Operator)
-oc apply -f servicemonitor.yaml
+The EIP monitoring solution supports two monitoring stack options:
 
+#### Option 1: Cluster Observability Operator (COO)
+
+```bash
+# Install COO operator (if not already installed)
+oc apply -f k8s/monitoring/coo/operator/coo-operator-subscription.yaml
+
+# Deploy COO monitoring infrastructure
+./scripts/deploy-monitoring.sh coo
+```
+
+This deploys:
+- MonitoringStack with Prometheus and AlertManager
+- ServiceMonitor for COO
+- PrometheusRule with alert definitions
+- NetworkPolicy for COO
+
+#### Option 2: User Workload Monitoring (UWM)
+
+```bash
+# Enable UWM (requires cluster-admin)
+# See README.md for UWM setup instructions
+
+# Deploy UWM monitoring infrastructure
+./scripts/deploy-monitoring.sh uwm
+```
+
+This deploys:
+- ServiceMonitor for UWM
+- PrometheusRule with alert definitions
+- NetworkPolicy for UWM
+
+#### Option 3: Both COO and UWM (Simultaneous)
+
+```bash
+# Deploy both stacks
+./scripts/deploy-monitoring.sh coo
+./scripts/deploy-monitoring.sh uwm
+```
+
+See [Deploying Both COO and UWM](../docs/DEPLOY_BOTH_MONITORING.md) for detailed instructions.
+
+#### Verify Metrics Endpoint
+
+```bash
 # Verify metrics endpoint
 oc port-forward svc/eip-monitor 8080:8080 -n eip-monitoring
 curl http://localhost:8080/metrics
@@ -307,6 +349,16 @@ The service account needs cluster-level permissions:
 
 ## Monitoring and Alerting
 
+### Monitoring Infrastructure
+
+The EIP monitoring solution supports both **Cluster Observability Operator (COO)** and **User Workload Monitoring (UWM)**:
+
+- **COO**: Dedicated Prometheus instance in your namespace with full control
+- **UWM**: Uses cluster-managed monitoring infrastructure
+- **Both**: Can run simultaneously for redundancy
+
+See the [README](../README.md#monitoring-infrastructure-setup) for setup instructions.
+
 ### Health Checks
 
 The container provides health endpoints:
@@ -319,7 +371,7 @@ curl http://pod-ip:8080/metrics # Prometheus metrics
 
 ### Built-in Alerts
 
-The `servicemonitor.yaml` includes Prometheus alerting rules:
+The monitoring infrastructure (COO or UWM) includes Prometheus alerting rules via PrometheusRule resources:
 
 #### Core EIP Alerts
 - **EIPNotAssigned** - EIPs configured but not assigned
