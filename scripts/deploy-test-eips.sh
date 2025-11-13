@@ -178,80 +178,56 @@ generate_test_ips() {
         excluded_ips_file_path="$excluded_ips_file"
     fi
     
-    # Extract network and prefix
-    local network=$(echo "$cidr" | cut -d/ -f1)
-    local prefix=$(echo "$cidr" | cut -d/ -f2)
+    # Use Python for reliable IP generation that handles all CIDR sizes correctly
+    python3 <<EOF
+import ipaddress
+import sys
+
+cidr = "$cidr"
+count = int("$count")
+excluded_file = "$excluded_ips_file_path" if "$excluded_ips_file_path" else None
+
+# Load excluded IPs
+excluded_ips = set()
+if excluded_file:
+    try:
+        with open(excluded_file, 'r') as f:
+            for line in f:
+                ip = line.strip()
+                if ip:
+                    excluded_ips.add(ip)
+    except:
+        pass
+
+# Generate IPs from CIDR
+try:
+    network = ipaddress.ip_network(cidr, strict=False)
+    generated = 0
     
-    # Calculate network base (this is a simplified approach for /23, /24 networks)
-    local base_ip=$(echo "$network" | cut -d. -f1-3)
-    local last_octet=$(echo "$network" | cut -d. -f4)
-    
-    # Calculate max IPs in CIDR for loop limit
-    local max_ips_in_cidr=$((2 ** (32 - prefix)))
-    
-    # Generate IP addresses (starting from .1 to check all IPs, excluding node IPs)
-    local start_ip=1
-    local generated=0
-    
-    # Helper function to check if IP should be excluded
-    is_ip_excluded() {
-        local ip="$1"
-        if [ -z "$excluded_ips_file_path" ] || [ ! -f "$excluded_ips_file_path" ]; then
-            return 1  # Not excluded if no exclusion file
-        fi
-        grep -Fxq "$ip" "$excluded_ips_file_path" 2>/dev/null
-    }
-    
-    # Loop through all possible IPs in the CIDR (up to max_ips_in_cidr)
-    for i in $(seq $start_ip $max_ips_in_cidr); do
-        local candidate_ip=""
+    # Iterate through all hosts in the network (excludes network and broadcast)
+    for ip in network.hosts():
+        ip_str = str(ip)
         
-        if [ "$prefix" -eq 24 ]; then
-            # /24 network - single subnet
-            if [ $i -lt 255 ]; then
-                candidate_ip="${base_ip}.$i"
-            fi
-        elif [ "$prefix" -eq 23 ]; then
-            # /23 network - spans two /24 subnets
-            if [ $i -lt 256 ]; then
-                candidate_ip="${base_ip}.$i"
-            else
-                local third_octet=$(echo "$base_ip" | cut -d. -f3)
-                local next_third_octet=$((third_octet + 1))
-                local final_octet=$((i - 256))
-                if [ $final_octet -lt 255 ]; then
-                    candidate_ip="$(echo "$base_ip" | cut -d. -f1-2).${next_third_octet}.$final_octet"
-                fi
-            fi
-        elif [ "$prefix" -eq 22 ]; then
-            # /22 network - spans four /24 subnets
-            local subnet_offset=$((i / 256))
-            local host_offset=$((i % 256))
-            local third_octet=$(echo "$base_ip" | cut -d. -f3)
-            local target_third_octet=$((third_octet + subnet_offset))
-            
-            if [ $subnet_offset -lt 4 ] && [ $host_offset -lt 255 ]; then
-                candidate_ip="$(echo "$base_ip" | cut -d. -f1-2).${target_third_octet}.$host_offset"
-            fi
-        else
-            # Fallback for other network sizes
-            candidate_ip="${base_ip}.$i"
-        fi
-        
-        # Skip if no candidate IP generated or if IP is excluded
-        if [ -z "$candidate_ip" ]; then
+        # Skip if excluded
+        if ip_str in excluded_ips:
             continue
-        fi
         
-        if is_ip_excluded "$candidate_ip"; then
-            continue
-        fi
+        # Output valid IP
+        print(ip_str)
+        generated += 1
         
-        echo "$candidate_ip"
-        generated=$((generated + 1))
+        if generated >= count:
+            break
+    
+    # If we need more IPs but exhausted the network, exit with error
+    if generated < count:
+        sys.stderr.write(f"Error: Only generated {generated} IPs, need {count}\n")
+        sys.exit(1)
         
-        [ $generated -eq $count ] && break
-    done
+except Exception as e:
+    sys.stderr.write(f"Error generating IPs: {e}\n")
+    sys.exit(1)
+EOF
 }
 
 # Get the first available EgressIP CIDR
@@ -1045,13 +1021,21 @@ main() {
         local existing_eip_json=$(oc get egressip -l test-suite=eip-monitoring -o json 2>/dev/null || echo '{"items":[]}')
         
         # Collect all currently assigned IPs to avoid reassigning them
-        local assigned_ips=($(echo "$existing_eip_json" | jq -r '.items[].spec.egressIPs[]?' 2>/dev/null))
+        # Initialize as empty array to avoid unbound variable errors
+        local assigned_ips=()
+        local existing_ips=$(echo "$existing_eip_json" | jq -r '.items[].spec.egressIPs[]?' 2>/dev/null)
+        if [ -n "$existing_ips" ]; then
+            while IFS= read -r ip; do
+                [ -n "$ip" ] && assigned_ips+=("$ip")
+            done <<< "$existing_ips"
+        fi
         
         # Process each namespace: patch existing EgressIPs or create new ones
         local ip_index=0
         local created_count=0
         local updated_count=0
         local skipped_count=0
+        local create_pids=()  # For parallel EIP creation
         
         for ((ns_index=0; ns_index<namespace_count; ns_index++)); do
             local namespace="${created_namespaces[$ns_index]}"
@@ -1087,12 +1071,14 @@ main() {
                         
                         # Check if this IP is already assigned to any EgressIP
                         local already_assigned=0
-                        for assigned_ip in "${assigned_ips[@]}"; do
-                            if [ "$test_ip" = "$assigned_ip" ]; then
-                                already_assigned=1
-                                break
-                            fi
-                        done
+                        if [ ${#assigned_ips[@]} -gt 0 ]; then
+                            for assigned_ip in "${assigned_ips[@]}"; do
+                                if [ "$test_ip" = "$assigned_ip" ]; then
+                                    already_assigned=1
+                                    break
+                                fi
+                            done
+                        fi
                         
                         # Also check if it's already in this EgressIP
                         for current_ip in "${current_ips_array[@]}"; do
@@ -1162,12 +1148,14 @@ main() {
                     
                     # Check if this IP is already assigned
                     local already_assigned=0
-                    for assigned_ip in "${assigned_ips[@]}"; do
-                        if [ "$test_ip" = "$assigned_ip" ]; then
-                            already_assigned=1
-                            break
-                        fi
-                    done
+                    if [ ${#assigned_ips[@]} -gt 0 ]; then
+                        for assigned_ip in "${assigned_ips[@]}"; do
+                            if [ "$test_ip" = "$assigned_ip" ]; then
+                                already_assigned=1
+                                break
+                            fi
+                        done
+                    fi
                     
                     if [ $already_assigned -eq 0 ]; then
                         new_ips+=("$test_ip")
@@ -1197,12 +1185,24 @@ main() {
                     yaml_content+="    matchLabels:\n"
                     yaml_content+="      kubernetes.io/metadata.name: $namespace\n"
                     
-                    if echo -e "$yaml_content" | oc apply -f - &>/dev/null; then
-                        created_count=$((created_count + 1))
-                    fi
+                    # Create EIP in background for parallel processing
+                    (
+                        if echo -e "$yaml_content" | oc apply -f - &>/dev/null; then
+                            echo "created"
+                        fi
+                    ) &
+                    create_pids+=($!)
+                    created_count=$((created_count + 1))
                 fi
             fi
         done
+        
+        # Wait for all EIP creations to complete
+        if [ ${#create_pids[@]} -gt 0 ]; then
+            for pid in "${create_pids[@]}"; do
+                wait "$pid" 2>/dev/null || true
+            done
+        fi
         
         # Report results
         if [ "$created_count" -gt 0 ]; then
@@ -1563,7 +1563,6 @@ JQ_EOF
                 oc delete cloudprivateipconfig "$cpic_name" --force --grace-period=0 &>/dev/null
                 
                 # Wait a moment for deletion to propagate
-                sleep 0.2
                 
                 # Verify deletion by checking if resource still exists
                 if ! oc get cloudprivateipconfig "$cpic_name" &>/dev/null; then
@@ -2751,7 +2750,7 @@ case "${1:-deploy}" in
         elif [[ "$ip_count" =~ ^[0-9]+$ ]]; then
             main "$ip_count" "4" "0"
         else
-            main
+            main "15" "4" "0"
         fi
         ;;
     "cleanup")
