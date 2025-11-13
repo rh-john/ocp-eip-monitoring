@@ -1187,9 +1187,7 @@ main() {
                     
                     # Create EIP in background for parallel processing
                     (
-                        if echo -e "$yaml_content" | oc apply -f - &>/dev/null; then
-                            echo "created"
-                        fi
+                        echo -e "$yaml_content" | oc apply -f - &>/dev/null || true
                     ) &
                     create_pids+=($!)
                     created_count=$((created_count + 1))
