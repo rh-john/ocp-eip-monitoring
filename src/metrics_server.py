@@ -11,6 +11,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import defaultdict
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -89,6 +90,16 @@ eip_cpic_mismatches_total = Gauge('eip_cpic_mismatches_total', 'Total count of a
 eip_cpic_mismatches_node_mismatch = Gauge('eip_cpic_mismatches_node_mismatch', 'IPs with different node assignments in EIP vs CPIC')
 eip_cpic_mismatches_missing_in_eip = Gauge('eip_cpic_mismatches_missing_in_eip', 'IPs in CPIC but missing from EIP status.items')
 
+# Machine IP and status metrics
+machine_ip_count = Gauge('machine_ip_count_total', 'Number of IP addresses per machine', ['machine', 'node', 'ip_type'])
+machine_node_mapping = Gauge('machine_node_mapping', 'Machine to node mapping (1 if exists, 0 if missing)', ['machine', 'node'])
+machine_eip_cpic_mismatch = Gauge('machine_eip_cpic_mismatch_total', 'IPs assigned to node but machine IPs inconsistent', ['machine', 'node'])
+machine_missing_for_node = Gauge('machine_missing_for_node', 'Machine object missing for EIP-enabled node', ['node'])
+machine_ip_eip_mismatch = Gauge('machine_ip_eip_mismatch_total', 'EIP assigned to node but machine IP configuration inconsistent', ['machine', 'node', 'ip'])
+machine_ip_cpic_mismatch = Gauge('machine_ip_cpic_mismatch_total', 'CPIC assigned to node but machine IP configuration inconsistent', ['machine', 'node', 'ip'])
+machine_ip_eip_status = Gauge('machine_ip_eip_status', 'EIP IP status: 0=valid egress, 1=conflicts with primary IP, 2=machine unhealthy', ['machine', 'node', 'ip', 'ip_type'])
+machine_ip_cpic_status = Gauge('machine_ip_cpic_status', 'CPIC IP status: 0=valid egress, 1=conflicts with primary IP, 2=machine unhealthy', ['machine', 'node', 'ip', 'ip_type'])
+
 # Monitoring system metrics
 monitoring_info = Info('eip_monitoring', 'EIP monitoring information')
 scrape_errors = Counter('eip_scrape_errors_total', 'Total number of scrape errors')
@@ -119,6 +130,7 @@ class EIPMetricsCollector:
             'eip_get': [],
             'cpic_get': [],
             'nodes_get': [],
+            'machines_get': [],
             'bulk_get': []  # New optimized operation
         }
     
@@ -205,77 +217,111 @@ class EIPMetricsCollector:
     def collect_all_data_optimized(self) -> tuple:
         """Optimized single-pass data collection - reduces API calls from 5+ to 2"""
         try:
-            # Get EIP nodes (cached if recent)
+            # Get EIP nodes with InternalIP addresses (cached if recent)
             cached_nodes = self.get_cached_data('eip_nodes')
-            if cached_nodes is not None:
+            cached_node_ips = self.get_cached_data('node_internal_ips')
+            if cached_nodes is not None and cached_node_ips is not None:
                 self.eip_nodes = cached_nodes
-                logger.debug("Using cached EIP nodes")
+                node_internal_ips = cached_node_ips
+                logger.debug("Using cached EIP nodes and InternalIPs")
             else:
-                # Try to get nodes, but continue even if none found (valid state)
-                self.get_eip_nodes()
+                # Try to get nodes with IPs, but continue even if none found (valid state)
+                self.eip_nodes, node_internal_ips = self.get_eip_nodes_with_ips()
                 self.set_cached_data('eip_nodes', self.eip_nodes)
+                self.set_cached_data('node_internal_ips', node_internal_ips)
             
             # Get all EIP and CPIC data in optimized calls
             # Continue even if no nodes found - EIP/CPIC resources might still exist
             eip_output = self.run_oc_command(['oc', 'get', 'eip', '-o', 'json'], operation='eip_get')
             if eip_output is None:
-                return None, None, None
+                return None, None, None, {}
                 
             cpic_output = self.run_oc_command(['oc', 'get', 'cloudprivateipconfig', '-o', 'json'], operation='cpic_get')
             if cpic_output is None:
-                return None, None, None
+                return None, None, None, {}
             
             # Parse JSON once
             eip_data = json.loads(eip_output)
             cpic_data = json.loads(cpic_output)
             
-            return eip_data, cpic_data, self.eip_nodes
+            return eip_data, cpic_data, self.eip_nodes, node_internal_ips
             
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON output: {e}")
-            return None, None, None
+            return None, None, None, {}
         except Exception as e:
             logger.error(f"Failed to collect optimized data: {e}")
-            return None, None, None
+            return None, None, None, {}
     
     # OpenShift EIP metrics collection
     
-    def get_eip_nodes(self) -> bool:
-        """Get list of EIP-enabled nodes with comprehensive validation"""
+    def get_eip_nodes_with_ips(self) -> tuple:
+        """
+        Get EIP-enabled nodes and their InternalIP addresses in one API call.
+        Returns: (list of node names, dict of node_name -> set of InternalIP addresses)
+        """
         output = self.run_oc_command([
             'oc', 'get', 'nodes', 
             '-l', 'k8s.ovn.org/egress-assignable', 
-            '-o', 'name'
+            '-o', 'json'
         ], operation='nodes_get')
+        
+        nodes = []
+        node_internal_ips = {}  # node_name -> set of InternalIP addresses
         
         if output is None:
             logger.error("Failed to get EIP-enabled nodes - command failed")
-            self.eip_nodes = []
-            # Update node availability metrics even when command fails
             node_available.set(0)
-            return False
+            return [], {}
         
         if not output.strip():
             logger.warning("No EIP-enabled nodes found in cluster")
-            self.eip_nodes = []
-            # Update node availability metrics
             node_available.set(0)
-            return False
-            
-        self.eip_nodes = [node.replace('node/', '') for node in output.split('\n') if node.strip()]
+            return [], {}
         
-        if len(self.eip_nodes) == 0:
-            logger.warning("No valid EIP-enabled nodes found after parsing")
-            # Update node availability metrics
+        try:
+            node_data = json.loads(output)
+            for node in node_data.get('items', []):
+                node_name = node.get('metadata', {}).get('name', '')
+                if not node_name:
+                    continue
+                
+                nodes.append(node_name)
+                # Extract ALL InternalIP addresses (nodes can have multiple interfaces)
+                internal_ips = set()
+                addresses = node.get('status', {}).get('addresses', [])
+                for addr in addresses:
+                    if addr.get('type') == 'InternalIP':
+                        ip = addr.get('address', '')
+                        if ip:
+                            internal_ips.add(ip)
+                node_internal_ips[node_name] = internal_ips
+                
+                if internal_ips:
+                    logger.debug(f"Node {node_name} has InternalIPs: {', '.join(internal_ips)}")
+                else:
+                    logger.warning(f"Node {node_name} has no InternalIP addresses")
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse nodes JSON: {e}")
             node_available.set(0)
-            return False
-            
-        logger.info(f"Found {len(self.eip_nodes)} EIP-enabled nodes: {self.eip_nodes}")
+            return [], {}
+        
+        if len(nodes) == 0:
+            logger.warning("No valid EIP-enabled nodes found after parsing")
+            node_available.set(0)
+            return [], {}
+        
+        logger.info(f"Found {len(nodes)} EIP-enabled nodes: {nodes}")
         
         # Update node availability metrics
-        node_available.set(len(self.eip_nodes))
+        node_available.set(len(nodes))
         
-        return True
+        return nodes, node_internal_ips
+    
+    def get_eip_nodes(self) -> bool:
+        """Get list of EIP-enabled nodes with comprehensive validation (backward compatibility)"""
+        self.eip_nodes, _ = self.get_eip_nodes_with_ips()
+        return len(self.eip_nodes) > 0
     
     def collect_global_metrics(self) -> bool:
         """Collect global EIP and CPIC metrics"""
@@ -663,6 +709,258 @@ class EIPMetricsCollector:
         
         node_with_errors.set(len(nodes_with_errors))
     
+    def get_machines_for_nodes(self, node_names: list) -> dict:
+        """
+        Get machine objects for given nodes.
+        Returns dict: {node_name: {'machine': machine_object, 'machine_name': machine_name}}
+        """
+        machines_by_node = {}
+        
+        # Get all machines in openshift-machine-api namespace
+        output = self.run_oc_command([
+            'oc', 'get', 'machines', 
+            '-n', 'openshift-machine-api', 
+            '-o', 'json'
+        ], operation='machines_get')
+        
+        if not output:
+            logger.warning("Failed to get machine objects")
+            return machines_by_node
+        
+        try:
+            machines_data = json.loads(output)
+            machines = machines_data.get('items', [])
+            
+            # Build mapping: node_name -> machine
+            for machine in machines:
+                node_ref = machine.get('status', {}).get('nodeRef', {})
+                node_name = node_ref.get('name', '')
+                machine_name = machine.get('metadata', {}).get('name', '')
+                
+                if node_name:
+                    machines_by_node[node_name] = {
+                        'machine': machine,
+                        'machine_name': machine_name
+                    }
+                else:
+                    # Try to match by machine name pattern (fallback)
+                    # Machine names often contain node name
+                    for node_name in node_names:
+                        if node_name in machine_name or machine_name in node_name:
+                            machines_by_node[node_name] = {
+                                'machine': machine,
+                                'machine_name': machine_name
+                            }
+                            break
+            
+            logger.info(f"Found {len(machines_by_node)} machines for {len(node_names)} nodes")
+            return machines_by_node
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse machines JSON: {e}")
+            return machines_by_node
+    
+    def extract_machine_ips(self, machine: dict) -> dict:
+        """
+        Extract IP addresses from machine object.
+        Returns dict: {ip_type: [ip_addresses]}
+        """
+        ips_by_type = defaultdict(list)
+        
+        # Get IPs from status.addresses
+        addresses = machine.get('status', {}).get('addresses', [])
+        for addr in addresses:
+            addr_type = addr.get('type', '')
+            addr_value = addr.get('address', '')
+            if addr_value:
+                ips_by_type[addr_type].append(addr_value)
+        
+        # Get IPs from provider status (cloud-specific)
+        provider_status = machine.get('status', {}).get('providerStatus', {})
+        if provider_status:
+            # Azure-specific
+            if 'internalIP' in provider_status:
+                ips_by_type['InternalIP'].append(provider_status['internalIP'])
+            # AWS-specific
+            if 'privateIP' in provider_status:
+                ips_by_type['PrivateIP'].append(provider_status['privateIP'])
+        
+        return dict(ips_by_type)
+    
+    def correlate_machine_eip_cpic(self, eip_data: dict, cpic_data: dict, 
+                                   machines_by_node: dict, eip_nodes: list,
+                                   node_internal_ips: dict):
+        """
+        Correlate machine IP information with EIP and CPIC assignments.
+        Uses node InternalIP addresses (from 'oc get node -o wide') to distinguish
+        primary node IPs from egress IPs.
+        
+        Args:
+            eip_data: EIP resources data
+            cpic_data: CPIC resources data
+            machines_by_node: Dict mapping node names to machine objects
+            eip_nodes: List of EIP-enabled node names
+            node_internal_ips: Dict mapping node names to sets of InternalIP addresses
+        """
+        # Build EIP IP -> node mapping
+        eip_ip_to_node = {}
+        for item in eip_data.get('items', []):
+            status_items = item.get('status', {}).get('items', [])
+            for status_item in status_items:
+                ip = status_item.get('egressIP') or status_item.get('ip', '')
+                node = status_item.get('node', '')
+                if ip and node:
+                    eip_ip_to_node[ip] = node
+        
+        # Build CPIC IP -> node mapping
+        cpic_ip_to_node = {}
+        for item in cpic_data.get('items', []):
+            ip = item.get('metadata', {}).get('name', '')
+            if ip:
+                node = item.get('status', {}).get('node') or item.get('spec', {}).get('node', '')
+                if node:
+                    cpic_ip_to_node[ip] = node
+        
+        # Analyze each node
+        for node_name in eip_nodes:
+            # Get node's primary InternalIP addresses (same as 'oc get node -o wide' shows)
+            node_primary_ips = node_internal_ips.get(node_name, set())
+            
+            machine_info = machines_by_node.get(node_name)
+            
+            if not machine_info:
+                # Machine missing for node
+                machine_missing_for_node.labels(node=node_name).set(1)
+                logger.warning(f"Machine object missing for node {node_name}")
+                continue
+            
+            machine = machine_info['machine']
+            machine_name = machine_info['machine_name']
+            
+            # Machine exists
+            machine_node_mapping.labels(machine=machine_name, node=node_name).set(1)
+            machine_missing_for_node.labels(node=node_name).set(0)
+            
+            # Extract machine IPs
+            machine_ips = self.extract_machine_ips(machine)
+            all_machine_ips = set()
+            for ip_list in machine_ips.values():
+                all_machine_ips.update(ip_list)
+            
+            # Set machine IP count metrics
+            for ip_type, ip_list in machine_ips.items():
+                machine_ip_count.labels(
+                    machine=machine_name, 
+                    node=node_name, 
+                    ip_type=ip_type
+                ).set(len(ip_list))
+            
+            # Check for EIP assignments to this node
+            eip_ips_for_node = [ip for ip, node in eip_ip_to_node.items() if node == node_name]
+            cpic_ips_for_node = [ip for ip, node in cpic_ip_to_node.items() if node == node_name]
+            
+            # Count mismatches
+            eip_mismatches = 0
+            cpic_mismatches = 0
+            
+            machine_phase = machine.get('status', {}).get('phase', '')
+            machine_healthy = machine_phase in ['Running', '']
+            
+            # For EIP IPs assigned to this node, check for conflicts with primary IPs
+            for eip_ip in eip_ips_for_node:
+                ip_type = 'egress'  # Default assumption
+                status_value = 0  # 0=valid, 1=conflicts with primary IP, 2=machine unhealthy
+                
+                # Check if EIP IP conflicts with node's primary InternalIP
+                if node_primary_ips and eip_ip in node_primary_ips:
+                    # This is a misconfiguration - egress IP matches primary node IP
+                    ip_type = 'primary_conflict'
+                    status_value = 1
+                    eip_mismatches += 1
+                    machine_ip_eip_mismatch.labels(
+                        machine=machine_name,
+                        node=node_name,
+                        ip=eip_ip
+                    ).set(1)
+                    logger.warning(f"EIP {eip_ip} conflicts with node {node_name} primary IP(s): {node_primary_ips}")
+                elif not machine_healthy:
+                    # Machine unhealthy
+                    status_value = 2
+                    eip_mismatches += 1
+                    machine_ip_eip_mismatch.labels(
+                        machine=machine_name,
+                        node=node_name,
+                        ip=eip_ip
+                    ).set(1)
+                else:
+                    # EIP is valid (not primary IP, machine healthy)
+                    machine_ip_eip_mismatch.labels(
+                        machine=machine_name,
+                        node=node_name,
+                        ip=eip_ip
+                    ).set(0)
+                
+                # Set status metric with ip_type label
+                machine_ip_eip_status.labels(
+                    machine=machine_name,
+                    node=node_name,
+                    ip=eip_ip,
+                    ip_type=ip_type
+                ).set(status_value)
+            
+            # For CPIC IPs assigned to this node, check for conflicts with primary IPs
+            for cpic_ip in cpic_ips_for_node:
+                ip_type = 'egress'  # Default assumption
+                status_value = 0  # 0=valid, 1=conflicts with primary IP, 2=machine unhealthy
+                
+                # Check if CPIC IP conflicts with node's primary InternalIP
+                if node_primary_ips and cpic_ip in node_primary_ips:
+                    # This is a misconfiguration - egress IP matches primary node IP
+                    ip_type = 'primary_conflict'
+                    status_value = 1
+                    cpic_mismatches += 1
+                    machine_ip_cpic_mismatch.labels(
+                        machine=machine_name,
+                        node=node_name,
+                        ip=cpic_ip
+                    ).set(1)
+                    logger.warning(f"CPIC {cpic_ip} conflicts with node {node_name} primary IP(s): {node_primary_ips}")
+                elif not machine_healthy:
+                    # Machine unhealthy
+                    status_value = 2
+                    cpic_mismatches += 1
+                    machine_ip_cpic_mismatch.labels(
+                        machine=machine_name,
+                        node=node_name,
+                        ip=cpic_ip
+                    ).set(1)
+                else:
+                    # CPIC is valid (not primary IP, machine healthy)
+                    machine_ip_cpic_mismatch.labels(
+                        machine=machine_name,
+                        node=node_name,
+                        ip=cpic_ip
+                    ).set(0)
+                
+                # Set status metric with ip_type label
+                machine_ip_cpic_status.labels(
+                    machine=machine_name,
+                    node=node_name,
+                    ip=cpic_ip,
+                    ip_type=ip_type
+                ).set(status_value)
+            
+            # Set total mismatch count for this machine/node
+            total_mismatches = eip_mismatches + cpic_mismatches
+            machine_eip_cpic_mismatch.labels(
+                machine=machine_name,
+                node=node_name
+            ).set(total_mismatches)
+            
+            logger.debug(f"Node {node_name} (machine {machine_name}): "
+                        f"{len(eip_ips_for_node)} EIPs, {len(cpic_ips_for_node)} CPICs, "
+                        f"{total_mismatches} mismatches, primary IPs: {node_primary_ips}")
+    
     def detect_mismatches(self, eip_data: dict, cpic_data: dict, available_nodes: int) -> dict:
         """
         Detect mismatches between EIP and CPIC assignments.
@@ -842,7 +1140,7 @@ class EIPMetricsCollector:
         
         return primary_by_node, secondary_by_node
     
-    def process_all_metrics_optimized(self, eip_data: dict, cpic_data: dict, eip_nodes: list):
+    def process_all_metrics_optimized(self, eip_data: dict, cpic_data: dict, eip_nodes: list, node_internal_ips: dict):
         """Single-pass optimized processing of all metrics"""
         try:
             # Global EIP metrics - count IP addresses, not resources
@@ -1042,6 +1340,10 @@ class EIPMetricsCollector:
             # Update node availability metrics
             node_available.set(len(eip_nodes))
             
+            # Get machines for nodes and correlate with EIP/CPIC
+            machines_by_node = self.get_machines_for_nodes(eip_nodes)
+            self.correlate_machine_eip_cpic(eip_data, cpic_data, machines_by_node, eip_nodes, node_internal_ips)
+            
             logger.info(f"Optimized processing - EIPs: {configured_count}C/{assigned_count}A/{unassigned_count}U, "
                        f"CPIC: {success_count}S/{pending_count}P/{error_count}E")
             
@@ -1061,7 +1363,7 @@ class EIPMetricsCollector:
             self.cleanup_old_data()
             
             # Get all data in optimized single pass (2 API calls instead of 5+)
-            eip_data, cpic_data, eip_nodes = self.collect_all_data_optimized()
+            eip_data, cpic_data, eip_nodes, node_internal_ips = self.collect_all_data_optimized()
             if eip_data is None or cpic_data is None:
                 logger.error("Failed to collect optimized data - API calls failed")
                 scrape_errors.inc()
@@ -1072,8 +1374,12 @@ class EIPMetricsCollector:
                 eip_nodes = []
                 self.eip_nodes = []
             
+            # node_internal_ips can be empty dict (valid state)
+            if node_internal_ips is None:
+                node_internal_ips = {}
+            
             # Process all metrics in single pass (works with empty node list)
-            self.process_all_metrics_optimized(eip_data, cpic_data, eip_nodes)
+            self.process_all_metrics_optimized(eip_data, cpic_data, eip_nodes, node_internal_ips)
             
             # Calculate API success rates
             self.calculate_api_success_rates()
