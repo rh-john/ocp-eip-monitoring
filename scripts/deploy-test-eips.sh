@@ -60,13 +60,85 @@ get_eip_ranges() {
     done
 }
 
+# Get all node InternalIP addresses to exclude from EIP generation
+get_node_internal_ips() {
+    oc get nodes -o json 2>/dev/null | \
+    jq -r '.items[] | .status.addresses[]? | select(.type == "InternalIP") | .address' 2>/dev/null | \
+    grep -v '^$' || echo ""
+}
+
+# Check if an IP address is within a CIDR range
+ip_in_cidr() {
+    local ip="$1"
+    local cidr="$2"
+    
+    if [ -z "$ip" ] || [ -z "$cidr" ]; then
+        return 1
+    fi
+    
+    # Use Python for reliable CIDR checking (available in most environments)
+    python3 -c "
+import ipaddress
+import sys
+try:
+    ip = ipaddress.ip_address('$ip')
+    network = ipaddress.ip_network('$cidr', strict=False)
+    sys.exit(0 if ip in network else 1)
+except Exception as e:
+    sys.exit(1)
+" 2>/dev/null && return 0 || return 1
+}
+
+# Get LoadBalancer service IPs that are in the same CIDR as the EIP range
+get_loadbalancer_ips_in_cidr() {
+    local cidr="$1"
+    
+    if [ -z "$cidr" ]; then
+        return 1
+    fi
+    
+    # Get all LoadBalancer services and extract their external IPs
+    local lb_ips=$(oc get svc --all-namespaces -o json 2>/dev/null | \
+        jq -r '.items[] | 
+            select(.spec.type == "LoadBalancer") | 
+            .status.loadBalancer.ingress[]? | 
+            .ip // empty' 2>/dev/null | \
+        grep -v '^$' || echo "")
+    
+    if [ -z "$lb_ips" ]; then
+        return 0
+    fi
+    
+    # Filter to only IPs in the same CIDR
+    local filtered_ips=""
+    while IFS= read -r ip; do
+        [ -z "$ip" ] && continue
+        if ip_in_cidr "$ip" "$cidr"; then
+            if [ -z "$filtered_ips" ]; then
+                filtered_ips="$ip"
+            else
+                filtered_ips="$filtered_ips"$'\n'"$ip"
+            fi
+        fi
+    done <<< "$lb_ips"
+    
+    echo "$filtered_ips"
+}
+
 generate_test_ips() {
     local cidr="$1"
     local count="$2"
+    local excluded_ips_file="$3"  # Optional: file containing IPs to exclude (one per line)
     
     if [ -z "$cidr" ] || [ -z "$count" ]; then
-        echo "Usage: generate_test_ips <cidr> <count>" >&2
+        echo "Usage: generate_test_ips <cidr> <count> [excluded_ips_file]" >&2
         return 1
+    fi
+    
+    # Build exclusion set from file if provided
+    local excluded_ips_file_path=""
+    if [ -n "$excluded_ips_file" ] && [ -f "$excluded_ips_file" ]; then
+        excluded_ips_file_path="$excluded_ips_file"
     fi
     
     # Extract network and prefix
@@ -77,29 +149,37 @@ generate_test_ips() {
     local base_ip=$(echo "$network" | cut -d. -f1-3)
     local last_octet=$(echo "$network" | cut -d. -f4)
     
-    # Generate IP addresses (starting from .20 to avoid common reserved IPs)
-    local start_ip=20
+    # Generate IP addresses (starting from .1 to check all IPs, excluding node IPs)
+    local start_ip=1
     local generated=0
     
-    for i in $(seq $start_ip $((start_ip + count + 50))); do
+    # Helper function to check if IP should be excluded
+    is_ip_excluded() {
+        local ip="$1"
+        if [ -z "$excluded_ips_file_path" ] || [ ! -f "$excluded_ips_file_path" ]; then
+            return 1  # Not excluded if no exclusion file
+        fi
+        grep -Fxq "$ip" "$excluded_ips_file_path" 2>/dev/null
+    }
+    
+    for i in $(seq $start_ip $((start_ip + count + 200))); do
+        local candidate_ip=""
+        
         if [ "$prefix" -eq 24 ]; then
             # /24 network - single subnet
             if [ $i -lt 255 ]; then
-                echo "${base_ip}.$i"
-                generated=$((generated + 1))
+                candidate_ip="${base_ip}.$i"
             fi
         elif [ "$prefix" -eq 23 ]; then
             # /23 network - spans two /24 subnets
             if [ $i -lt 256 ]; then
-                echo "${base_ip}.$i"
-                generated=$((generated + 1))
+                candidate_ip="${base_ip}.$i"
             else
                 local third_octet=$(echo "$base_ip" | cut -d. -f3)
                 local next_third_octet=$((third_octet + 1))
                 local final_octet=$((i - 256))
                 if [ $final_octet -lt 255 ]; then
-                    echo "$(echo "$base_ip" | cut -d. -f1-2).${next_third_octet}.$final_octet"
-                    generated=$((generated + 1))
+                    candidate_ip="$(echo "$base_ip" | cut -d. -f1-2).${next_third_octet}.$final_octet"
                 fi
             fi
         elif [ "$prefix" -eq 22 ]; then
@@ -110,14 +190,24 @@ generate_test_ips() {
             local target_third_octet=$((third_octet + subnet_offset))
             
             if [ $subnet_offset -lt 4 ] && [ $host_offset -lt 255 ]; then
-                echo "$(echo "$base_ip" | cut -d. -f1-2).${target_third_octet}.$host_offset"
-                generated=$((generated + 1))
+                candidate_ip="$(echo "$base_ip" | cut -d. -f1-2).${target_third_octet}.$host_offset"
             fi
         else
             # Fallback for other network sizes
-            echo "${base_ip}.$i"
-            generated=$((generated + 1))
+            candidate_ip="${base_ip}.$i"
         fi
+        
+        # Skip if no candidate IP generated or if IP is excluded
+        if [ -z "$candidate_ip" ]; then
+            continue
+        fi
+        
+        if is_ip_excluded "$candidate_ip"; then
+            continue
+        fi
+        
+        echo "$candidate_ip"
+        generated=$((generated + 1))
         
         [ $generated -eq $count ] && break
     done
@@ -233,14 +323,36 @@ main() {
     # Generate test IP addresses
     log_info "Generating $ip_count test IP addresses..."
     
+    # Get node InternalIP addresses to exclude
+    log_info "Retrieving node IPs to exclude from EIP generation..."
+    local node_ips=$(get_node_internal_ips)
+    local excluded_ips_file=$(mktemp)
+    if [ -n "$node_ips" ]; then
+        echo "$node_ips" > "$excluded_ips_file"
+        local node_ip_count=$(echo "$node_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $node_ip_count node InternalIP address(es) from EIP generation"
+    else
+        log_warn "Could not retrieve node IPs - proceeding without exclusions"
+        touch "$excluded_ips_file"
+    fi
+    
+    # Get LoadBalancer service IPs in the same CIDR to exclude
+    log_info "Retrieving LoadBalancer service IPs in CIDR $CIDR to exclude..."
+    local lb_ips=$(get_loadbalancer_ips_in_cidr "$CIDR")
+    if [ -n "$lb_ips" ]; then
+        echo "$lb_ips" >> "$excluded_ips_file"
+        local lb_ip_count=$(echo "$lb_ips" | grep -v '^$' | wc -l | tr -d ' ')
+        log_info "Excluding $lb_ip_count LoadBalancer IP address(es) in the same CIDR from EIP generation"
+    fi
+    
     # Use portable method instead of readarray (not available in all bash versions)
     TEST_IPS=()
     local temp_ips_file=$(mktemp)
-    generate_test_ips "$CIDR" "$ip_count" > "$temp_ips_file"
+    generate_test_ips "$CIDR" "$ip_count" "$excluded_ips_file" > "$temp_ips_file"
     while IFS= read -r line; do
         TEST_IPS+=("$line")
     done < "$temp_ips_file"
-    rm -f "$temp_ips_file"
+    rm -f "$temp_ips_file" "$excluded_ips_file"
     
     if [ ${#TEST_IPS[@]} -lt $ip_count ]; then
         log_error "Could not generate enough IP addresses from CIDR $CIDR"
