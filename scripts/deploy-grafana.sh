@@ -21,6 +21,7 @@ REMOVE_OPERATOR="${REMOVE_OPERATOR:-false}"
 DELETE_CRDS="${DELETE_CRDS:-false}"  # Delete Grafana CRDs during cleanup (requires cluster-admin)
 SHOW_STATUS="${SHOW_STATUS:-false}"  # Show Grafana status
 TEST_GRAFANA="${TEST_GRAFANA:-false}"  # Test Grafana deployment
+VERBOSE="${VERBOSE:-false}"  # Verbose output flag
 
 # Show usage
 show_usage() {
@@ -45,6 +46,7 @@ Status and Testing:
   --test                      Test Grafana deployment
 
 Other:
+  -v, --verbose              Show verbose output (raw oc command output)
   -h, --help                  Show this help message
 
 Environment Variables:
@@ -53,6 +55,7 @@ Environment Variables:
   REMOVE_GRAFANA              Set to 'true' to remove Grafana resources
   REMOVE_OPERATOR             Set to 'true' to also remove Grafana Operator
   DELETE_CRDS                 Set to 'true' to delete Grafana CRDs (requires cluster-admin)
+  VERBOSE                     Set to true to show verbose output (default: false)
 
 Examples:
   # Deploy Grafana for COO
@@ -870,6 +873,10 @@ parse_args() {
                 DELETE_CRDS="true"
                 shift
                 ;;
+            -v|--verbose)
+                VERBOSE="true"
+                shift
+                ;;
             -h|--help)
                 show_usage
                 exit 0
@@ -1375,7 +1382,10 @@ main() {
     
     deploy_grafana
     
-    log_success "Grafana deployment completed!"
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "Grafana deployment completed successfully!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Grafana resources status:"
     oc get grafana,grafanadatasource,grafanadashboard -n "$NAMESPACE" 2>/dev/null || log_info "  (Resources may still be initializing)"
 }

@@ -168,7 +168,17 @@ test_coo() {
                     all_conditions=$(oc get monitoringstack "$stack_name" -n "$NAMESPACE" -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason} {.message}{"\n"}{end}' 2>/dev/null || echo "")
                     if [[ -n "$all_conditions" ]]; then
                         log_info "MonitoringStack status conditions:"
-                        echo "$all_conditions" | sed 's/^/  /'
+                        echo "$all_conditions" | while IFS= read -r line; do
+                            if echo "$line" | grep -q "=True "; then
+                                # Replace =True with colored True and add checkmark
+                                echo "$line" | sed "s/=True/${GREEN}=True${NC}/" | sed "s/^/  ${GREEN}✓${NC} /"
+                            elif echo "$line" | grep -q "=False "; then
+                                # Replace =False with colored False and add X
+                                echo "$line" | sed "s/=False/${RED}=False${NC}/" | sed "s/^/  ${RED}✗${NC} /"
+                            else
+                                echo "  $line"
+                            fi
+                        done
                     else
                         log_warn "MonitoringStack exists but has no status conditions yet (may still be initializing)"
                     fi

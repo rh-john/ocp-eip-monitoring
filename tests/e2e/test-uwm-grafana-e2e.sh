@@ -171,8 +171,8 @@ deploy_eip_monitor_if_needed() {
         log_success "eip-monitor application deployed/updated"
         # deploy-eip.sh already waits for rollout, but verify pods are ready
         log_info "Verifying eip-monitor pods are ready..."
-        if wait_for_pods "$NAMESPACE" "app=eip-monitor-uwm" 1 60 || \
-           wait_for_pods "$NAMESPACE" "app=eip-monitor" 1 60; then
+        # Always use app=eip-monitor (deployment uses this label regardless of monitoring type)
+        if wait_for_pods "$NAMESPACE" "app=eip-monitor" 1 60; then
             log_success "eip-monitor pods are ready"
         else
             log_warn "eip-monitor pods may still be initializing"

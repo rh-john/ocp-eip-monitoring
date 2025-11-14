@@ -179,25 +179,9 @@ deploy_eip_monitor_if_needed() {
         log_success "eip-monitor application deployed/updated"
         # deploy-eip.sh already waits for rollout, but verify pods are ready
         log_info "Verifying eip-monitor pods are ready..."
-        # Check for pods with the correct label based on MONITORING_TYPE
-        local pod_selector="app=eip-monitor"
-        if [[ "$MONITORING_TYPE" == "coo" ]]; then
-            pod_selector="app=eip-monitor-coo"
-        elif [[ "$MONITORING_TYPE" == "uwm" ]]; then
-            pod_selector="app=eip-monitor-uwm"
-        fi
-        
-        # Try the specific label first, then fallback to generic label only
-        if wait_for_pods "$NAMESPACE" "$pod_selector" 1 60; then
+        # Always use app=eip-monitor (deployment uses this label regardless of monitoring type)
+        if wait_for_pods "$NAMESPACE" "app=eip-monitor" 1 60; then
             log_success "eip-monitor pods are ready"
-        elif [[ "$pod_selector" != "app=eip-monitor" ]]; then
-            # Fallback to generic label if specific label failed
-            log_info "Falling back to generic 'app=eip-monitor' label..."
-            if wait_for_pods "$NAMESPACE" "app=eip-monitor" 1 60; then
-                log_success "eip-monitor pods are ready (using generic label)"
-            else
-                log_warn "eip-monitor pods may still be initializing"
-            fi
         else
             log_warn "eip-monitor pods may still be initializing"
         fi

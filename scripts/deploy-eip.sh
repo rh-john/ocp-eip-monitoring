@@ -27,11 +27,18 @@ QUAY_IMAGE=""  # Full Quay image path (e.g., quay.io/org/eip-monitor:tag)
 WITH_MONITORING="${WITH_MONITORING:-false}"  # Deploy monitoring with 'all' command
 WITH_GRAFANA="${WITH_GRAFANA:-false}"  # Deploy Grafana with 'all' command
 GRAFANA_TYPE=""  # Grafana type (coo or uwm) - set when --grafana is used
+VERBOSE="${VERBOSE:-false}"  # Verbose output flag
+SHOW_STATUS="${SHOW_STATUS:-false}"  # Show deployment status flag
+TEST_DEPLOYMENT="${TEST_DEPLOYMENT:-false}"  # Test deployment flag
+CLEAN_DEPLOYMENT="${CLEAN_DEPLOYMENT:-false}"  # Clean deployment flag
 
 # Show usage
 show_usage() {
     cat << EOF
 EIP Monitor Container Build and Deploy Script
+
+This script builds and deploys the eip-monitor application - the monitoring
+service that watches and collects metrics from EgressIP and CPIC resources.
 
 Usage: $0 <command> [options]
 
@@ -40,52 +47,60 @@ Commands:
   push        Push image to registry
   deploy      Deploy eip-monitor application to OpenShift
   restart     Restart deployment to pull new image (useful after pushing same tag)
-  status      Show deployment status (pods, image version, health)
-  all         Build, push, and deploy (use --skip-build to use existing image, --monitoring TYPE to include monitoring, --grafana TYPE to include Grafana)
-  clean       Clean up deployment
-  test        Test the deployment
-  logs        Show container logs
+  all         Build, push, and deploy (use --skip-build to use existing image)
 
 Options:
   -r, --registry REGISTRY   Container registry URL
   -t, --tag TAG             Image tag (default: latest)
   -n, --namespace NS        Kubernetes namespace (default: eip-monitoring)
-  --monitoring TYPE       Deploy monitoring infrastructure with 'all' command (TYPE: coo, uwm, or all - required)
-  --grafana TYPE          Deploy Grafana dashboards with 'all' command (TYPE: coo or uwm - required)
+  --monitoring TYPE       Deploy monitoring infrastructure with 'all' command (TYPE: coo, uwm, or all)
+  --grafana TYPE          Deploy Grafana dashboards with 'all' command (TYPE: coo or uwm)
   --log-level LEVEL         Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL (default: INFO)
   --skip-build              Skip building the image (use with -r/--registry)
   --quay-image IMAGE        Full Quay image path (e.g., quay.io/org/eip-monitor:tag) - automatically skips build
+  --status                  Show deployment status (pods, image version, health)
+  --test                    Test the deployment
+  --clean                   Clean up deployment
   --all                     Clean up everything (Grafana, eip-monitor, and monitoring) - only for 'clean' command
+  -v, --verbose            Show verbose output (raw oc command output)
   -h, --help               Show this help message
 
 Environment Variables:
-  None required
+  VERBOSE                   Set to true to show verbose output (default: false)
+  NAMESPACE                 Kubernetes namespace (default: eip-monitoring)
 
 Examples:
-  $0 build
-  $0 build -r quay.io/myorg -t v1.0.0
-  $0 build -r quay.io/myorg/eip-monitor -t v1.0.0  # Registry can include image name
-  $0 deploy
-  $0 deploy --log-level DEBUG
+  # Build and deploy
   $0 all -r quay.io/myorg
-  $0 all -r quay.io/myorg/eip-monitor -t v1.0.0  # Registry can include image name
-  $0 all -r quay.io/myorg --log-level DEBUG
-  $0 all -r quay.io/myorg/eip-monitor -t v1.2.3 --monitoring coo
-  $0 all --skip-build -r quay.io/myorg -t v1.2.3 --monitoring uwm
-  $0 all --quay-image quay.io/myorg/eip-monitor:v1.2.3 --monitoring all
+  
+  # Deploy with existing image
+  $0 deploy --quay-image quay.io/myorg/eip-monitor:v1.0.0
+  
+  # Deploy with monitoring infrastructure
+  $0 all -r quay.io/myorg --monitoring coo
+  
+  # Deploy with monitoring and Grafana
   $0 all -r quay.io/myorg --monitoring coo --grafana coo
-  $0 all -r quay.io/myorg --monitoring uwm --grafana uwm
-  $0 status                  Show deployment status
-  $0 restart                 Restart deployment to pull new image with same tag
-  $0 test
-  $0 clean
+  
+  # Status and testing
+  $0 --status               Show deployment status
+  $0 --test                 Test deployment
+  $0 --clean                Clean up deployment
+  
+  # Backward compatibility (commands still work)
+  $0 status                 Show deployment status
+  $0 test                   Test deployment
+  $0 clean                  Clean up deployment
   $0 clean --all             Clean up everything (Grafana, eip-monitor, monitoring)
+  
+  # Note: To create test EgressIP resources, use:
+  ./scripts/deploy-test-eips.sh [ip_count] [namespace_count]
 
 Note: To deploy monitoring infrastructure separately, use:
   ./scripts/deploy-monitoring.sh --monitoring-type coo
   ./scripts/deploy-monitoring.sh --monitoring-type uwm
 
-Note: To deploy Grafana dashboards, use:
+Note: To deploy Grafana dashboards separately, use:
   ./scripts/deploy-grafana.sh --monitoring-type coo
   ./scripts/deploy-grafana.sh --monitoring-type uwm
 
@@ -813,14 +828,13 @@ deploy() {
     local old_colors=("$RED" "$GREEN" "$YELLOW" "$BLUE" "$NC")
     RED="" GREEN="" YELLOW="" BLUE="" NC=""
     
-    # Check OpenShift connectivity
-    if ! oc whoami &>/dev/null; then
-        log_error "Not connected to OpenShift cluster. Please login with 'oc login'"
+    # Check OpenShift connectivity using common function
+    if ! verify_openshift_auth; then
         exit 1
     fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
-    
+    log_info "Namespace: $NAMESPACE"
     log_info "Deploying EIP Monitor application to OpenShift..."
     
     check_env_vars
@@ -857,75 +871,44 @@ deploy() {
     log_info "Applying Kubernetes manifests from k8s/deployment/..."
     oc apply -f "$manifest_file"
     
-    # Add monitoring method labels to resources
-    # Only add labels if monitoring type is explicitly set or detected
-    # Use app=eip-monitor-coo or app=eip-monitor-uwm format (matches ServiceMonitor selectors)
-    local monitoring_type_to_use=""
-    if [[ -n "$MONITORING_TYPE" ]] && [[ "$MONITORING_TYPE" == "coo" || "$MONITORING_TYPE" == "uwm" ]]; then
-        # Use explicitly set monitoring type
-        monitoring_type_to_use="$MONITORING_TYPE"
-    else
-        # Try to detect current monitoring type
-        local detected_type=$(detect_current_monitoring_type)
-        if [[ "$detected_type" != "none" ]]; then
-            monitoring_type_to_use="$detected_type"
+    # Add monitoring method labels to resources (keep app=eip-monitor, add monitoring-type labels)
+    # The app label should remain as app=eip-monitor (matches ServiceMonitor selectors)
+    # Additional labels like monitoring-coo=true or monitoring-uwm=true are added by deploy-monitoring.sh
+    log_info "Resources will use app=eip-monitor label (monitoring labels are added by deploy-monitoring.sh)"
+    
+    # Ensure service selector matches pod labels (fix any mismatches from previous deployments)
+    log_info "Verifying service selector matches pod labels..."
+    if oc get service eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        local service_selector=$(oc get service eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.selector.app}' 2>/dev/null || echo "")
+        if [[ "$service_selector" != "eip-monitor" ]]; then
+            log_warn "Service selector is '$service_selector', updating to 'eip-monitor'"
+            oc patch service eip-monitor -n "$NAMESPACE" --type merge -p '{"spec":{"selector":{"app":"eip-monitor"}}}' || {
+                log_warn "Failed to update service selector"
+            }
         fi
     fi
     
-    # Only add labels if monitoring type is determined
-    if [[ -n "$monitoring_type_to_use" ]]; then
-        log_info "Adding monitoring labels (type: $monitoring_type_to_use) to eip-monitor resources..."
+    # Ensure deployment and pods have correct app label (fix any mismatches from previous deployments)
+    if oc get deployment eip-monitor -n "$NAMESPACE" &>/dev/null; then
+        local deployment_app_label=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.selector.matchLabels.app}' 2>/dev/null || echo "")
+        local pod_template_app_label=$(oc get deployment eip-monitor -n "$NAMESPACE" -o jsonpath='{.spec.template.metadata.labels.app}' 2>/dev/null || echo "")
         
-        # Use app=eip-monitor-{coo|uwm} format to match ServiceMonitor selectors
-        local app_label="app=eip-monitor-$monitoring_type_to_use"
-        
-        # Update Deployment: change app label and add monitoring label
-        # This requires updating both metadata labels and pod template labels
-        oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p "[
-            {\"op\": \"replace\", \"path\": \"/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
-            {\"op\": \"add\", \"path\": \"/metadata/labels/monitoring\", \"value\": \"true\"},
-            {\"op\": \"replace\", \"path\": \"/spec/selector/matchLabels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
-            {\"op\": \"replace\", \"path\": \"/spec/template/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
-            {\"op\": \"add\", \"path\": \"/spec/template/metadata/labels/monitoring\", \"value\": \"true\"}
-        ]" &>/dev/null || {
-            # Fallback: use oc label and patch separately
-            log_info "Using fallback method to update labels..."
-            # Remove old app label and add new one
-            oc label deployment eip-monitor -n "$NAMESPACE" app- --overwrite &>/dev/null || true
-            oc label deployment eip-monitor -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
-            # Update selector and pod template via patch
-            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p "[
-                {\"op\": \"replace\", \"path\": \"/spec/selector/matchLabels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
-                {\"op\": \"replace\", \"path\": \"/spec/template/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"}
-            ]" &>/dev/null || true
-        }
-        
-        # Update Service: change app label and add monitoring label
-        oc patch service eip-monitor -n "$NAMESPACE" --type json -p "[
-            {\"op\": \"replace\", \"path\": \"/metadata/labels/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"},
-            {\"op\": \"add\", \"path\": \"/metadata/labels/monitoring\", \"value\": \"true\"},
-            {\"op\": \"replace\", \"path\": \"/spec/selector/app\", \"value\": \"eip-monitor-$monitoring_type_to_use\"}
-        ]" &>/dev/null || {
-            # Fallback: use oc label
-            oc label service eip-monitor -n "$NAMESPACE" app- --overwrite &>/dev/null || true
-            oc label service eip-monitor -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
-            # Update service selector separately
-            oc patch service eip-monitor -n "$NAMESPACE" --type merge -p "{\"spec\":{\"selector\":{\"app\":\"eip-monitor-$monitoring_type_to_use\"}}}" &>/dev/null || true
-        }
-        
-        # Add labels to ServiceAccount (keep app label for consistency)
-        oc label serviceaccount eip-monitor -n "$NAMESPACE" app- --overwrite &>/dev/null || true
-        oc label serviceaccount eip-monitor -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
-        
-        # Add labels to ConfigMap (keep app label for consistency)
-        oc label configmap eip-monitor-config -n "$NAMESPACE" app- --overwrite &>/dev/null || true
-        oc label configmap eip-monitor-config -n "$NAMESPACE" "$app_label" monitoring="true" --overwrite &>/dev/null || true
-        
-        log_success "Updated app label to $app_label and added monitoring=true to eip-monitor resources"
-        log_info "Note: This will trigger a pod restart to apply new labels"
-    else
-        log_info "No monitoring type detected or specified, skipping label updates"
-        log_info "Resources will use default app=eip-monitor label"
+        if [[ "$deployment_app_label" != "eip-monitor" ]] || [[ "$pod_template_app_label" != "eip-monitor" ]]; then
+            log_warn "Deployment has incorrect app label(s), fixing..."
+            log_info "  Current selector: $deployment_app_label"
+            log_info "  Current pod template: $pod_template_app_label"
+            
+            oc patch deployment eip-monitor -n "$NAMESPACE" --type json -p '[
+                {"op": "replace", "path": "/spec/selector/matchLabels/app", "value": "eip-monitor"},
+                {"op": "replace", "path": "/spec/template/metadata/labels/app", "value": "eip-monitor"}
+            ]' || {
+                log_warn "Failed to update deployment labels, will trigger restart"
+                oc label deployment eip-monitor -n "$NAMESPACE" app=eip-monitor --overwrite || true
+            }
+            
+            log_info "Restarting deployment to apply correct labels..."
+            oc rollout restart deployment/eip-monitor -n "$NAMESPACE" &>/dev/null || true
+        fi
     fi
     
     # Update log level in ConfigMap if specified
@@ -1109,7 +1092,10 @@ deploy() {
     # Clean up temp file if created
     [[ -n "$REGISTRY" ]] && rm -f "$temp_manifest"
     
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_success "EIP Monitor deployment completed successfully!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Note: Monitoring infrastructure is deployed separately using: ./scripts/deploy-monitoring.sh"
     
     # Show status
@@ -1975,6 +1961,11 @@ cleanup() {
     else
         log_warn "Namespace '$NAMESPACE' not found or already deleted"
     fi
+    
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "Cleanup completed successfully!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 }
 
 # Parse command line arguments
@@ -2035,12 +2026,28 @@ parse_args() {
                 CLEAN_ALL="true"
                 shift
                 ;;
+            --status)
+                SHOW_STATUS="true"
+                shift
+                ;;
+            --test)
+                TEST_DEPLOYMENT="true"
+                shift
+                ;;
+            --clean)
+                CLEAN_DEPLOYMENT="true"
+                shift
+                ;;
+            -v|--verbose)
+                VERBOSE="true"
+                shift
+                ;;
             -h|--help)
                 show_usage
                 exit 0
                 ;;
             *)
-                # Check if it's a monitoring type as positional argument
+                # Check if it's a monitoring type as positional argument (backward compatibility)
                 if [[ "$1" == "coo" || "$1" == "uwm" ]]; then
                     MONITORING_TYPE="$1"
                     shift
@@ -2054,6 +2061,40 @@ parse_args() {
 
 # Main function
 main() {
+    # Handle status, test, and clean as top-level flags (no command required)
+    # This allows: ./deploy-eip.sh --status
+    if [[ $# -gt 0 ]] && [[ "$1" =~ ^- ]]; then
+        # Flags mode - parse all args
+        parse_args "$@"
+        
+        check_prerequisites
+        
+        log_info "Connected to OpenShift as: $(oc whoami)"
+        log_info "Namespace: $NAMESPACE"
+        
+        if [[ "$SHOW_STATUS" == "true" ]]; then
+            show_status
+            return 0
+        fi
+        
+        if [[ "$TEST_DEPLOYMENT" == "true" ]]; then
+            test_deployment
+            return $?
+        fi
+        
+        if [[ "$CLEAN_DEPLOYMENT" == "true" ]]; then
+            cleanup
+            return 0
+        fi
+        
+        # If no action flag, show usage
+        log_error "No action specified. Use --status, --test, or --clean, or specify a command."
+        show_usage
+        exit 1
+    fi
+    
+    # Command mode (backward compatibility)
+    # This allows: ./deploy-eip.sh build, ./deploy-eip.sh deploy, etc.
     if [[ $# -eq 0 ]]; then
         show_usage
         exit 1
@@ -2061,10 +2102,12 @@ main() {
     
     local command="$1"
     shift
-    
     parse_args "$@"
     
     check_prerequisites
+    
+    log_info "Connected to OpenShift as: $(oc whoami)"
+    log_info "Namespace: $NAMESPACE"
     
     case "$command" in
         build)
@@ -2090,6 +2133,7 @@ main() {
             exit 1
             ;;
         status)
+            # Backward compatibility: support 'status' as command
             show_status
             ;;
         all)
@@ -2144,12 +2188,14 @@ main() {
             fi
             ;;
         test)
+            # Backward compatibility: support 'test' as command
             test_deployment
             ;;
         logs)
             show_logs
             ;;
         clean)
+            # Backward compatibility: support 'clean' as command
             cleanup
             ;;
         *)
