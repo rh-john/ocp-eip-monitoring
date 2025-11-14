@@ -739,11 +739,14 @@ verify_federation() {
     fi
     
     # Check federation target health
-    log_info "Checking federation target health..."
+    # Note: Federation can take time to initialize (ScrapeConfig reconciliation, Prometheus discovery)
+    log_info "Checking federation target health (this may take up to 60s for ScrapeConfig to be reconciled)..."
     local max_retries=12
     local retry=0
     local federation_healthy=false
     local auth_error_count=0
+    local last_log_time=0
+    local log_interval=15  # Only log warnings every 15 seconds to reduce noise
     
     while [[ $retry -lt $max_retries ]]; do
         local targets_json
@@ -770,6 +773,7 @@ except:
             
             local health=$(echo "$federation_targets" | cut -d'|' -f1)
             local error=$(echo "$federation_targets" | cut -d'|' -f2)
+            local elapsed=$((retry * 5))
             
             if [[ "$health" == "up" ]]; then
                 federation_healthy=true
@@ -777,7 +781,7 @@ except:
                 break
             elif [[ "$health" == "down" ]]; then
                 if [[ -n "$error" ]]; then
-                    # Check for authentication errors
+                    # Check for authentication errors (always log these)
                     if echo "$error" | grep -qiE "401|unauthorized|authentication|forbidden"; then
                         auth_error_count=$((auth_error_count + 1))
                         if [[ $auth_error_count -ge 3 ]]; then
@@ -792,17 +796,30 @@ except:
                             log_info "  7. Restart Prometheus pods to pick up new token: oc delete pods -n $NAMESPACE -l app.kubernetes.io/name=prometheus"
                             return 1
                         else
-                            log_warn "Federation target is down: $error"
-                            log_info "Authentication error detected (attempt $auth_error_count/3). Will retry..."
+                            # Log auth errors immediately (they're important)
+                            log_warn "Federation authentication error (attempt $auth_error_count/3): $error"
                         fi
-                    else
-                        log_warn "Federation target is down: $error"
+                    elif [[ $elapsed -ge $last_log_time ]] && [[ $((elapsed % log_interval)) -eq 0 ]]; then
+                        # Only log non-auth errors periodically to reduce noise
+                        log_info "Federation target is down (${elapsed}s elapsed, will continue checking...)"
+                        last_log_time=$elapsed
                     fi
-                else
-                    log_warn "Federation target is down (checking again...)"
+                elif [[ $elapsed -ge $last_log_time ]] && [[ $((elapsed % log_interval)) -eq 0 ]]; then
+                    log_info "Federation target not ready yet (${elapsed}s elapsed, will continue checking...)"
+                    last_log_time=$elapsed
                 fi
             elif [[ "$health" == "unknown" ]]; then
-                log_info "Federation target health is unknown (may still be initializing)..."
+                # Only log "unknown" status periodically
+                if [[ $elapsed -ge $last_log_time ]] && [[ $((elapsed % log_interval)) -eq 0 ]]; then
+                    log_info "Federation target health is unknown (${elapsed}s elapsed, may still be initializing...)"
+                    last_log_time=$elapsed
+                fi
+            elif [[ "$health" == "not_found" ]]; then
+                # ScrapeConfig may not be discovered yet - this is normal early on
+                if [[ $elapsed -ge $last_log_time ]] && [[ $((elapsed % log_interval)) -eq 0 ]]; then
+                    log_info "Federation target not found yet (${elapsed}s elapsed, ScrapeConfig may still be reconciling...)"
+                    last_log_time=$elapsed
+                fi
             fi
         fi
         
@@ -836,14 +853,20 @@ except:
             return 1
         fi
     else
-        log_warn "Federation target verification failed after $max_retries retries"
+        # Federation verification failed, but this is non-blocking
         if [[ $auth_error_count -ge 3 ]]; then
+            log_error "Federation authentication failed after $max_retries retries"
             log_error "Persistent authentication errors detected. Please fix authentication issues before retrying."
+            log_info "You can check federation status with: oc exec -n $NAMESPACE $prometheus_pod -- curl -s http://localhost:9090/api/v1/targets | grep -i federation"
+            return 1
         else
-            log_warn "Federation may still be initializing, or there may be a configuration issue"
+            log_warn "Federation target verification failed after $max_retries retries (${max_retries} * 5s = $((max_retries * 5))s total)"
+            log_info "This is expected if Prometheus was just deployed - federation can take several minutes to initialize"
+            log_info "Federation will continue to initialize in the background. This is non-blocking."
+            log_info "You can check federation status later with: oc exec -n $NAMESPACE $prometheus_pod -- curl -s http://localhost:9090/api/v1/targets | grep -i federation"
+            # Return 0 (success) since this is non-blocking - deployment can continue
+            return 0
         fi
-        log_warn "You can check federation status with: oc exec -n $NAMESPACE $prometheus_pod -- curl -s http://localhost:9090/api/v1/targets | grep -i federation"
-        return 1
     fi
 }
 
@@ -1557,12 +1580,23 @@ remove_coo_monitoring() {
     log_info "Step 4: Deleting Perses dashboards and datasources..."
     if oc get crd persesdashboards.perses.dev &>/dev/null && oc get crd persesdatasources.perses.dev &>/dev/null; then
         # Delete by label selector (safer - only deletes COO Perses resources)
-        if [[ "$VERBOSE" == "true" ]]; then
-            oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo || true
-            oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring || true
-        else
-            oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo &>/dev/null || true
-            oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring &>/dev/null || true
+        # Check if resources exist before attempting deletion
+        local perses_monitoring=$(oc get persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        if [[ "$perses_monitoring" =~ ^[0-9]+$ ]] && [[ "$perses_monitoring" -gt 0 ]]; then
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo || true
+            else
+                oc delete persesdashboard,persesdatasource -n openshift-operators -l monitoring=coo &>/dev/null || true
+            fi
+        fi
+        
+        local perses_coo=$(oc get persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+        if [[ "$perses_coo" =~ ^[0-9]+$ ]] && [[ "$perses_coo" -gt 0 ]]; then
+            if [[ "$VERBOSE" == "true" ]]; then
+                oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring || true
+            else
+                oc delete persesdashboard,persesdatasource -n openshift-operators -l coo=eip-monitoring &>/dev/null || true
+            fi
         fi
         
         # Also delete by name as fallback (in case labels weren't applied)
@@ -1712,21 +1746,39 @@ remove_coo_monitoring() {
     # User-created resources used by MonitoringStack, delete after MonitoringStack
     log_info "Step 9: Deleting ServiceMonitor, PrometheusRule, and NetworkPolicy resources..."
     # Delete COO manifests using label selector (safer - only deletes COO resources)
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo || true
-    else
-        oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo &>/dev/null || true
+    # Check if resources exist before attempting deletion
+    local coo_resources=$(oc get servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    if [[ "$coo_resources" =~ ^[0-9]+$ ]] && [[ "$coo_resources" -gt 0 ]]; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo || true
+        else
+            oc delete servicemonitor,prometheusrule,networkpolicy -n "$NAMESPACE" -l monitoring-type=coo &>/dev/null || true
+        fi
     fi
     
     # Also delete by name as fallback (in case labels weren't applied)
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-    else
-        oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" 2>/dev/null || true
-        oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" 2>/dev/null || true
+    if oc get servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" || true
+        else
+            oc delete servicemonitor eip-monitor-coo -n "$NAMESPACE" &>/dev/null || true
+        fi
+    fi
+    
+    if oc get prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" || true
+        else
+            oc delete prometheusrule eip-monitor-alerts-coo -n "$NAMESPACE" &>/dev/null || true
+        fi
+    fi
+    
+    if oc get networkpolicy eip-monitor-coo -n "$NAMESPACE" &>/dev/null; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" || true
+        else
+            oc delete networkpolicy eip-monitor-coo -n "$NAMESPACE" &>/dev/null || true
+        fi
     fi
     
     # ============================================================================
@@ -1913,19 +1965,31 @@ remove_uwm_monitoring() {
     # These are used by UWM Prometheus, must be deleted before Prometheus is removed
     log_info "Step 1: Deleting ServiceMonitor and PrometheusRule resources..."
     # Delete UWM manifests using label selector (safer - only deletes UWM resources)
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm || true
-    else
-        oc delete servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
+    # Check if resources exist before attempting deletion
+    local uwm_resources=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm --no-headers 2>/dev/null | wc -l | tr -d ' ' || echo "0")
+    if [[ "$uwm_resources" =~ ^[0-9]+$ ]] && [[ "$uwm_resources" -gt 0 ]]; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm || true
+        else
+            oc delete servicemonitor,prometheusrule -n "$NAMESPACE" -l monitoring-type=uwm &>/dev/null || true
+        fi
     fi
     
     # Also delete by name as fallback (in case labels weren't applied)
-    if [[ "$VERBOSE" == "true" ]]; then
-        oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
-        oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" 2>/dev/null || true
-    else
-        oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" 2>/dev/null || true
-        oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" 2>/dev/null || true
+    if oc get servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" || true
+        else
+            oc delete servicemonitor eip-monitor-uwm -n "$NAMESPACE" &>/dev/null || true
+        fi
+    fi
+    
+    if oc get prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null; then
+        if [[ "$VERBOSE" == "true" ]]; then
+            oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" || true
+        else
+            oc delete prometheusrule eip-monitor-alerts-uwm -n "$NAMESPACE" &>/dev/null || true
+        fi
     fi
     
     # ============================================================================
@@ -3141,6 +3205,7 @@ main() {
     fi
     
     log_info "Connected to OpenShift as: $(oc whoami)"
+    log_info "Namespace: $NAMESPACE"
     
     # Handle status command
     if [[ "$SHOW_STATUS" == "true" ]]; then
@@ -3170,7 +3235,10 @@ main() {
     
     deploy_monitoring
     
-    log_success "Monitoring deployment completed!"
+    echo ""
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log_success "Monitoring deployment completed successfully!"
+    log_info "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     log_info "Monitoring infrastructure status:"
     if [[ "$VERBOSE" == "true" ]]; then
         local status_output=$(oc get servicemonitor,prometheusrule -n "$NAMESPACE" 2>&1)

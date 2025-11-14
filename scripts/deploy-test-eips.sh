@@ -35,6 +35,9 @@ set -euo pipefail
 # Note: Logging functions (log_info, log_success, log_warn, log_error) are sourced from scripts/lib/common.sh
 # Note: check_prerequisites() is sourced from scripts/lib/common.sh
 
+# Configuration
+VERBOSE="${VERBOSE:-false}"  # Verbose output flag
+
 # Default timeouts
 DEFAULT_EGRESSIP_TIMEOUT="30s"
 DEFAULT_NAMESPACE_TIMEOUT="60s"
