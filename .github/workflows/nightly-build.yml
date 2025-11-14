@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        branch: [dev, coo, grafana, staging]
+        branch: [dev, monitoring, grafana, staging, eip-monitor]
       fail-fast: false
     
     steps:
